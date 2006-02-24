@@ -65,7 +65,7 @@ inline SDWORD MulScale (SDWORD a, SDWORD b, SDWORD c)
 }
 
 #define MAKECONSTMulScale(s) \
-inline SDWORD MulScale##s (SDWORD a, SDWORD b) { return MulScale (a, b, s); }
+inline SDWORD MulScale##s (SDWORD a, SDWORD b) { return ((SQWORD)a * b) >> s; }
 
 MAKECONSTMulScale(1)
 MAKECONSTMulScale(2)
@@ -98,70 +98,13 @@ MAKECONSTMulScale(28)
 MAKECONSTMulScale(29)
 MAKECONSTMulScale(30)
 MAKECONSTMulScale(31)
+MAKECONSTMulScale(32)
 #undef MAKECONSTMulScale
-
-inline SDWORD MulScale32 (SDWORD a, SDWORD b)
-{
-	SDWORD result, dummy;
-
-	asm volatile
-		("imull %3"
-		 :"=d,d" (result), "=a,a" (dummy)
-		 : "a,a" (a), "r,m" (b)
-		 : "%cc");
-	return result;
-}
-
-
-inline SDWORD DMulScale (SDWORD a, SDWORD b, SDWORD c, SDWORD d, int s)
-{
-	SDWORD f, g, h, i;
-	asm volatile
-		("imull %3\n\t"
-		:"=a,a" (f), "=d,d" (g)
-		: "%0,%0,%0" (a),  "r,m" (b)
-		:"%cc");
-	asm volatile
-		("imull %3\n\t"
-		:"=a,a" (h), "=d,d" (i)
-		: "%0,%0,%0" (c),  "r,m" (d)
-		:"%cc");
-	asm volatile
-		("addl %4,%2\n\t"
-		 "adcl %5,%3\n\t"
-		:"=a,a" (h), "=d,d" (i)
-		: "0,0" (h), "1,1" (i), "m,r" (f), "m,r" (g)
-		:"%cc");
-	asm volatile
-		("shrd %2,%1,%0\n\t"
-		:"=a,a" (h), "=d,d" (i)
-		:"I,c" (s)
-		:"%cc");
-	return h;
-}
 
 #define MAKECONSTDMulScale(s) \
 	inline SDWORD DMulScale##s (SDWORD a, SDWORD b, SDWORD c, SDWORD d) \
 	{ \
-		SDWORD f, g, h, i; \
-		asm volatile \
-			("imull %3\n\t" \
-			:"=a" (f), "=d" (g) \
-			: "%0" (a), "r" (b) \
-			:"%cc"); \
-		asm volatile \
-			("imull %3\n\t" \
-			:"=a" (h), "=d" (i) \
-			: "%0" (c), "m" (d) \
-			:"%cc"); \
-		asm volatile \
-			("addl %4,%2\n\t" \
-			"adcl %5,%3\n\t" \
-			"shrd $" #s ",%3,%2\n\t" \
-			:"=a,a" (h), "=d,d" (i) \
-			: "0,0" (h), "1,1" (i), "m,r" (f), "m,r" (g) \
-			:"%cc"); \
-		return h; \
+		return (((SQWORD)a * b) + ((SQWORD)c * d)) >> s; \
 	}
 
 MAKECONSTDMulScale(1)
@@ -195,63 +138,13 @@ MAKECONSTDMulScale(28)
 MAKECONSTDMulScale(29)
 MAKECONSTDMulScale(30)
 MAKECONSTDMulScale(31)
+MAKECONSTDMulScale(32)
 #undef MAKECONSTDMulScale
-
-inline SDWORD DMulScale32 (SDWORD a, SDWORD b, SDWORD c, SDWORD d)
-{
-	SDWORD f, g, h, i;
-	asm volatile
-		("imull %3\n\t"
-		:"=a" (f), "=d" (g)
-		: "%0" (a), "r" (b)
-		:"%cc");
-	asm volatile
-		("imull %3\n\t"
-		:"=a,a" (h), "=d,d" (i)
-		: "%0,%0" (c),"r,m" (d)
-		:"%cc");
-	asm volatile
-		("addl %4,%2\n\t"
-		 "adcl %5,%3\n\t"
-		:"=a,a" (h), "=d,d" (i)
-		: "0,0" (h), "1,1" (i), "r,m" (f), "r,m" (g)
-		:"%cc");
-	return i;
-}
 
 #define MAKECONSTTMulScale(s) \
 	inline SDWORD TMulScale##s (SDWORD a, SDWORD b, SDWORD c, SDWORD d, SDWORD e, SDWORD ee) \
 	{ \
-		SDWORD f, g, h, i; \
-		asm volatile \
-			("imull %3\n\t" \
-			:"=a,a" (f), "=d,d" (g) \
-			: "%0,%0" (a),  "r,m" (b) \
-			:"%cc"); \
-		asm volatile \
-			("imull %3\n\t" \
-			:"=a,a" (h), "=d,d" (i) \
-			: "%0,%0" (c),  "r,m" (d) \
-			:"%cc"); \
-		asm volatile \
-			("addl %2,%4\n\t" \
-			"adcl %3,%5\n\t" \
-			:"=r,m" (f), "=r,m" (g) \
-			: "a,a" (h), "d,d" (i), "0,0" (f), "1,1" (g) \
-			:"%cc"); \
-		asm volatile \
-			("imull %3\n\t" \
-			:"=a,a" (h), "=d,d" (i) \
-			: "%0,%0" (e),  "r,m" (ee) \
-			:"%cc"); \
-		asm volatile \
-			("addl %4,%2\n\t" \
-			"adcl %5,%3\n\t" \
-			"shrd $" #s ",%3,%2\n\t" \
-			:"=a,a" (h), "=d,d" (i) \
-			: "0,0" (h), "1,1" (i), "r,m" (f), "r,m" (g) \
-			:"%cc"); \
-		return h; \
+		return (((SQWORD)a * b) + ((SQWORD)c * d) + ((SQWORD)e * ee)) >> s; \
 	}
 
 MAKECONSTTMulScale(1)
@@ -285,69 +178,21 @@ MAKECONSTTMulScale(28)
 MAKECONSTTMulScale(29)
 MAKECONSTTMulScale(30)
 MAKECONSTTMulScale(31)
+MAKECONSTTMulScale(32)
 #undef MAKECONSTTMulScale
-
-inline SDWORD TMulScale32 (SDWORD a, SDWORD b, SDWORD c, SDWORD d, SDWORD e, SDWORD ee)
-{
-	SDWORD f, g, h, i, j, k;
-	asm volatile
-		("imull %3\n\t"
-		:"=a,a" (f), "=d,d" (g)
-		: "%0,%0" (a),  "r,m" (b)
-		:"%cc");
-	asm volatile
-		("imull %3\n\t"
-		:"=a,a" (h), "=d,d" (i)
-		: "%0,%0" (c),  "r,m" (d)
-		:"%cc");
-	asm volatile
-		("addl %2,%4\n\t"
-		 "adcl %3,%5\n\t"
-		:"=m,r" (f), "=m,r" (g)
-		: "a,a" (h), "d,d" (i), "0,0" (f), "1,1" (g)
-		:"%cc");
-	asm volatile
-		("imull %3\n\t"
-		:"=a,a" (j), "=d,d" (k)
-		: "%0,%0" (e),  "r,m" (ee)
-		:"%cc");
-	asm volatile
-		("addl %4,%2\n\t"
-		"adcl %5,%3\n\t"
-		:"=a,a" (j), "=d,d" (k)
-		: "0,0" (j), "1,1" (k), "m,r" (f), "m,r" (g)
-		:"%cc");
-	return k;
-}
 
 inline SDWORD BoundMulScale (SDWORD a, SDWORD b, SDWORD c)
 {
-	SDWORD result, dummy1, dummy2;
-
-	asm volatile
-		("imull %4\n\t"
-		 "movl %%edx,%2\n\t"
-		 "shrdl %b5,%%edx,%%eax\n\t"
-		 "sarl %b5,%%edx\n\t"
-		 "xorl %%eax,%%edx\n\t"
-		 "js 0f\n\t"
-		 "xorl %%eax,%%edx\n\t"
-		 "jz 1f\n\t"
-		 "cmpl $0xffffffff,%%edx\n\t"
-		 "je 1f\n\t"
-		 "0:\n\t"
-		 "movl %2,%%eax\n\t"
-		 "sarl $31,%%eax\n\t"
-		 "xorl $0x7fffffff,%%eax\n\t"
-		 "1:"
-		: "=a,a,a,a" (result),	// 0
-		  "=d,d,d,d" (dummy1),	// 1
-		  "=r,r,r,r" (dummy2)	// 2
-		:  "a,a,a,a" (a),		// 3
-		   "r,m,r,m" (b),		// 4
-		   "c,c,I,I" (c)		// 5
-		: "%cc");
-	return result;
+	union {
+		long long big;
+		struct
+		{
+			int l, h;
+		};
+	} u;
+	u.big = ((long long)a * b) >> c;
+	if ((u.h ^ u.l) < 0 || (unsigned int)(u.h+1) > 1) return (u.h >> 31) ^ 0x7fffffff;
+	return u.l;
 }
 
 inline SDWORD DivScale (SDWORD a, SDWORD b, SDWORD c)
@@ -460,109 +305,14 @@ inline void clearbuf (void *buff, int count, SDWORD clear)
 
 inline void clearbufshort (void *buff, unsigned int count, WORD clear)
 {
-	SWORD *b2 = (SWORD *)buff;
-	if ((size_t)b2 & 3)
-	{
-		*b2++ = clear;
-		count--;
-	}
-	unsigned int c2 = count>>1;
-	if (c2 > 0)
-	{
-		asm volatile ("rep stosl"
-			:"=D" (b2), "=c" (c2)
-			:"D" (b2), "c" (c2), "a" (clear|(clear<<16)));
-	}
-	if (count & 1)
-		*b2 = clear;
-}
-
-inline void qinterpolatedown16 (SDWORD *out, DWORD count, SDWORD val, SDWORD delta)
-{
-	SDWORD odd = count;
-	if ((count >>= 1) != 0)
-	{
-		do
-		{
-			SDWORD temp = val + delta;
-			out[0] = val >> 16;
-			val = temp + delta;
-			out[1] = temp >> 16;
-			out += 2;
-		} while (--count);
-		if ((odd & 1) == 0)
-			return;
-	}
-	*out = val >> 16;
-}
-
-inline void qinterpolatedown16short (short *out, DWORD count, SDWORD val, SDWORD delta)
-{
-	if (count)
-	{
-		if ((size_t)out & 2)
-		{ // align to dword boundary
-			*out++ = (short)(val >> 16);
-			if (--count == 0)
-				return;
-			val += delta;
-		}
-		SDWORD temp1, temp2;
-		asm volatile
-			("subl $2,%6\n\t"
-			 "jc 1f\n\t"
-			 "0:\n\t"
-			 "movl %7,%0\n\t"
-			 "addl %8,%7\n\t"
-			 "shrl $16,%0\n\t"
-			 "movl %7,%1\n\t"
-			 "andl $0xffff0000,%1\n\t"
-			 "addl %8,%7\n\t"
-			 "addl %0,%1\n\t"
-			 "movl %1,(%5)\n\t"
-			 "addl $4,%5\n\t"
-			 "subl $2,%6\n\t"
-			 "jnc 0b\n\t"
-			 "testl $1,%6\n\t"
-			 "jz 2f\n\t"
-			 "1:\n\t"
-			 "sarl $16,%7\n\t"
-			 "movw %w7,(%5)\n\t"
-			 "2:"
-			:"=&r" (temp1), "=&r" (temp2), "=&r" (out), "=&r" (val), "=&g" (count)
-			:"2" (out), "4" (count), "3" (val), "r" (delta)
-			:"%cc");
-	}
-}
-
-	//returns num/den, dmval = num%den
-inline SDWORD DivMod (DWORD num, SDWORD den, SDWORD *dmval)
-{
-	SDWORD remainder, result;
-
 	asm volatile
-		("xorl %%edx,%%edx\n\t"
-		 "divl %3\n"
-		:"=&d,&d" (remainder), "=a,a" (result)
-		:"a,a" (num), "r,m" (den)
+		("shr $1,%%ecx\n\t"
+		 "rep stosl\n\t"
+		 "adc %%ecx,%%ecx\n\t"
+		 "rep stosw"
+		:"=D" (buff), "=c" (count)
+		:"D" (buff), "c" (count), "a" (clear|(clear<<16))
 		:"%cc");
-	*dmval = remainder;
-	return result;
-}
-
-	//returns num%den, dmval = num/den
-inline SDWORD ModDiv (DWORD num, SDWORD den, SDWORD *dmval)
-{
-	SDWORD remainder, result;
-
-	asm volatile
-		("xorl %%edx,%%edx\n\t"
-		 "divl %3\n"
-		:"=&d,&d" (remainder), "=a,a" (result)
-		:"a,a" (num), "r,m" (den)
-		:"%cc");
-	*dmval = result;
-	return remainder;
 }
 
 inline SDWORD ksgn (SDWORD a)

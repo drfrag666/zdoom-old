@@ -100,6 +100,7 @@ enum
 	DTA_ClipRight,		// don't draw anything at or to the right of this column (on dest, not source)
 	DTA_Masked,			// true(default)=use masks from texture, false=ignore masks
 	DTA_HUDRules,		// use fullscreen HUD rules to position and size textures
+	DTA_KeepRatio,		// doesn't adjust screen size for DTA_Virtual* if the aspect ratio is not 4:3
 };
 
 enum

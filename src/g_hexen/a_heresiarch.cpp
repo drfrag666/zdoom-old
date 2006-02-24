@@ -133,7 +133,7 @@ IMPLEMENT_ACTOR (AHeresiarch, Hexen, 10080, 0)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD|MF_COUNTKILL)
 	PROP_Flags2 (MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_BOSS|MF2_PUSHWALL|MF2_MCROSS)
 	PROP_Flags3 (MF3_DONTMORPH)
-	PROP_Flags4 (MF4_NOICEDEATH)
+	PROP_Flags4 (MF4_NOICEDEATH|MF4_DEFLECT)
 
 	PROP_SpawnState (S_SORC_SPAWN1)
 	PROP_SeeState (S_SORC_WALK1)
@@ -172,31 +172,6 @@ void AHeresiarch::Die (AActor *source, AActor *inflictor)
 	{
 		P_StartScript (this, NULL, script, level.mapname, 0, 0, 0, 0, 0, false);
 	}
-}
-
-bool AHeresiarch::AdjustReflectionAngle (AActor *thing, angle_t &angle)
-{
-	// Deflection
-	if (pr_heresiarch() < 128)
-		angle += ANGLE_45;
-	else
-		angle -= ANGLE_45;
-
-	return false;
-}
-
-bool AHeresiarch::OkayToSwitchTarget (AActor *other)
-{
-	if (!Super::OkayToSwitchTarget (other))
-	{
-		return false;
-	}
-	if (other->TIDtoHate == TIDtoHate &&
-		other->IsKindOf (RUNTIME_CLASS(ABishop)))
-	{
-		return false;
-	}
-	return true;
 }
 
 // Base class for the balls flying around the Heresiarch's head -------------
@@ -1322,6 +1297,7 @@ void A_SpawnBishop(AActor *actor)
 		else if (actor->target != NULL)
 		{ // [RH] Make the new bishops inherit the Heriarch's target
 			mo->CopyFriendliness (actor->target, true);
+			mo->master = actor->target;
 		}
 	}
 	actor->Destroy ();

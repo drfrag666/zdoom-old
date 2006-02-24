@@ -24,12 +24,12 @@ public:
 FState ABatSpawner::States[] =
 {
 #define S_SPAWNBATS1 0
-	S_NORMAL (MAN1, 'A',	2, NULL					    , &States[S_SPAWNBATS1+1]),
-	S_NORMAL (MAN1, 'A',	2, A_BatSpawnInit		    , &States[S_SPAWNBATS1+2]),
-	S_NORMAL (MAN1, 'A',	2, A_BatSpawn			    , &States[S_SPAWNBATS1+2]),
+	S_NORMAL (TNT1, 'A',	2, NULL					    , &States[S_SPAWNBATS1+1]),
+	S_NORMAL (TNT1, 'A',	2, A_BatSpawnInit		    , &States[S_SPAWNBATS1+2]),
+	S_NORMAL (TNT1, 'A',	2, A_BatSpawn			    , &States[S_SPAWNBATS1+2]),
 
 #define S_SPAWNBATS_OFF (S_SPAWNBATS1+3)
-	S_NORMAL (MAN1, 'A',   -1, NULL					    , NULL)
+	S_NORMAL (TNT1, 'A',   -1, NULL					    , NULL)
 };
 
 IMPLEMENT_ACTOR (ABatSpawner, Hexen, 10225, 0)

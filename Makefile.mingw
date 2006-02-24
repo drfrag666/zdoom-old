@@ -178,6 +178,7 @@ OBJECTS += \
 	$(OBJDIR)/tables.o \
 	$(OBJDIR)/tempfiles.o \
 	$(OBJDIR)/thingdef.o \
+	$(OBJDIR)/thingdef_codeptr.o \
 	$(OBJDIR)/v_collection.o \
 	$(OBJDIR)/v_draw.o \
 	$(OBJDIR)/v_font.o \
@@ -282,7 +283,7 @@ OBJECTS += \
 	$(OBJDIR)/a_spike.o \
 	$(OBJDIR)/a_summon.o \
 	$(OBJDIR)/a_teleportother.o \
-	$(OBJDIR)/a_weaponpieces.o \
+	$(OBJDIR)/a_weaponpiece.o \
 	$(OBJDIR)/a_wraith.o \
 	$(OBJDIR)/hexen_sbar.o \
 	$(OBJDIR)/a_artiegg.o \

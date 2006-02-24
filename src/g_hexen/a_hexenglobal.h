@@ -24,7 +24,6 @@ class ABishop : public AActor
 	DECLARE_ACTOR (ABishop, AActor)
 public:
 	void GetExplodeParms (int &damage, int &distance, bool &hurtSource);
-	bool OkayToSwitchTarget (AActor *other);
 };
 
 class AHeresiarch : public AActor
@@ -35,8 +34,6 @@ public:
 
 	void Serialize (FArchive &arc);
 	void Die (AActor *source, AActor *inflictor);
-	bool AdjustReflectionAngle (AActor *thing, angle_t &angle);
-	bool OkayToSwitchTarget (AActor *other);
 };
 
 class AHolySpirit : public AActor
@@ -60,7 +57,6 @@ class ACentaur : public AActor
 	DECLARE_ACTOR (ACentaur, AActor)
 public:
 	void Howl ();
-	bool AdjustReflectionAngle (AActor *thing, angle_t &angle);
 };
 
 class AFourthWeaponPiece : public AInventory

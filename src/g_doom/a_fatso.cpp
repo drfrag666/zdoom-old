@@ -170,12 +170,17 @@ void A_FatAttack1 (AActor *self)
 	if (!self->target)
 		return;
 
+	const TypeInfo *spawntype = NULL;
+	int index = CheckIndex (1, NULL);
+	if (index >= 0) spawntype = TypeInfo::FindType ((const char *)StateParameters[index]);
+	if (spawntype == NULL) spawntype = RUNTIME_CLASS(AFatShot);
+
 	A_FaceTarget (self);
 	// Change direction  to ...
 	self->angle += FATSPREAD;
-	P_SpawnMissile (self, self->target, RUNTIME_CLASS(AFatShot));
+	P_SpawnMissile (self, self->target, spawntype);
 
-	missile = P_SpawnMissile (self, self->target, RUNTIME_CLASS(AFatShot));
+	missile = P_SpawnMissile (self, self->target, spawntype);
 	if (missile != NULL)
 	{
 		missile->angle += FATSPREAD;
@@ -193,12 +198,17 @@ void A_FatAttack2 (AActor *self)
 	if (!self->target)
 		return;
 
+	const TypeInfo *spawntype = NULL;
+	int index = CheckIndex (1, NULL);
+	if (index >= 0) spawntype = TypeInfo::FindType ((const char *)StateParameters[index]);
+	if (spawntype == NULL) spawntype = RUNTIME_CLASS(AFatShot);
+
 	A_FaceTarget (self);
 	// Now here choose opposite deviation.
 	self->angle -= FATSPREAD;
-	P_SpawnMissile (self, self->target, RUNTIME_CLASS(AFatShot));
+	P_SpawnMissile (self, self->target, spawntype);
 
-	missile = P_SpawnMissile (self, self->target, RUNTIME_CLASS(AFatShot));
+	missile = P_SpawnMissile (self, self->target, spawntype);
 	if (missile != NULL)
 	{
 		missile->angle -= FATSPREAD*2;
@@ -216,9 +226,14 @@ void A_FatAttack3 (AActor *self)
 	if (!self->target)
 		return;
 
+	const TypeInfo *spawntype = NULL;
+	int index = CheckIndex (1, NULL);
+	if (index >= 0) spawntype = TypeInfo::FindType ((const char *)StateParameters[index]);
+	if (spawntype == NULL) spawntype = RUNTIME_CLASS(AFatShot);
+
 	A_FaceTarget (self);
 	
-	missile = P_SpawnMissile (self, self->target, RUNTIME_CLASS(AFatShot));
+	missile = P_SpawnMissile (self, self->target, spawntype);
 	if (missile != NULL)
 	{
 		missile->angle -= FATSPREAD/2;
@@ -227,7 +242,7 @@ void A_FatAttack3 (AActor *self)
 		missile->momy = FixedMul (missile->Speed, finesine[an]);
 	}
 
-	missile = P_SpawnMissile (self, self->target, RUNTIME_CLASS(AFatShot));
+	missile = P_SpawnMissile (self, self->target, spawntype);
 	if (missile != NULL)
 	{
 		missile->angle += FATSPREAD/2;
@@ -246,6 +261,17 @@ void A_Mushroom (AActor *actor)
 {
 	int i, j, n = actor->damage;
 
+	const TypeInfo *spawntype = NULL;
+	int index = CheckIndex (1, NULL);
+	if (index >= 0) 
+	{
+		spawntype = TypeInfo::FindType((const char *)StateParameters[index]);
+		n = (int)StateParameters[index+1];
+		if (n == 0)
+			n = actor->damage;
+	}
+	if (spawntype == NULL) spawntype = RUNTIME_CLASS(AFatShot);
+
 	A_Explode (actor);	// First make normal explosion
 
 	// Now launch mushroom cloud
@@ -257,7 +283,7 @@ void A_Mushroom (AActor *actor)
 			target.x += i << FRACBITS; // Aim in many directions from source
 			target.y += j << FRACBITS;
 			target.z += P_AproxDistance(i,j) << (FRACBITS+2); // Aim up fairly high
-			mo = P_SpawnMissile (actor, &target, RUNTIME_CLASS(AFatShot)); // Launch fireball
+			mo = P_SpawnMissile (actor, &target, spawntype); // Launch fireball
 			if (mo != NULL)
 			{
 				mo->momx >>= 1;

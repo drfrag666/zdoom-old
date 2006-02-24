@@ -90,7 +90,7 @@ void P_SetPsprite (player_t *player, int position, FState *state)
 		else
 			psp->tics = state->GetTics(); // could be 0
 
-		if (!(state->Frame&SF_WEAPONPARAM))
+		if (!(state->Frame & SF_STATEPARAM))
 		{
 			if (state->GetMisc1())
 			{ // Set coordinates.
@@ -103,20 +103,30 @@ void P_SetPsprite (player_t *player, int position, FState *state)
 		}
 		else	// for parameterized action functions this must be done differently!
 		{
-			int index=state->GetMisc1_2();
-			FWeaponParam *wp=WeaponParams[index];
+			unsigned int index = state->GetMisc1_2();
 
-			if (wp->wp_xoffset)
-			{ // Set coordinates.
-				psp->sx = wp->wp_xoffset<<FRACBITS;
-			}
-			if (wp->wp_yoffset)
+			if (index > 0 && index < StateParameters.Size() - 2)
 			{
-				psp->sy = wp->wp_yoffset<<FRACBITS;
+				if (StateParameters[index])
+				{ // Set coordinates.
+					psp->sx = (fixed_t)StateParameters[index] << FRACBITS;
+				}
+				if (StateParameters[index+1])
+				{
+					psp->sy = (fixed_t)StateParameters[index+1] << FRACBITS;
+				}
 			}
 		}
 		if (state->GetAction())
-		{ // Call action routine.
+		{ 
+			// The parameterized action functions need access to the current state and
+			// if a function is supposed to work with both actors and weapons
+			// there is no real means to get to it reliably so I store it in a global variable here.
+			// Yes, I know this is truly awful but it is the only method I can think of 
+			// that does not involve changing stuff throughout the code. 
+			// Of course this should be rewritten ASAP.
+			CallingState=state;
+			// Call action routine.
 			state->GetAction() (player->mo);
 			if (!psp->state)
 			{
@@ -148,13 +158,32 @@ void P_SetPspriteNF (player_t *player, int position, FState *state)
 		}
 		psp->state = state;
 		psp->tics = state->GetTics(); // could be 0
-		if (state->GetMisc1())
-		{ // Set coordinates.
-			psp->sx = state->GetMisc1()<<FRACBITS;
-		}
-		if (state->GetMisc2())
+
+		if (!(state->Frame & SF_STATEPARAM))
 		{
-			psp->sy = state->GetMisc2()<<FRACBITS;
+			if (state->GetMisc1())
+			{ // Set coordinates.
+				psp->sx = state->GetMisc1()<<FRACBITS;
+			}
+			if (state->GetMisc2())
+			{
+				psp->sy = state->GetMisc2()<<FRACBITS;
+			}
+		}
+		else	// for parameterized action functions this must be done differently!
+		{
+			unsigned int index = state->GetMisc1_2();
+			if (index > 0 && index < StateParameters.Size()-2)
+			{
+				if (StateParameters[index])
+				{ // Set coordinates.
+					psp->sx = (fixed_t)StateParameters[index] << FRACBITS;
+				}
+				if (StateParameters[index+1])
+				{
+					psp->sy = (fixed_t)StateParameters[index+1] << FRACBITS;
+				}
+			}
 		}
 		state = psp->state->GetNextState();
 	} while (!psp->tics); // An initial state of 0 could cycle through.
@@ -244,8 +273,49 @@ void P_FireWeapon (player_t *player)
 	{
 		player->mo->PlayAttacking ();
 	}
+	weapon->bAltFire = false;
 	P_SetPsprite (player, ps_weapon,
 		player->refire ? weapon->GetHoldAtkState() : weapon->GetAtkState());
+	if (!(weapon->WeaponFlags & WIF_NOALERT))
+	{
+		P_NoiseAlert (player->mo, player->mo, false);
+	}
+}
+
+//---------------------------------------------------------------------------
+//
+// PROC P_FireWeaponAlt
+//
+//---------------------------------------------------------------------------
+
+void P_FireWeaponAlt (player_t *player)
+{
+	AWeapon *weapon;
+
+	// [SO] 9/2/02: People were able to do an awful lot of damage
+	// when they were observers...
+	if (!player->isbot && bot_observer)
+	{
+		return;
+	}
+
+	weapon = player->ReadyWeapon;
+	if (weapon == NULL || weapon->AltAtkState == NULL || !weapon->CheckAmmo (AWeapon::AltFire, true))
+	{
+		return;
+	}
+
+	if (gameinfo.gametype == GAME_Heretic)
+	{
+		player->mo->PlayAttacking2 ();
+	}
+	else
+	{
+		player->mo->PlayAttacking ();
+	}
+	weapon->bAltFire = true;
+	P_SetPsprite (player, ps_weapon,
+		player->refire ? weapon->AltHoldAtkState : weapon->AltAtkState);
 	if (!(weapon->WeaponFlags & WIF_NOALERT))
 	{
 		P_NoiseAlert (player->mo, player->mo, false);
@@ -287,7 +357,7 @@ void P_BobWeapon (player_t *player, pspdef_t *psp, fixed_t *x, fixed_t *y)
 
 	weapon = player->ReadyWeapon;
 
-	if (weapon == NULL || weapon->flags & WIF_DONTBOB)
+	if (weapon == NULL || weapon->WeaponFlags & WIF_DONTBOB)
 	{
 		*x = *y = 0;
 		return;
@@ -413,6 +483,15 @@ void P_CheckWeaponFire (player_t *player)
 			return;
 		}
 	}
+	else if (player->cmd.ucmd.buttons & BT_ALTATTACK)
+	{
+		if (!player->attackdown || !(weapon->WeaponFlags & WIF_NOAUTOFIRE))
+		{
+			player->attackdown = true;
+			P_FireWeaponAlt (player);
+			return;
+		}
+	}
 	else
 	{
 		player->attackdown = false;
@@ -436,10 +515,18 @@ void A_ReFire (AActor *actor)
 		return;
 	}
 	if ((player->cmd.ucmd.buttons&BT_ATTACK)
+		&& !player->ReadyWeapon->bAltFire
 		&& player->PendingWeapon == WP_NOCHANGE && player->health)
 	{
 		player->refire++;
 		P_FireWeapon (player);
+	}
+	else if ((player->cmd.ucmd.buttons&BT_ALTATTACK)
+		&& player->ReadyWeapon->bAltFire
+		&& player->PendingWeapon == WP_NOCHANGE && player->health)
+	{
+		player->refire++;
+		P_FireWeaponAlt (player);
 	}
 	else
 	{

@@ -78,17 +78,24 @@ SPCSong::SPCSong (FILE *iofile, int len)
 
 	file.Read (spcfile, 66048);
 
-	void *apuram;
-	BYTE *extraram;
-	void *dsp;
+	if (LoadSPCFile != NULL)
+	{
+		LoadSPCFile (spcfile);
+	}
+	else
+	{
+		void *apuram;
+		BYTE *extraram;
+		void *dsp;
 
-	GetAPUData (&apuram, &extraram, NULL, NULL, &dsp, NULL, NULL, NULL);
+		GetAPUData (&apuram, &extraram, NULL, NULL, &dsp, NULL, NULL, NULL);
 
-	memcpy (apuram, spcfile + 0x100, 65536);
-	memcpy (dsp, spcfile + 0x10100, 128);
-	memcpy (extraram, spcfile + 0x101c0, 64);
+		memcpy (apuram, spcfile + 0x100, 65536);
+		memcpy (dsp, spcfile + 0x10100, 128);
+		memcpy (extraram, spcfile + 0x101c0, 64);
 
-	FixAPU (spcfile[37]+spcfile[38]*256, spcfile[39], spcfile[41], spcfile[40], spcfile[42], spcfile[43]);
+		FixAPU (spcfile[37]+spcfile[38]*256, spcfile[39], spcfile[41], spcfile[40], spcfile[42], spcfile[43]);
+	}
 
 	// Search for amplification tag in extended ID666 info
 	if (len > 66056)
@@ -114,7 +121,7 @@ SPCSong::SPCSong (FILE *iofile, int len)
 				}
 				else
 				{
-					if (pos + SHORT(tag.Value) <= size)
+					if (pos + LittleShort(tag.Value) <= size)
 					{
 						if (tag.Type == 4 && tag.ID == 0x36)
 						{
@@ -128,7 +135,7 @@ SPCSong::SPCSong (FILE *iofile, int len)
 							break;
 						}
 					}
-					file.Seek (SHORT(tag.Value), SEEK_CUR);
+					file.Seek (LittleShort(tag.Value), SEEK_CUR);
 				}
 			}
 		}
@@ -234,6 +241,7 @@ bool SPCSong::LoadEmu ()
 				Printf ("Snesapu.dll is missing some functions.\n");
 				APUVersion = 0;
 			}
+			LoadSPCFile = (LoadSPCFile_TYPE)GetProcAddress (HandleAPU, "LoadSPCFile");
 		}
 	}
 	if (APUVersion == 0)

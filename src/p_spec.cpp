@@ -70,6 +70,9 @@
 static FRandom pr_playerinspecialsector ("PlayerInSpecialSector");
 static FRandom pr_animatepictures ("AnimatePics");
 
+// [GrafZahl] Make this message changable by the user! ;)
+CVAR(String, secretmessage, "A Secret is revealed!", CVAR_ARCHIVE)
+
 IMPLEMENT_CLASS (DScroller)
 
 IMPLEMENT_POINTY_CLASS (DPusher)
@@ -192,9 +195,11 @@ static void P_InitAnimDefs ()
 			{
 				P_ProcessSwitchDef ();
 			}
-			else if (SC_Compare ("warp"))
+			// [GRB] Added warping type 2
+			else if (SC_Compare ("warp") || SC_Compare ("warp2"))
 			{
 				bool isflat = false;
+				BOOL type2 = SC_Compare ("warp2");	// [GRB]
 				SC_MustGetString ();
 				if (SC_Compare ("flat"))
 				{
@@ -213,7 +218,11 @@ static void P_InitAnimDefs ()
 				int picnum = TexMan.CheckForTexture (sc_String, isflat ? FTexture::TEX_Flat : FTexture::TEX_Wall, texflags);
 				if (picnum != -1)
 				{
-					FTexture *warper = new FWarpTexture (TexMan[picnum]);
+					FTexture *warper;
+					if (type2)	// [GRB]
+						warper = new FWarp2Texture (TexMan[picnum]);
+					else
+						warper = new FWarpTexture (TexMan[picnum]);
 					TexMan.ReplaceTexture (picnum, warper, false);
 
 					// No decals on warping textures, by default
@@ -762,7 +771,7 @@ BOOL P_ActivateLine (line_t *line, AActor *mo, int side, int activationType)
 		!repeat &&												// only non-repeatable triggers
 		(special<Generic_Floor || special>Generic_Crusher) &&	// not for Boom's generalized linedefs
 		special &&												// not for lines without a special
-		line->args[0] &&										// only if there's a tag (all types that are used by Doom-format maps use args[0] as tag)
+		line->id &&												// only if there's a tag (which is stored in the id field)
 		P_FindSectorFromTag (line->args[0], -1) == -1)			// only if no sector is tagged to this linedef
 	{
 		P_ChangeSwitchTexture (&sides[line->sidenum[0]], repeat, special);
@@ -1050,16 +1059,6 @@ void P_PlayerInSpecialSector (player_t *player)
 		}
 	}
 
-	// [RH] Apply terrain-based damage
-	int terrainnum = TerrainTypes[sector->floorpic];
-
-	if (Terrains[terrainnum].DamageAmount &&
-		(level.time & Terrains[terrainnum].DamageTimeMask))
-	{
-		P_DamageMobj (player->mo, NULL, NULL, Terrains[terrainnum].DamageAmount,
-			Terrains[terrainnum].DamageMOD);
-	}
-
 	if (sector->special & SECRET_MASK)
 	{
 		player->secretcount++;
@@ -1067,7 +1066,7 @@ void P_PlayerInSpecialSector (player_t *player)
 		sector->special &= ~SECRET_MASK;
 		if (player->mo->CheckLocalView (consoleplayer))
 		{
-			C_MidPrint ("A secret is revealed!");
+			C_MidPrint (secretmessage);
 			S_Sound (CHAN_AUTO, "misc/secret", 1, ATTN_NORM);
 		}
 	}
@@ -1117,7 +1116,7 @@ void P_UpdateSpecials ()
 	// LEVEL TIMER
 	if (deathmatch && timelimit)
 	{
-		if (level.time >= (int)(timelimit * TICRATE * 60))
+		if (level.maptime >= (int)(timelimit * TICRATE * 60))
 		{
 			Printf ("%s\n", GStrings("TXT_TIMELIMIT"));
 			G_ExitLevel(0, false);
@@ -1273,6 +1272,7 @@ DLightTransfer::DLightTransfer (sector_t *srcSec, int target, bool copyFloor)
 		for (secnum = -1; (secnum = P_FindSectorFromTag (target, secnum)) >= 0; )
 			sectors[secnum].CeilingFlags |= SECF_ABSLIGHTING;
 	}
+	ChangeStatNum (STAT_LIGHTTRANSFER);
 }
 
 void DLightTransfer::Tick ()

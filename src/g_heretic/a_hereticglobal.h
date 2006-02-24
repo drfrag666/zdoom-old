@@ -27,7 +27,6 @@ class ASorcerer2 : public AActor
 public:
 	void Serialize (FArchive &arc);
 	void BeginPlay ();
-	bool OkayToSwitchTarget (AActor *other);
 	const char *GetObituary ();
 	const char *GetHitObituary ();
 
@@ -40,7 +39,6 @@ class AWizard : public AActor
 	DECLARE_ACTOR (AWizard, AActor)
 public:
 	void NoBlockingSet ();
-	bool OkayToSwitchTarget (AActor *other);
 	const char *GetObituary ();
 	const char *GetHitObituary ();
 };

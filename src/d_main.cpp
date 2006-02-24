@@ -251,7 +251,7 @@ void D_ProcessEvents (void)
 		}
 		return;
 	}
-		
+
 	for (; eventtail != eventhead ; eventtail = (eventtail+1)&(MAXEVENTS-1))
 	{
 		ev = &events[eventtail];
@@ -388,6 +388,7 @@ CVAR (Flag, compat_wallrun,		compatflags, COMPATF_WALLRUN);
 CVAR (Flag, compat_notossdrops,	compatflags, COMPATF_NOTOSSDROPS);
 CVAR (Flag, compat_useblocking, compatflags, COMPATF_USEBLOCKING);
 CVAR (Flag, compat_nodoorlight,	compatflags, COMPATF_NODOORLIGHT);
+CVAR (Flag, compat_ravenscroll,	compatflags, COMPATF_RAVENSCROLL);
 
 //==========================================================================
 //
@@ -444,8 +445,8 @@ void D_Display (bool screenshot)
 	if (setsizeneeded && StatusBar != NULL)
 	{
 		R_ExecuteSetViewSize ();
-		setmodeneeded = false;
 	}
+	setmodeneeded = false;
 
 	if (screen->Lock (screenshot))
 	{
@@ -1339,8 +1340,8 @@ static EIWADType ScanIWAD (const char *iwad)
 		fread (&header, sizeof(header), 1, f);
 		if (header.Magic == IWAD_ID || header.Magic == PWAD_ID)
 		{
-			header.NumLumps = LONG(header.NumLumps);
-			if (0 == fseek (f, LONG(header.InfoTableOfs), SEEK_SET))
+			header.NumLumps = LittleLong(header.NumLumps);
+			if (0 == fseek (f, LittleLong(header.InfoTableOfs), SEEK_SET))
 			{
 				for (i = 0; i < (size_t)header.NumLumps; i++)
 				{
@@ -2051,11 +2052,17 @@ void D_DoomMain (void)
 	FActorInfo::StaticSetActorNums ();
 
 	// [RH] User-configurable startup strings. Because BOOM does.
-	if (GStrings["STARTUP1"])	Printf ("%s\n", GStrings("STARTUP1"));
-	if (GStrings["STARTUP2"])	Printf ("%s\n", GStrings("STARTUP2"));
-	if (GStrings["STARTUP3"])	Printf ("%s\n", GStrings("STARTUP3"));
-	if (GStrings["STARTUP4"])	Printf ("%s\n", GStrings("STARTUP4"));
-	if (GStrings["STARTUP5"])	Printf ("%s\n", GStrings("STARTUP5"));
+	static const char *startupString[5] = {
+		"STARTUP1", "STARTUP2", "STARTUP3", "STARTUP4", "STARTUP5"
+	};
+	for (p = 0; p < 5; ++p)
+	{
+		const char *str = GStrings[startupString[p]];
+		if (str != NULL && str[0] != '\0')
+		{
+			Printf ("%s\n", str);
+		}
+	}
 
 	//Added by MC:
 	bglobal.getspawned = Args.GatherFiles ("-bots", "", false);

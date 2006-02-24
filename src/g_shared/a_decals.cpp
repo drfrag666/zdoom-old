@@ -461,7 +461,7 @@ void AImpactDecal::BeginPlay ()
 	LastImpact = this;
 }
 
-AImpactDecal *AImpactDecal::StaticCreate (const char *name, fixed_t x, fixed_t y, fixed_t z, side_t *wall)
+AImpactDecal *AImpactDecal::StaticCreate (const char *name, fixed_t x, fixed_t y, fixed_t z, side_t *wall, PalEntry color)
 {
 	if (cl_maxdecals > 0)
 	{
@@ -469,7 +469,7 @@ AImpactDecal *AImpactDecal::StaticCreate (const char *name, fixed_t x, fixed_t y
 
 		if (decal != NULL && (decal = decal->GetDecal()) != NULL)
 		{
-			return StaticCreate (decal, x, y, z, wall);
+			return StaticCreate (decal, x, y, z, wall, color);
 		}
 	}
 	return NULL;
@@ -504,7 +504,7 @@ static side_t *NextWall (const side_t *wall)
 
 	if (line->sidenum[0] == wallnum)
 	{
-		if (line->sidenum[1] != NO_INDEX)
+		if (line->sidenum[1] != NO_SIDE)
 		{
 			return sides + line->sidenum[1];
 		}
@@ -528,7 +528,7 @@ void AImpactDecal::SpreadLeft (fixed_t r, vertex_t *v1, side_t *feelwall)
 
 	SpreadStack.Push (feelwall);
 
-	while (r < 0 && feelwall->LeftSide != NO_INDEX)
+	while (r < 0 && feelwall->LeftSide != NO_SIDE)
 	{
 		fixed_t startr = r;
 
@@ -546,7 +546,7 @@ void AImpactDecal::SpreadLeft (fixed_t r, vertex_t *v1, side_t *feelwall)
 		SpreadStack.Push (feelwall);
 
 		side_t *nextwall = NextWall (feelwall);
-		if (nextwall != NULL && nextwall->LeftSide != NO_INDEX)
+		if (nextwall != NULL && nextwall->LeftSide != NO_SIDE)
 		{
 			int i;
 
@@ -573,12 +573,12 @@ void AImpactDecal::SpreadRight (fixed_t r, side_t *feelwall, fixed_t wallsize)
 
 	SpreadStack.Push (feelwall);
 
-	while (r > wallsize && feelwall->RightSide != NO_INDEX)
+	while (r > wallsize && feelwall->RightSide != NO_SIDE)
 	{
 		feelwall = &sides[feelwall->RightSide];
 
 		side_t *nextwall = NextWall (feelwall);
-		if (nextwall != NULL && nextwall->LeftSide != NO_INDEX)
+		if (nextwall != NULL && nextwall->LeftSide != NO_SIDE)
 		{
 			int i;
 
@@ -606,7 +606,7 @@ void AImpactDecal::SpreadRight (fixed_t r, side_t *feelwall, fixed_t wallsize)
 	}
 }
 
-AImpactDecal *AImpactDecal::StaticCreate (const FDecal *decal, fixed_t x, fixed_t y, fixed_t z, side_t *wall)
+AImpactDecal *AImpactDecal::StaticCreate (const FDecal *decal, fixed_t x, fixed_t y, fixed_t z, side_t *wall, PalEntry color)
 {
 	AImpactDecal *actor = NULL;
 	if (decal != NULL && cl_maxdecals > 0 &&
@@ -636,6 +636,7 @@ AImpactDecal *AImpactDecal::StaticCreate (const FDecal *decal, fixed_t x, fixed_
 		}
 
 		decal->ApplyToActor (actor);
+		if (color != 0) actor->SetShade (color.r, color.g, color.b);
 
 		if (!cl_spreaddecals || actor->picnum == 0xffff)
 			return actor;
@@ -690,6 +691,7 @@ AImpactDecal *AImpactDecal::CloneSelf (const FDecal *decal, fixed_t ix, fixed_t 
 	{
 		actor->StickToWall (wall);
 		decal->ApplyToActor (actor);
+		actor->alphacolor = alphacolor;
 		actor->renderflags = (actor->renderflags & RF_DECALMASK) |
 							 (this->renderflags & ~RF_DECALMASK);
 	}

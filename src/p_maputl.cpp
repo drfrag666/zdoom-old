@@ -195,7 +195,7 @@ void P_LineOpening (const line_t *linedef, fixed_t x, fixed_t y, fixed_t refx, f
 	sector_t *front, *back;
 	fixed_t fc, ff, bc, bf;
 
-	if (linedef->sidenum[1] == NO_INDEX)
+	if (linedef->sidenum[1] == NO_SIDE)
 	{
 		// single sided line
 		openrange = 0;

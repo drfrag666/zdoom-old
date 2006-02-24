@@ -448,6 +448,8 @@ axedone:
 
 void P_BloodSplatter2 (fixed_t x, fixed_t y, fixed_t z, AActor *originator)
 {
+	PalEntry bloodcolor = (PalEntry)originator->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
+
 	if (cl_bloodtype <= 1)
 	{
 		AActor *mo;
@@ -457,9 +459,15 @@ void P_BloodSplatter2 (fixed_t x, fixed_t y, fixed_t z, AActor *originator)
 
 		mo = Spawn<AAxeBlood> (x, y, z);
 		mo->target = originator;
+
+		// colorize the blood!
+		if (bloodcolor != 0)
+		{
+			mo->Translation = TRANSLATION(TRANSLATION_Blood, bloodcolor.a);
+		}
 	}
 	if (cl_bloodtype >= 1)
 	{
-		P_DrawSplash2 (100, x, y, z, R_PointToAngle (originator->x - x, originator->y - y), 2, 0);
+		P_DrawSplash2 (100, x, y, z, R_PointToAngle2 (0, 0, originator->x - x, originator->y - y), 2, bloodcolor);
 	}
 }

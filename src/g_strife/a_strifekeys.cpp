@@ -6,6 +6,7 @@ IMPLEMENT_STATELESS_ACTOR (AStrifeKey, Strife, -1, 0)
 	PROP_RadiusFixed (20)
 	PROP_HeightFixed (16)
 	PROP_Flags (MF_SPECIAL|MF_NOTDMATCH)
+	PROP_Flags2 (MF2_FLOORCLIP)
 END_DEFAULTS
 
 // Base Key -----------------------------------------------------------------

@@ -1048,8 +1048,8 @@ menu/prompt		dsswtchn	// Activate a prompt "menu"
 menu/cursor		dspstop		// Move cursor up/down
 menu/change		dsstnmov	// Select new value for option
 menu/invalid		dsoof		// Menu not available
-menu/dismiss		dsswtchx	// Dismiss a prompt message
-menu/choose		dspistol	// Choose a menu item
+menu/dismiss		dsswish		// Dismiss a prompt message
+menu/choose		dsrifl		// Choose a menu item
 menu/clear		dsmtalht	// Close top menu
 
 misc/teleport		dstelept
@@ -1063,6 +1063,7 @@ misc/missileinflight	dsrflite
 misc/static		dsstatic
 misc/chant		dschant
 misc/alarm		dsalarm
+misc/disruptordeath	dsdsrptr
 $singular misc/alarm
 
 misc/secret			dsyeah

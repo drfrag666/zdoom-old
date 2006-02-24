@@ -18,7 +18,7 @@ class AFogSpawner : public AActor
 FState AFogSpawner::States[] =
 {
 #define S_SPAWNFOG1 0
-	S_NORMAL (MAN1, 'A',   20, A_FogSpawn			    , &States[S_SPAWNFOG1]),
+	S_NORMAL (TNT1, 'A',   20, A_FogSpawn			    , &States[S_SPAWNFOG1]),
 };
 
 IMPLEMENT_ACTOR (AFogSpawner, Hexen, 10000, 0)

@@ -550,7 +550,7 @@ class ALeafSpawner : public AActor
 
 FState ALeafSpawner::States[] =
 {
-	S_NORMAL (MAN1, 'A',   20, A_LeafSpawn				, &States[0])
+	S_NORMAL (TNT1, 'A',   20, A_LeafSpawn				, &States[0])
 };
 
 IMPLEMENT_ACTOR (ALeafSpawner, Hexen, 113, 0)

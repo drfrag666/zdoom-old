@@ -88,6 +88,7 @@ IMPLEMENT_ACTOR (ABishop, Hexen, 114, 19)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_COUNTKILL|MF_FLOAT|MF_NOGRAVITY|MF_NOBLOOD)
 	PROP_Flags2 (MF2_PASSMOBJ|MF2_PUSHWALL|MF2_TELESTOMP)
 	PROP_Flags3 (MF3_DONTOVERLAP)
+	PROP_Flags4 (MF4_NOTARGETSWITCH)
 
 	PROP_SpawnState (S_BISHOP_LOOK)
 	PROP_SeeState (S_BISHOP_WALK)
@@ -106,24 +107,6 @@ END_DEFAULTS
 void ABishop::GetExplodeParms (int &damage, int &distance, bool &hurtSource)
 { // Bishop radius death
 	damage = 25 + (pr_boom() & 15);
-}
-
-bool ABishop::OkayToSwitchTarget (AActor *other)
-{
-	if (target != NULL)
-	{ // Bishops never change their target until they've killed their current one.
-		return false;
-	}
-	if (!Super::OkayToSwitchTarget (other))
-	{
-		return false;
-	}
-	if (other->TIDtoHate == TIDtoHate &&
-		other->IsKindOf (RUNTIME_CLASS(AHeresiarch)))
-	{
-		return false;
-	}
-	return true;
 }
 
 // Bishop puff --------------------------------------------------------------

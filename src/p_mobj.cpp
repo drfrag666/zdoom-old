@@ -41,6 +41,7 @@
 #include "b_bot.h"	//Added by MC:
 #include "stats.h"
 #include "a_doomglobal.h"
+#include "a_hexenglobal.h"
 #include "a_sharedglobal.h"
 #include "gi.h"
 #include "sbar.h"
@@ -163,6 +164,7 @@ IMPLEMENT_POINTY_CLASS (AActor)
  DECLARE_POINTER (LastLook)	// This is actually a union
  DECLARE_POINTER (Inventory)
  DECLARE_POINTER (LastHeard)
+ DECLARE_POINTER (master)
 END_POINTERS
 
 ACTOR_STATE_NAMES(AActor) =
@@ -329,6 +331,19 @@ void AActor::Serialize (FArchive &arc)
 		<< EDeathState
 		<< RaiseState
 		<< WoundState;
+	if (SaveVersion >= 230)
+	{
+		arc << MaxDropOffHeight << MaxStepHeight;
+	}
+	if (SaveVersion >= 229)
+	{
+		arc << HealState
+			<< YesState
+			<< NoState
+			<< GreetingsState
+			<< meleerange
+			<< CrushState;
+	}
 	if (SaveVersion >= 224)
 	{
 		arc << DamageType;
@@ -340,6 +355,8 @@ void AActor::Serialize (FArchive &arc)
 
 		if (Conversation != NULL)
 		{
+			if (strcmp (Conversation->SpeakerName, "RICHTER") == 0)
+				Conversation = Conversation;
 			for (i = 0; i < StrifeDialogues.Size(); ++i)
 			{
 				if (StrifeDialogues[i] == GetDefault()->Conversation)
@@ -384,7 +401,7 @@ void AActor::Serialize (FArchive &arc)
 					break;
 				}
 			}
-			if (i + convnum < StrifeDialogues.Size())
+			if (i + convnum <= StrifeDialogues.Size())
 			{
 				Conversation = StrifeDialogues[i + convnum - 1];
 			}
@@ -505,6 +522,14 @@ bool AActor::SetState (FState *newstate)
 		}
 		if (newstate->GetAction())
 		{
+			// The parameterized action functions need access to the current state and
+			// if a function is supposed to work with both actors and weapons
+			// there is no real means to get to it reliably so I store it in a global variable here.
+			// Yes, I know this is truly awful but it is the only method I can think of 
+			// that does not involve changing stuff throughout the code. 
+			// Of course this should be rewritten ASAP.
+			CallingState = newstate;
+
 			newstate->GetAction() (this);
 		}
 		newstate = newstate->GetNextState();
@@ -855,6 +880,18 @@ bool AActor::CheckLocalView (int playernum) const
 
 void AActor::ConversationAnimation (int animnum)
 {
+	switch (animnum)
+	{
+	case 0:
+		if (GreetingsState != NULL) SetState (GreetingsState);
+		break;
+	case 1:
+		if (YesState != NULL) SetState (YesState);
+		break;
+	case 2:
+		if (NoState != NULL) SetState (NoState);
+		break;
+	}
 }
 
 //============================================================================
@@ -868,6 +905,30 @@ void AActor::ConversationAnimation (int animnum)
 
 void AActor::Touch (AActor *toucher)
 {
+}
+
+//============================================================================
+//
+// AActor :: Massacre
+//
+// Called by the massacre cheat to kill monsters. Returns true if the monster
+// was killed and false if it was already dead.
+//============================================================================
+
+bool AActor::Massacre ()
+{
+	if (health > 0)
+	{
+		flags |= MF_SHOOTABLE;
+		flags2 &= ~(MF2_DORMANT|MF2_INVULNERABLE);
+		do
+		{
+			P_DamageMobj (this, NULL, NULL, 1000000, MOD_MASSACRE);
+		}
+		while (health > 0);
+		return true;
+	}
+	return false;
 }
 
 //----------------------------------------------------------------------------
@@ -903,9 +964,9 @@ void P_ExplodeMissile (AActor *mo, line_t *line)
 	if (line != NULL && cl_missiledecals)
 	{
 		int side = P_PointOnLineSide (mo->x, mo->y, line);
-		if (line->sidenum[side] == NO_INDEX)
+		if (line->sidenum[side] == NO_SIDE)
 			side ^= 1;
-		if (line->sidenum[side] != NO_INDEX)
+		if (line->sidenum[side] != NO_SIDE)
 		{
 			FDecalBase *base = mo->DecalGenerator;
 			if (base != NULL)
@@ -969,7 +1030,7 @@ void P_ExplodeMissile (AActor *mo, line_t *line)
 			}
 		}
 
-		if (gameinfo.gametype == GAME_Doom)
+		if (mo->flags4 & MF4_RANDOMIZE)
 		{
 			mo->tics -= (pr_explodemissile() & 3) * TICRATE / 35;
 			if (mo->tics < 1)
@@ -1217,12 +1278,12 @@ void P_XYMovement (AActor *mo, fixed_t scrollx, fixed_t scrolly)
 	// because BOOM relied on the speed being fast enough to accumulate
 	// despite friction. If the speed is too low, then its movement will get
 	// cancelled, and it won't accumulate to the desired speed.
-	if (scrollx > CARRYSTOPSPEED)
+	if (abs(scrollx) > CARRYSTOPSPEED)
 	{
 		scrollx = FixedMul (scrollx, CARRYFACTOR);
 		mo->momx += scrollx;
 	}
-	if (scrolly > CARRYSTOPSPEED)
+	if (abs(scrolly) > CARRYSTOPSPEED)
 	{
 		scrolly = FixedMul (scrolly, CARRYFACTOR);
 		mo->momy += scrolly;
@@ -1333,7 +1394,7 @@ void P_XYMovement (AActor *mo, fixed_t scrollx, fixed_t scrolly)
 					if (BlockingLine != NULL &&
 						mo->player && mo->waterlevel && mo->waterlevel < 3 &&
 						(mo->player->cmd.ucmd.forwardmove | mo->player->cmd.ucmd.sidemove) &&
-						BlockingLine->sidenum[1] != NO_INDEX)
+						BlockingLine->sidenum[1] != NO_SIDE)
 					{
 						mo->momz = WATER_JUMP_SPEED;
 					}
@@ -1710,7 +1771,7 @@ void P_ZMovement (AActor *mo)
 	}
 	if (mo->player && (mo->flags & MF_NOGRAVITY) && (mo->z > mo->floorz))
 	{
-		mo->z += finesine[(FINEANGLES/80*level.time)&FINEMASK]/8;
+		mo->z += finesine[(FINEANGLES/80*level.maptime)&FINEMASK]/8;
 		mo->momz = FixedMul (mo->momz, FRICTION_FLY);
 	}
 	if (mo->waterlevel && !(mo->flags & MF_NOGRAVITY))
@@ -2005,7 +2066,8 @@ void P_NightmareRespawn (AActor *mobj)
 	// something is occupying its position?
 	if (!P_TestMobjLocation (mo))
 	{
-		level.total_monsters--;
+		//[GrafZahl] MF_COUNTKILL still needs to be checked here!
+		if (mo->flags & MF_COUNTKILL) level.total_monsters--;
 		mo->Destroy ();
 		return;		// no respawn
 	}
@@ -2181,7 +2243,32 @@ int AActor::SpecialMissileHit (AActor *victim)
 
 bool AActor::AdjustReflectionAngle (AActor *thing, angle_t &angle)
 {
-	angle += ANGLE_1 * ((pr_reflect()%16)-8);
+	// Change angle for reflection
+	if (thing->flags4&MF4_SHIELDREFLECT)
+	{
+		// Shield reflection (from the Centaur
+		if (abs (angle - thing->angle)>>24 > 45)
+			return true;	// Let missile explode
+
+		if (thing->IsKindOf (RUNTIME_CLASS(AHolySpirit)))	// shouldn't this be handled by another flag???
+			return true;
+
+		if (pr_reflect () < 128)
+			angle += ANGLE_45;
+		else
+			angle -= ANGLE_45;
+
+	}
+	else if (thing->flags4&MF4_DEFLECT)
+	{
+		// deflect (like the Heresiarch)
+		if(pr_reflect() < 128) 
+			angle += ANG45;
+		else 
+			angle -= ANG45;
+	}
+	else 
+		angle += ANGLE_1 * ((pr_reflect()%16)-8);
 	return false;
 }
 
@@ -2257,6 +2344,17 @@ void AActor::Tick ()
 	// [RH] Data for Heretic/Hexen scrolling sectors
 	static const byte HexenScrollDirs[8] = { 64, 0, 192, 128, 96, 32, 224, 160 };
 	static const char HexenSpeedMuls[3] = { 5, 10, 25 };
+	static const char HexenScrollies[24][2] =
+	{
+		{  0,  1 }, {  0,  2 }, {  0,  4 },
+		{ -1,  0 }, { -2,  0 }, { -4,  0 },
+		{  0, -1 }, {  0, -2 }, {  0, -4 },
+		{  1,  0 }, {  2,  0 }, {  4,  0 },
+		{  1,  1 }, {  2,  2 }, {  4,  4 },
+		{ -1,  1 }, { -2,  2 }, { -4,  4 },
+		{ -1, -1 }, { -2, -2 }, { -4, -4 },
+		{  1, -1 }, {  2, -2 }, {  4, -4 }
+	};
 
 	static const byte HereticScrollDirs[4] = { 6, 9, 1, 4 };
 	static const char HereticSpeedMuls[5] = { 5, 10, 25, 30, 35 };
@@ -2280,6 +2378,25 @@ void AActor::Tick ()
 	}
 
 	fixed_t oldz = z;
+
+	// [RH] Give the pain elemental vertical friction
+	// This used to be in APainElemental::Tick but in order to use
+	// A_PainAttack with other monsters it has to be here!
+	if (flags4 & MF4_VFRICTION)
+	{
+		if (health >0)
+		{
+			if (abs (momz) < FRACUNIT/4)
+			{
+				momz = 0;
+				flags4 &= ~MF4_VFRICTION;
+			}
+			else
+			{
+				momz = FixedMul (momz, 0xe800);
+			}
+		}
+	}
 
 	// [RH] Pulse in and out of visibility
 	if (effects & FX_VISIBILITYPULSE)
@@ -2411,28 +2528,50 @@ void AActor::Tick ()
 					scrolltype <= Scroll_SouthWest_Fast)
 				{ // Hexen scroll special
 					scrolltype -= Scroll_North_Slow;
-					angle_t fineangle = HexenScrollDirs[scrolltype / 3] * 32;
-					fixed_t carryspeed = HexenSpeedMuls[scrolltype % 3] * 2048;
-					scrollx += FixedMul (carryspeed, finecosine[fineangle]);
-					scrolly += FixedMul (carryspeed, finesine[fineangle]);
+					if (compatflags&COMPATF_RAVENSCROLL)
+					{
+						angle_t fineangle = HexenScrollDirs[scrolltype / 3] * 32;
+						fixed_t carryspeed = DivScale32 (HexenSpeedMuls[scrolltype % 3], 32*CARRYFACTOR);
+						scrollx += FixedMul (carryspeed, finecosine[fineangle]);
+						scrolly += FixedMul (carryspeed, finesine[fineangle]);
+					}
+					else
+					{
+						// Use speeds that actually match the scrolling textures!
+						scrollx -= HexenScrollies[scrolltype][0] << (FRACBITS-1);
+						scrolly += HexenScrollies[scrolltype][1] << (FRACBITS-1);
+					}
 				}
 				else if (scrolltype >= Carry_East5 &&
 						 scrolltype <= Carry_West35)
 				{ // Heretic scroll special
 					scrolltype -= Carry_East5;
 					byte dir = HereticScrollDirs[scrolltype / 5];
-					fixed_t carryspeed = HereticSpeedMuls[scrolltype % 5] * 2048;
+					fixed_t carryspeed = DivScale32 (HereticSpeedMuls[scrolltype % 5], 32*CARRYFACTOR);
+					if (scrolltype<=Carry_East35 && !(compatflags&COMPATF_RAVENSCROLL)) 
+					{
+						// Use speeds that actually match the scrolling textures!
+						carryspeed = (1 << ((scrolltype%5) + FRACBITS-1));
+					}
 					scrollx += carryspeed * ((dir & 3) - 1);
 					scrolly += carryspeed * (((dir & 12) >> 2) - 1);
 				}
 				else if (scrolltype == dScroll_EastLavaDamage)
 				{ // Special Heretic scroll special
-					scrollx += 2048*28;
+					if (compatflags&COMPATF_RAVENSCROLL)
+					{
+						scrollx += DivScale32 (28, 32*CARRYFACTOR);
+					}
+					else
+					{
+						// Use a speed that actually matches the scrolling texture!
+						scrollx += DivScale32 (12, 32*CARRYFACTOR);
+					}
 				}
 				else if (scrolltype == Scroll_StrifeCurrent)
 				{ // Strife scroll special
 					int anglespeed = sec->tag - 100;
-					fixed_t carryspeed = (anglespeed % 10) << (FRACBITS - 4);
+					fixed_t carryspeed = DivScale32 (anglespeed % 10, 16*CARRYFACTOR);
 					angle_t fineangle = (anglespeed / 10) << (32-3);
 					fineangle >>= ANGLETOFINESHIFT;
 					scrollx += FixedMul (carryspeed, finecosine[fineangle]);
@@ -2504,7 +2643,7 @@ void AActor::Tick ()
 				const sector_t *sec = node->m_sector;
 				if (sec->floorplane.c >= STEEPSLOPE)
 				{
-					if (sec->floorplane.ZatPoint (x, y) >= z - gameinfo.StepHeight)
+					if (sec->floorplane.ZatPoint (x, y) >= z - MaxStepHeight)
 					{
 						dopush = false;
 						break;
@@ -2523,7 +2662,7 @@ void AActor::Tick ()
 	// won't hurt anything. Don't do this if damage is 0! That way, you can
 	// still have missiles that go straight up and down through actors without
 	// damaging anything.
-	if ((flags & MF_MISSILE) && (momx|momy) == 0 && damage == 0)
+	if ((flags & MF_MISSILE) && (momx|momy) == 0 && damage != 0)
 	{
 		momx = 1;
 	}
@@ -2546,11 +2685,11 @@ void AActor::Tick ()
 
 	if (flags2 & MF2_FLOATBOB)
 	{ // Floating item bobbing motion
-		z += FloatBobDiffs[(FloatBobPhase + level.time) & 63];
+		z += FloatBobDiffs[(FloatBobPhase + level.maptime) & 63];
 	}
 	if (momz || BlockingMobj ||
 		(z != floorz && (!(flags2 & MF2_FLOATBOB) ||
-		(z - FloatBobOffsets[(FloatBobPhase + level.time) & 63] != floorz)
+		(z - FloatBobOffsets[(FloatBobPhase + level.maptime) & 63] != floorz)
 		)))
 	{	// Handle Z momentum and gravity
 		if (((flags2 & MF2_PASSMOBJ) || (flags & MF_SPECIAL)) && !(compatflags & COMPATF_NO_PASSMOBJ))
@@ -2570,7 +2709,7 @@ void AActor::Tick ()
 						PlayerLandedOnThing (this, onmo);
 					}
 				}
-				if (onmo->z + onmo->height - z <= gameinfo.StepHeight)
+				if (onmo->z + onmo->height - z <= MaxStepHeight)
 				{
 					if (player && player->mo == this)
 					{
@@ -2777,6 +2916,9 @@ BEGIN_DEFAULTS (AActor, Any, -1, 0)
 	PROP_RenderStyle (STYLE_Normal)
 	PROP_Alpha (FRACUNIT)
 	PROP_MinMissileChance (200)
+	PROP_MeleeRange(44)		// MELEERANGE(64) - 20
+	PROP_MaxDropOffHeight(24)
+	PROP_MaxStepHeight(24)
 END_DEFAULTS
 
 //==========================================================================
@@ -2880,7 +3022,7 @@ AActor *AActor::StaticSpawn (const TypeInfo *type, fixed_t ix, fixed_t iy, fixed
 	if (actor->flags2 & MF2_FLOATBOB)
 	{ // Prime the bobber
 		actor->FloatBobPhase = rng();
-		actor->z += FloatBobOffsets[(actor->FloatBobPhase + level.time - 1) & 63];
+		actor->z += FloatBobOffsets[(actor->FloatBobPhase + level.maptime - 1) & 63];
 	}
 	if (actor->flags2 & MF2_FLOORCLIP)
 	{
@@ -2939,6 +3081,12 @@ void AActor::HandleSpawnFlags ()
 	if (SpawnFlags & MTF_FRIENDLY)
 	{
 		flags |= MF_FRIENDLY;
+		// Friendlies don't count as kills!
+		if (flags & MF_COUNTKILL)
+		{
+			flags &= ~MF_COUNTKILL;
+			level.total_monsters--;
+		}
 	}
 	if (SpawnFlags & MTF_SHADOW)
 	{
@@ -3081,7 +3229,7 @@ void P_SpawnPlayer (mapthing2_t *mthing)
 	// [RH] Things 4001-? are also multiplayer starts. Just like 1-4.
 	//		To make things simpler, figure out which player is being
 	//		spawned here.
-	if (mthing->type <= 4)
+	if (mthing->type <= 4 || gameinfo.gametype == GAME_Strife)		// don't forget Strife's starts 5-8 here!
 	{
 		playernum = mthing->type - 1;
 	}
@@ -3140,6 +3288,7 @@ void P_SpawnPlayer (mapthing2_t *mthing)
 	mobj = static_cast<APlayerPawn *>
 		(Spawn (p->cls, mthing->x << FRACBITS, mthing->y << FRACBITS, ONFLOORZ));
 
+	mobj->FriendPlayer = playernum + 1;	// [RH] players are their own friends
 	oldactor = p->mo;
 	p->mo = mobj;
 	mobj->player = p;
@@ -3191,7 +3340,7 @@ void P_SpawnPlayer (mapthing2_t *mthing)
 	p->multicount = 0;
 	p->lastkilltime = 0;
 	p->BlendR = p->BlendG = p->BlendB = p->BlendA = 0.f;
-	p->air_finished = level.time + 10*TICRATE;
+	p->air_finished = level.time + level.airsupply;
 
 	p->momx = p->momy = 0;		// killough 10/98: initialize bobbing to 0.
 
@@ -3227,7 +3376,7 @@ void P_SpawnPlayer (mapthing2_t *mthing)
 		}
 	}
 
-	if (StatusBar != NULL && StatusBar->GetPlayer() == playernum)
+	if (StatusBar != NULL && (playernum == consoleplayer || StatusBar->GetPlayer() == playernum))
 	{
 		StatusBar->AttachToPlayer (p);
 	}
@@ -3614,6 +3763,22 @@ AActor *P_SpawnPuff (const TypeInfo *pufftype, fixed_t x, fixed_t y, fixed_t z, 
 	{
 		puff->SetState (puff->CrashState);
 	}
+	else if (attackrange == MELEERANGE && puff->MeleeState != NULL)
+	{
+		// handle the hard coded state jump of Doom's bullet puff
+		// in a more flexible manner.
+		puff->SetState (puff->MeleeState);
+	}
+
+	if (cl_pufftype && updown != 3 && puff->flags4&MF4_ALLOWPARTICLES)
+	{
+		P_DrawSplash2 (32, x, y, z, dir, updown, 1);
+		puff->renderflags |= RF_INVISIBLE;
+	}
+
+
+	/* This code assumes that no object can be used outside its own game.
+	   Since that is no longer the case it doesn't work anymore.
 
 	if (gameinfo.gametype == GAME_Doom)
 	{
@@ -3633,7 +3798,7 @@ AActor *P_SpawnPuff (const TypeInfo *pufftype, fixed_t x, fixed_t y, fixed_t z, 
 			P_DrawSplash2 (32, x, y, z, dir, updown, 1);
 			puff->renderflags |= RF_INVISIBLE;
 		}
-	}
+	}*/
 
 	if (hitthing && puff->SeeSound)
 	{ // Hit thing sound
@@ -3653,15 +3818,17 @@ AActor *P_SpawnPuff (const TypeInfo *pufftype, fixed_t x, fixed_t y, fixed_t z, 
 //
 // P_SpawnBlood
 // 
-void P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, angle_t dir, int damage)
+void P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, angle_t dir, int damage, AActor *originator)
 {
 	ABlood *th;
+	PalEntry bloodcolor = (PalEntry)originator->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
 
 	if (cl_bloodtype <= 1)
 	{
 		z += pr_spawnblood.Random2 () << 10;
 		th = Spawn<ABlood> (x, y, z);
 		th->momz = FRACUNIT*2;
+		th->angle = dir;
 		if (gameinfo.gametype == GAME_Doom)
 		{
 			th->tics -= pr_spawnblood() & 3;
@@ -3670,10 +3837,13 @@ void P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, angle_t dir, int damage)
 				th->tics = 1;
 		}
 		th->SetDamage (damage);
+
+		// colorize the blood!
+		if (bloodcolor!=0) th->Translation = TRANSLATION(TRANSLATION_Blood, bloodcolor.a);
 	}
 
 	if (cl_bloodtype >= 1)
-		P_DrawSplash2 (40, x, y, z, dir, 2, 0);
+		P_DrawSplash2 (40, x, y, z, dir, 2, bloodcolor);
 }
 
 // Blood splatter -----------------------------------------------------------
@@ -3712,6 +3882,8 @@ END_DEFAULTS
 
 void P_BloodSplatter (fixed_t x, fixed_t y, fixed_t z, AActor *originator)
 {
+	PalEntry bloodcolor = (PalEntry)originator->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
+
 	if (cl_bloodtype <= 1)
 	{
 		AActor *mo;
@@ -3728,10 +3900,13 @@ void P_BloodSplatter (fixed_t x, fixed_t y, fixed_t z, AActor *originator)
 		mo->momx = pr_splatter.Random2 () << 10;
 		mo->momy = pr_splatter.Random2 () << 10;
 		mo->momz = 3*FRACUNIT;
+
+		// colorize the blood!
+		if (bloodcolor!=0) mo->Translation = TRANSLATION(TRANSLATION_Blood, bloodcolor.a);
 	}
 	if (cl_bloodtype >= 1)
 	{
-		P_DrawSplash2 (40, x, y, z, R_PointToAngle (originator->x - x, originator->y - y), 2, 0);
+		P_DrawSplash2 (40, x, y, z, R_PointToAngle2 (x, y, originator->x, originator->y), 2, bloodcolor);
 	}
 }
 
@@ -3741,9 +3916,10 @@ void P_BloodSplatter (fixed_t x, fixed_t y, fixed_t z, AActor *originator)
 //
 //---------------------------------------------------------------------------
 
-void P_RipperBlood (AActor *mo)
+void P_RipperBlood (AActor *mo, AActor *bleeder)
 {
 	fixed_t x, y, z;
+	PalEntry bloodcolor = (PalEntry)bleeder->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
 
 	x = mo->x + (pr_ripperblood.Random2 () << 12);
 	y = mo->y + (pr_ripperblood.Random2 () << 12);
@@ -3757,10 +3933,13 @@ void P_RipperBlood (AActor *mo)
 		th->momx = mo->momx >> 1;
 		th->momy = mo->momy >> 1;
 		th->tics += pr_ripperblood () & 3;
+
+		// colorize the blood!
+		if (bloodcolor!=0) th->Translation = TRANSLATION(TRANSLATION_Blood, bloodcolor.a);
 	}
 	if (cl_bloodtype >= 1)
 	{
-		P_DrawSplash2 (28, x, y, z, 0, 0, 0);
+		P_DrawSplash2 (28, x, y, z, 0, 0, bloodcolor);
 	}
 }
 
@@ -4266,13 +4445,18 @@ int AActor::DoSpecialDamage (AActor *target, int damage)
 int AActor::TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, int damagetype)
 {
 	// If the actor does not have a corresponding death state, then it does not take damage.
-	// Note that DeathState matches every kind of damagetype, so an actor has that, it can
+	// Note that DeathState matches every kind of damagetype, so if an actor has that, it can
 	// be hurt with any type of damage. Exception: Massacre damage always succeeds, because
 	// it needs to work.
 	FState *death;
 
 	if (DeathState != NULL)
 	{
+		return damage;
+	}
+	if (EDeathState==NULL && BDeathState==NULL && IDeathState==NULL)
+	{
+		// If there is no death state at all, kill it always.
 		return damage;
 	}
 

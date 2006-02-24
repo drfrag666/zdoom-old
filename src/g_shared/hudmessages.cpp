@@ -39,7 +39,7 @@
 #include "v_video.h"
 #include "cmdlib.h"
 
-EXTERN_CVAR (Bool, con_scaletext)
+EXTERN_CVAR (Int, con_scaletext)
 
 IMPLEMENT_CLASS (DHUDMessage)
 IMPLEMENT_CLASS (DHUDMessageFadeOut)
@@ -201,7 +201,7 @@ void DHUDMessage::ResetText (const char *text)
 	}
 	else
 	{
-		width = con_scaletext ? SCREENWIDTH / CleanXfac : SCREENWIDTH;
+		width = con_scaletext >=2 ? SCREENWIDTH/2 : (con_scaletext ? SCREENWIDTH / CleanXfac : SCREENWIDTH); 
 	}
 
 	if (Lines != NULL)
@@ -265,7 +265,9 @@ void DHUDMessage::Draw (int bottom)
 
 	DrawSetup ();
 
-	if (HUDWidth == 0 && con_scaletext)
+	int screen_width = SCREENWIDTH;
+	int screen_height = SCREENHEIGHT;
+	if (HUDWidth == 0 && con_scaletext==1)
 	{
 		clean = true;
 		xscale = CleanXfac;
@@ -274,17 +276,23 @@ void DHUDMessage::Draw (int bottom)
 	else
 	{
 		xscale = yscale = 1;
+		if (HUDWidth==0 && con_scaletext>1) 
+		{
+			screen_width/=2;
+			screen_height/=2;
+			bottom/=2;
+		}
 	}
 
 	if (HUDWidth == 0)
 	{
 		if (Left > 0.f)
 		{ // Position center
-			x = (int)((float)(SCREENWIDTH - Width * xscale) * Left);
+			x = (int)((float)(screen_width - Width * xscale) * Left);
 		}
 		else
 		{ // Position edge
-			x = (int)((float)SCREENWIDTH * -Left);
+			x = (int)((float)screen_width * -Left);
 		}
 		if (Top > 0.f)
 		{ // Position center
@@ -342,7 +350,7 @@ void DHUDMessage::Draw (int bottom)
 	else
 	{
 		// A positive height means the HUD size does not cover the status bar
-		hudheight = Scale (HUDHeight, SCREENHEIGHT, bottom);
+		hudheight = Scale (HUDHeight, screen_height, bottom);
 	}
 
 	for (i = 0; i < NumLines; i++)
@@ -377,9 +385,20 @@ void DHUDMessage::DoDraw (int linenum, int x, int y, bool clean, int hudheight)
 {
 	if (hudheight == 0)
 	{
-		screen->DrawText (TextColor, x, y, Lines[linenum].string,
-			DTA_CleanNoMove, clean,
-			TAG_DONE);
+		if (con_scaletext <= 1)
+		{
+			screen->DrawText (TextColor, x, y, Lines[linenum].string,
+				DTA_CleanNoMove, clean,
+				TAG_DONE);
+		}
+		else
+		{
+			screen->DrawText (TextColor, x, y, Lines[linenum].string,
+				DTA_VirtualWidth, SCREENWIDTH/2,
+				DTA_VirtualHeight, SCREENHEIGHT/2,
+				DTA_KeepRatio, true,
+				TAG_DONE);
+		}
 	}
 	else
 	{
@@ -459,10 +478,22 @@ void DHUDMessageFadeOut::DoDraw (int linenum, int x, int y, bool clean, int hudh
 		fixed_t trans = -(Tics - FadeOutTics) * FRACUNIT / FadeOutTics;
 		if (hudheight == 0)
 		{
-			screen->DrawText (TextColor, x, y, Lines[linenum].string,
-				DTA_CleanNoMove, clean,
-				DTA_Alpha, trans,
-				TAG_DONE);
+			if (con_scaletext <= 1)
+			{
+				screen->DrawText (TextColor, x, y, Lines[linenum].string,
+					DTA_CleanNoMove, clean,
+					DTA_Alpha, trans,
+					TAG_DONE);
+			}
+			else
+			{
+				screen->DrawText (TextColor, x, y, Lines[linenum].string,
+					DTA_VirtualWidth, SCREENWIDTH/2,
+					DTA_VirtualHeight, SCREENHEIGHT/2,
+					DTA_Alpha, trans,
+					DTA_KeepRatio, true,
+					TAG_DONE);
+			}
 		}
 		else
 		{
@@ -540,10 +571,22 @@ void DHUDMessageFadeInOut::DoDraw (int linenum, int x, int y, bool clean, int hu
 		fixed_t trans = Tics * FRACUNIT / FadeInTics;
 		if (hudheight == 0)
 		{
-			screen->DrawText (TextColor, x, y, Lines[linenum].string,
-				DTA_CleanNoMove, clean,
-				DTA_Alpha, trans,
-				TAG_DONE);
+			if (con_scaletext <= 1)
+			{
+				screen->DrawText (TextColor, x, y, Lines[linenum].string,
+					DTA_CleanNoMove, clean,
+					DTA_Alpha, trans,
+					TAG_DONE);
+			}
+			else
+			{
+				screen->DrawText (TextColor, x, y, Lines[linenum].string,
+					DTA_VirtualWidth, SCREENWIDTH/2,
+					DTA_VirtualHeight, SCREENHEIGHT/2,
+					DTA_Alpha, trans,
+					DTA_KeepRatio, true,
+					TAG_DONE);
+			}
 		}
 		else
 		{
@@ -685,9 +728,20 @@ void DHUDMessageTypeOnFadeOut::DoDraw (int linenum, int x, int y, bool clean, in
 			Lines[linenum].string[LineVisible] = 0;
 			if (hudheight == 0)
 			{
-				screen->DrawText (TextColor, x, y, Lines[linenum].string,
-					DTA_CleanNoMove, clean,
-					TAG_DONE);
+				if (con_scaletext <= 1)
+				{
+					screen->DrawText (TextColor, x, y, Lines[linenum].string,
+						DTA_CleanNoMove, clean,
+						TAG_DONE);
+				}
+				else
+				{
+					screen->DrawText (TextColor, x, y, Lines[linenum].string,
+						DTA_VirtualWidth, SCREENWIDTH/2,
+						DTA_VirtualHeight, SCREENHEIGHT/2,
+						DTA_KeepRatio, true,
+						TAG_DONE);
+				}
 			}
 			else
 			{

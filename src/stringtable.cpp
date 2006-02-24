@@ -44,7 +44,7 @@
 #include "zstring.h"
 #include "c_dispatch.h"
 
-// YassNum identifies which language pass this string is from.
+// PassNum identifies which language pass this string is from.
 // PassNum 0 is for DeHacked.
 // PassNum 1 is for * strings.
 // PassNum 2+ are for specific locales.
@@ -224,6 +224,9 @@ void FStringTable::LoadLanguage (int lumpnum, DWORD code, bool exactMatch, int p
 				} while (!SC_Compare (";"));
 				continue;
 			}
+
+			if (SC_Compare ("C2TEXT"))
+				skip = skip;
 
 			string strName (sc_String);
 			SC_MustGetStringName ("=");

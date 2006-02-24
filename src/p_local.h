@@ -99,10 +99,10 @@ int P_FaceMobj (AActor *source, AActor *target, angle_t *delta);
 bool P_SeekerMissile (AActor *actor, angle_t thresh, angle_t turnMax);
 
 AActor *P_SpawnPuff (const TypeInfo *pufftype, fixed_t x, fixed_t y, fixed_t z, angle_t dir, int updown, bool hit=false);
-void	P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, angle_t dir, int damage);
+void	P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, angle_t dir, int damage, AActor *originator);
 void	P_BloodSplatter (fixed_t x, fixed_t y, fixed_t z, AActor *originator);
 void	P_BloodSplatter2 (fixed_t x, fixed_t y, fixed_t z, AActor *originator);
-void	P_RipperBlood (AActor *mo);
+void	P_RipperBlood (AActor *mo, AActor *bleeder);
 int		P_GetThingFloorType (AActor *thing);
 void	P_ExplodeMissile (AActor *missile, line_t *explodeline);
 
@@ -275,6 +275,9 @@ extern TArray<line_t *> spechit;
 extern bool				DoRipping;
 extern AActor			*LastRipped;
 
+bool P_IsFriend(AActor * self, AActor * other);
+bool P_IsHostile(AActor * self, AActor * other);
+
 BOOL	P_TestMobjLocation (AActor *mobj);
 bool	P_TestMobjZ (AActor *mobj);
 BOOL	P_CheckPosition (AActor *thing, fixed_t x, fixed_t y);
@@ -386,7 +389,7 @@ protected:
 	DPolyAction ();
 	int m_PolyObj;
 	int m_Speed;
-	unsigned int m_Dist;
+	int m_Dist;
 
 	void SetInterpolation ();
 

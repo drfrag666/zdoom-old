@@ -68,9 +68,13 @@ void DDoor::Tick ()
 
 	if (m_Sector->floorplane.d != m_OldFloorDist)
 	{
-		m_OldFloorDist = m_Sector->floorplane.d;
-		m_BotDist = m_Sector->ceilingplane.PointToDist (m_BotSpot,
-			m_Sector->floorplane.ZatPoint (m_BotSpot));
+		if (!m_Sector->floordata || !m_Sector->floordata->IsKindOf(RUNTIME_CLASS(DPlat)) ||
+			!((DPlat*)m_Sector->floordata)->IsLift())
+		{
+			m_OldFloorDist = m_Sector->floorplane.d;
+			m_BotDist = m_Sector->ceilingplane.PointToDist (m_BotSpot,
+				m_Sector->floorplane.ZatPoint (m_BotSpot));
+		}
 	}
 
 	switch (m_Direction)
@@ -201,7 +205,7 @@ void DDoor::Tick ()
 // [RH] DoorSound: Plays door sound depending on direction and speed
 void DDoor::DoorSound (bool raise) const
 {
-	const char *snd;
+	const char *snd = "";
 
 	if (m_Sector->seqType >= 0)
 	{
@@ -341,8 +345,17 @@ DDoor::DDoor (sector_t *sec, EVlDoor type, fixed_t speed, int delay, int lightTa
 		break;
 	}
 
-	height = sec->FindHighestFloorPoint (&m_BotSpot);
-	m_BotDist = sec->ceilingplane.PointToDist (m_BotSpot, height);
+	if (!m_Sector->floordata || !m_Sector->floordata->IsKindOf(RUNTIME_CLASS(DPlat)) ||
+		!((DPlat*)m_Sector->floordata)->IsLift())
+	{
+		height = sec->FindHighestFloorPoint (&m_BotSpot);
+		m_BotDist = sec->ceilingplane.PointToDist (m_BotSpot, height);
+	}
+	else
+	{
+		height = sec->FindLowestCeilingPoint(&m_BotSpot);
+		m_BotDist = sec->ceilingplane.PointToDist (m_BotSpot, height);
+	}
 	m_OldFloorDist = sec->floorplane.d;
 }
 
@@ -362,7 +375,7 @@ bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 			return false;
 
 		// if the wrong side of door is pushed, give oof sound
-		if (line->sidenum[1] == NO_INDEX)			// killough
+		if (line->sidenum[1] == NO_SIDE)			// killough
 		{
 			S_Sound (thing, CHAN_VOICE, "*usefail", 1, ATTN_NORM);
 			return false;
@@ -493,6 +506,36 @@ static int P_FindSlidingDoorType (int picnum)
 	return -1;
 }
 
+bool DAnimatedDoor::StartClosing ()
+{
+	FDoorAnimation &ani = DoorAnimations[m_WhichDoorIndex];
+
+	// CAN DOOR CLOSE?
+	if (m_Sector->touching_thinglist != NULL)
+	{
+		return false;
+	}
+
+	fixed_t topdist = m_Sector->ceilingplane.d;
+	if (MoveCeiling (2048*FRACUNIT, m_BotDist, 0, -1) == crushed)
+	{
+		return false;
+	}
+
+	MoveCeiling (2048*FRACUNIT, topdist, 1);
+
+	m_Line1->flags |= ML_BLOCKING;
+	m_Line2->flags |= ML_BLOCKING;
+	if (ani.CloseSound != NULL)
+	{
+		SN_StartSequence (m_Sector, ani.CloseSound);
+	}
+
+	m_Status = Closing;
+	m_Timer = m_Speed;
+	return true;
+}
+
 void DAnimatedDoor::Tick ()
 {
 	FDoorAnimation &ani = DoorAnimations[m_WhichDoorIndex];
@@ -541,31 +584,10 @@ void DAnimatedDoor::Tick ()
 		// IF DOOR IS DONE WAITING...
 		if (!m_Timer--)
 		{
-			// CAN DOOR CLOSE?
-			if (m_Sector->touching_thinglist != NULL)
+			if (!StartClosing())
 			{
 				m_Timer = m_Delay;
-				break;
 			}
-
-			fixed_t topdist = m_Sector->ceilingplane.d;
-			if (MoveCeiling (2048*FRACUNIT, m_BotDist, 0, -1) == crushed)
-			{
-				m_Timer = m_Delay;
-				break;
-			}
-
-			MoveCeiling (2048*FRACUNIT, topdist, 1);
-
-			m_Line1->flags |= ML_BLOCKING;
-			m_Line2->flags |= ML_BLOCKING;
-			if (ani.CloseSound != NULL)
-			{
-				SN_StartSequence (m_Sector, ani.CloseSound);
-			}
-
-			m_Status = Closing;
-			m_Timer = m_Speed;
 		}
 		break;
 
@@ -577,6 +599,7 @@ void DAnimatedDoor::Tick ()
 				// IF DOOR IS DONE CLOSING...
 				MoveCeiling (2048*FRACUNIT, m_BotDist, -1);
 				m_Sector->ceilingdata = NULL;
+				Destroy ();
 				break;
 			}
 			else
@@ -674,7 +697,11 @@ DAnimatedDoor::DAnimatedDoor (sector_t *sec, line_t *line, int speed, int delay)
 	sides[m_Line1->sidenum[0]].midtexture = picnum;
 	sides[m_Line2->sidenum[0]].midtexture = picnum;
 
-	topdist = TexMan[picnum]->GetHeight();
+	// don't forget texture scaling here!
+	FTexture *tex = TexMan[picnum];
+	topdist = tex ? (tex->GetHeight() * 8 / (tex->ScaleY ? tex->ScaleY : 8)) : 64;	
+	//topdist = TexMan[picnum]->GetHeight();	// old non-scaling sensitive code!
+
 	topdist = m_Sector->ceilingplane.d - topdist * m_Sector->ceilingplane.c;
 
 	m_Status = Opening;
@@ -723,9 +750,7 @@ bool EV_SlidingDoor (line_t *line, AActor *actor, int tag, int speed, int delay)
 				DAnimatedDoor *door = static_cast<DAnimatedDoor *> (sec->ceilingdata);
 				if (door->m_Status == DAnimatedDoor::Waiting)
 				{
-					door->m_Timer = door->m_Speed;
-					door->m_Status = DAnimatedDoor::Closing;
-					return true;
+					return door->StartClosing();
 				}
 			}
 			return false;

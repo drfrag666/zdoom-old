@@ -35,7 +35,7 @@
 #define HU_INPUTX		0
 #define HU_INPUTY		(0 + (screen->Font->GetHeight () + 1))
 
-EXTERN_CVAR (Bool, con_scaletext)
+EXTERN_CVAR (Int, con_scaletext)
 
 // Public data
 
@@ -189,7 +189,7 @@ void CT_Drawer (void)
 		int i, x, scalex, y, promptwidth;
 
 		y = (viewactive || gamestate != GS_LEVEL) ? -10 : -30;
-		if (con_scaletext)
+		if (con_scaletext == 1)
 		{
 			scalex = CleanXfac;
 			y *= CleanYfac;
@@ -199,14 +199,18 @@ void CT_Drawer (void)
 			scalex = 1;
 		}
 
-		y += ((SCREENHEIGHT == realviewheight && viewactive) || gamestate != GS_LEVEL) ? SCREENHEIGHT : ST_Y;
+		int screen_width = con_scaletext > 1? SCREENWIDTH/2 : SCREENWIDTH;
+		int screen_height = con_scaletext > 1? SCREENHEIGHT/2 : SCREENHEIGHT;
+		int st_y = con_scaletext > 1?  ST_Y/2 : ST_Y;
+
+		y += ((SCREENHEIGHT == realviewheight && viewactive) || gamestate != GS_LEVEL) ? screen_height : st_y;
 
 		promptwidth = SmallFont->StringWidth (prompt) * scalex;
 		x = screen->Font->GetCharWidth ('_') * scalex * 2 + promptwidth;
 
 		// figure out if the text is wider than the screen->
 		// if so, only draw the right-most portion of it.
-		for (i = len - 1; i >= 0 && x < SCREENWIDTH; i--)
+		for (i = len - 1; i >= 0 && x < screen_width; i--)
 		{
 			x += screen->Font->GetCharWidth (ChatQueue[i] & 0x7f) * scalex;
 		}
@@ -223,8 +227,18 @@ void CT_Drawer (void)
 		// draw the prompt, text, and cursor
 		ChatQueue[len] = gameinfo.gametype == GAME_Doom ? '_' : '[';
 		ChatQueue[len+1] = '\0';
-		screen->DrawText (CR_GREEN, 0, y, prompt, DTA_CleanNoMove, *con_scaletext, TAG_DONE);
-		screen->DrawText (CR_GREY, promptwidth, y, (char *)(ChatQueue + i), DTA_CleanNoMove, *con_scaletext, TAG_DONE);
+		if (con_scaletext < 2)
+		{
+			screen->DrawText (CR_GREEN, 0, y, prompt, DTA_CleanNoMove, *con_scaletext, TAG_DONE);
+			screen->DrawText (CR_GREY, promptwidth, y, (char *)(ChatQueue + i), DTA_CleanNoMove, *con_scaletext, TAG_DONE);
+		}
+		else
+		{
+			screen->DrawText (CR_GREEN, 0, y, prompt, 
+				DTA_VirtualWidth, screen_width, DTA_VirtualHeight, screen_height, DTA_KeepRatio, true, TAG_DONE);
+			screen->DrawText (CR_GREY, promptwidth, y, (char *)(ChatQueue + i), 
+				DTA_VirtualWidth, screen_width, DTA_VirtualHeight, screen_height, DTA_KeepRatio, true, TAG_DONE);
+		}
 		ChatQueue[len] = '\0';
 
 		BorderTopRefresh = screen->GetPageCount ();

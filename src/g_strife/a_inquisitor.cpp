@@ -13,6 +13,7 @@ void A_InquisitorAttack (AActor *);
 void A_InquisitorJump (AActor *);
 void A_InquisitorCheckLand (AActor *);
 void A_TossArm (AActor *);
+void A_ShutUp (AActor *);
 
 void A_ReaverRanged (AActor *);
 void A_TossGib (AActor *);
@@ -58,28 +59,29 @@ FState AInquisitor::States[] =
 	S_BRIGHT (ROB3, 'H',  4, A_InquisitorCheckLand,	&States[S_INQ_BAR+1]),
 
 #define S_INQ_DIE (S_INQ_BAR+3)
-	S_NORMAL (ROB3, 'L',  4, A_TossGib,				&States[S_INQ_DIE+1]),
-	S_NORMAL (ROB3, 'M',  4, A_Scream,				&States[S_INQ_DIE+2]),
-	S_NORMAL (ROB3, 'N',  4, A_TossGib,				&States[S_INQ_DIE+3]),
-	S_BRIGHT (ROB3, 'O',  4, A_Explode,				&States[S_INQ_DIE+4]),
-	S_BRIGHT (ROB3, 'P',  4, A_TossGib,				&States[S_INQ_DIE+5]),
-	S_BRIGHT (ROB3, 'Q',  4, A_NoBlocking,			&States[S_INQ_DIE+6]),
-	S_NORMAL (ROB3, 'R',  4, A_TossGib,				&States[S_INQ_DIE+7]),
-	S_NORMAL (ROB3, 'S',  4, A_TossGib,				&States[S_INQ_DIE+8]),
-	S_NORMAL (ROB3, 'T',  4, A_TossGib,				&States[S_INQ_DIE+9]),
-	S_NORMAL (ROB3, 'U',  4, A_TossGib,				&States[S_INQ_DIE+10]),
-	S_NORMAL (ROB3, 'V',  4, A_TossGib,				&States[S_INQ_DIE+11]),
-	S_BRIGHT (ROB3, 'W',  4, A_Explode,				&States[S_INQ_DIE+12]),
-	S_BRIGHT (ROB3, 'X',  4, A_TossGib,				&States[S_INQ_DIE+13]),
-	S_BRIGHT (ROB3, 'Y',  4, A_TossGib,				&States[S_INQ_DIE+14]),
-	S_NORMAL (ROB3, 'Z',  4, A_TossGib,				&States[S_INQ_DIE+15]),
-	S_NORMAL (ROB3, '[',  4, A_TossGib,				&States[S_INQ_DIE+16]),
-	S_NORMAL (ROB3, '\\', 3, A_TossGib,				&States[S_INQ_DIE+17]),
-	S_BRIGHT (ROB3, ']',  3, A_Explode,				&States[S_INQ_DIE+18]),
-	S_BRIGHT (RBB3, 'A',  3, A_TossArm,				&States[S_INQ_DIE+19]),
-	S_BRIGHT (RBB3, 'B',  3, A_TossGib,				&States[S_INQ_DIE+20]),
-	S_NORMAL (RBB3, 'C',  3, A_TossGib,				&States[S_INQ_DIE+21]),
-	S_NORMAL (RBB3, 'D',  3, A_TossGib,				&States[S_INQ_DIE+22]),
+	S_NORMAL (ROB3, 'L',  0, A_ShutUp,				&States[S_INQ_DIE+1]),
+	S_NORMAL (ROB3, 'L',  4, A_TossGib,				&States[S_INQ_DIE+2]),
+	S_NORMAL (ROB3, 'M',  4, A_Scream,				&States[S_INQ_DIE+3]),
+	S_NORMAL (ROB3, 'N',  4, A_TossGib,				&States[S_INQ_DIE+4]),
+	S_BRIGHT (ROB3, 'O',  4, A_ExplodeAndAlert,		&States[S_INQ_DIE+5]),
+	S_BRIGHT (ROB3, 'P',  4, A_TossGib,				&States[S_INQ_DIE+6]),
+	S_BRIGHT (ROB3, 'Q',  4, A_NoBlocking,			&States[S_INQ_DIE+7]),
+	S_NORMAL (ROB3, 'R',  4, A_TossGib,				&States[S_INQ_DIE+8]),
+	S_NORMAL (ROB3, 'S',  4, A_TossGib,				&States[S_INQ_DIE+9]),
+	S_NORMAL (ROB3, 'T',  4, A_TossGib,				&States[S_INQ_DIE+10]),
+	S_NORMAL (ROB3, 'U',  4, A_TossGib,				&States[S_INQ_DIE+11]),
+	S_NORMAL (ROB3, 'V',  4, A_TossGib,				&States[S_INQ_DIE+12]),
+	S_BRIGHT (ROB3, 'W',  4, A_ExplodeAndAlert,		&States[S_INQ_DIE+13]),
+	S_BRIGHT (ROB3, 'X',  4, A_TossGib,				&States[S_INQ_DIE+14]),
+	S_BRIGHT (ROB3, 'Y',  4, A_TossGib,				&States[S_INQ_DIE+15]),
+	S_NORMAL (ROB3, 'Z',  4, A_TossGib,				&States[S_INQ_DIE+16]),
+	S_NORMAL (ROB3, '[',  4, A_TossGib,				&States[S_INQ_DIE+17]),
+	S_NORMAL (ROB3, '\\', 3, A_TossGib,				&States[S_INQ_DIE+18]),
+	S_BRIGHT (ROB3, ']',  3, A_ExplodeAndAlert,		&States[S_INQ_DIE+19]),
+	S_BRIGHT (RBB3, 'A',  3, A_TossArm,				&States[S_INQ_DIE+20]),
+	S_BRIGHT (RBB3, 'B',  3, A_TossGib,				&States[S_INQ_DIE+21]),
+	S_NORMAL (RBB3, 'C',  3, A_TossGib,				&States[S_INQ_DIE+22]),
+	S_NORMAL (RBB3, 'D',  3, A_TossGib,				&States[S_INQ_DIE+23]),
 	S_NORMAL (RBB3, 'E', -1, NULL,					NULL),
 	// The Inquisitor called A_BossDeath in Strife, but A_BossDeath doesn't
 	// do anything for it, so there's no reason to call it.
@@ -98,6 +100,7 @@ IMPLEMENT_ACTOR (AInquisitor, Strife, 16, 0)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_DROPOFF|MF_NOBLOOD|MF_COUNTKILL)
 	PROP_Flags2 (MF2_BOSS|MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
 	PROP_Flags3 (MF3_NORADIUSDMG|MF3_DONTMORPH)
+	PROP_MaxDropOffHeight (32)
 	PROP_MinMissileChance (150)
 	PROP_SeeSound ("inquisitor/sight")
 	PROP_DeathSound ("inquisitor/death")
@@ -118,7 +121,7 @@ FState AInquisitorShot::States[] =
 	S_NORMAL (UBAM, 'A', 3, A_Countdown,		&States[1]),
 	S_NORMAL (UBAM, 'B', 3, A_Countdown,		&States[0]),
 
-	S_BRIGHT (BNG2, 'A', 4, A_Explode,			&States[3]),
+	S_BRIGHT (BNG2, 'A', 4, A_ExplodeAndAlert,	&States[3]),
 	S_BRIGHT (BNG2, 'B', 4, NULL,				&States[4]),
 	S_BRIGHT (BNG2, 'C', 4, NULL,				&States[5]),
 	S_BRIGHT (BNG2, 'D', 4, NULL,				&States[6]),
@@ -140,6 +143,7 @@ IMPLEMENT_ACTOR (AInquisitorShot, Strife, -1, 0)
 	PROP_Mass (15)
 	PROP_Flags (MF_NOBLOCKMAP|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags4 (MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 	PROP_SeeSound ("inquisitor/attack")
 	PROP_DeathSound ("inquisitor/atkexplode")
 END_DEFAULTS
@@ -268,7 +272,7 @@ void A_InquisitorCheckLand (AActor *self)
 		self->SetState (self->SeeState);
 		self->reactiontime = 0;
 		self->flags &= ~MF_NOGRAVITY;
-		S_StopSound (self, CHAN_ITEM);
+		A_ShutUp (self);
 		return;
 	}
 	if (!S_IsActorPlayingSomething (self, CHAN_ITEM))
@@ -285,4 +289,9 @@ void A_TossArm (AActor *self)
 	foo->momx = FixedMul (foo->Speed, finecosine[foo->angle >> ANGLETOFINESHIFT]) >> 3;
 	foo->momy = FixedMul (foo->Speed, finesine[foo->angle >> ANGLETOFINESHIFT]) >> 3;
 	foo->momz = pr_inq() << 10;
+}
+
+void A_ShutUp (AActor *self)
+{
+	S_StopSound (self, CHAN_ITEM);
 }

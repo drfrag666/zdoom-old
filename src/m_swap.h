@@ -23,24 +23,26 @@
 #ifndef __M_SWAP_H__
 #define __M_SWAP_H__
 
+#include <stdlib.h>
+
 // Endianess handling.
 // WAD files are stored little endian.
 #ifdef WORDS_BIGENDIAN
 
 // Swap 16bit, that is, MSB and LSB byte.
 // No masking with 0xFF should be necessary. 
-inline short SHORT (short x)
+inline short LittleShort (short x)
 {
 	return (short)((((unsigned short)x)>>8) | (((unsigned short)x)<<8));
 }
 
-inline unsigned short SHORT (unsigned short x)
+inline unsigned short LittleShort (unsigned short x)
 {
 	return (unsigned short)((x>>8) | (x<<8));
 }
 
 // Swapping 32bit.
-inline unsigned int LONG (unsigned int x)
+inline unsigned int LittleLong (unsigned int x)
 {
 	return (unsigned int)(
 		(x>>24)
@@ -49,7 +51,7 @@ inline unsigned int LONG (unsigned int x)
 		| (x<<24));
 }
 
-inline int LONG (int x)
+inline int LittleLong (int x)
 {
 	return (int)(
 		(((unsigned int)x)>>24)
@@ -58,56 +60,50 @@ inline int LONG (int x)
 		| (((unsigned int)x)<<24));
 }
 
-#define BESHORT(x)		(x)
-#define BELONG(x)		(x)
+#define BigShort(x)		(x)
+#define BigLong(x)		(x)
 
 #else
 
-#define SHORT(x)		(x)
-#define LONG(x) 		(x)
+#define LittleShort(x)		(x)
+#define LittleLong(x) 		(x)
 
-#if defined(_MSC_VER) && defined(USEASM)
-#pragma warning (disable: 4035)
+#if defined(_MSC_VER)
 
-inline short BESHORT (short x)
+inline short BigShort (short x)
 {
-	__asm mov ax, x
-	__asm xchg al, ah
+	return (short)_byteswap_ushort((unsigned short)x);
 }
 
-inline unsigned short BESHORT (unsigned short x)
+inline unsigned short BigShort (unsigned short x)
 {
-	__asm mov ax, x
-	__asm xchg al, ah
+	return _byteswap_ushort(x);
 }
 
-inline int BELONG (int x)
+inline int BigLong (int x)
 {
-	__asm mov eax, x
-	__asm bswap eax
+	return (int)_byteswap_ulong((unsigned long)x);
 }
 
-inline unsigned int BELONG (unsigned int x)
+inline unsigned int BigLong (unsigned int x)
 {
-	__asm mov eax, x
-	__asm bswap eax
+	return (unsigned int)_byteswap_ulong((unsigned long)x);
 }
-
 #pragma warning (default: 4035)
 
 #else
 
-inline short BESHORT (short x)
+inline short BigShort (short x)
 {
 	return (short)((((unsigned short)x)>>8) | (((unsigned short)x)<<8));
 }
 
-inline unsigned short BESHORT (unsigned short x)
+inline unsigned short BigShort (unsigned short x)
 {
 	return (unsigned short)((x>>8) | (x<<8));
 }
 
-inline unsigned int BELONG (unsigned int x)
+inline unsigned int BigLong (unsigned int x)
 {
 	return (unsigned int)(
 		(x>>24)
@@ -116,7 +112,7 @@ inline unsigned int BELONG (unsigned int x)
 		| (x<<24));
 }
 
-inline int BELONG (int x)
+inline int BigLong (int x)
 {
 	return (int)(
 		(((unsigned int)x)>>24)

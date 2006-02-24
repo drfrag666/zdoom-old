@@ -49,6 +49,8 @@ IMPLEMENT_ACTOR (AZombie, Strife, 169, 0)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE)
 	PROP_Flags2 (MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
 	PROP_MinMissileChance (150)
+	PROP_MaxStepHeight (16)
+	PROP_MaxDropOffHeight (32)
 	PROP_Translation (TRANSLATION_Standard, 0)
 	PROP_StrifeType (28)
 

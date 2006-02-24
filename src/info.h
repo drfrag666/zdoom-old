@@ -65,26 +65,26 @@
 #ifndef __INFO_H__
 #define __INFO_H__
 
+#include <stddef.h>
+#ifndef _WIN32
+#include <inttypes.h>		// for intptr_t
+#endif
+
 #include "dobject.h"
 #include "dthinker.h"
 #include "farchive.h"
 #include "doomdef.h"
 #include "name.h"
 
-const BYTE SF_WEAPONPARAM= 0x20;
+const BYTE SF_STATEPARAM = 0x20;
 const BYTE SF_FULLBRIGHT = 0x40;
 const BYTE SF_BIGTIC	 = 0x80;
 
-// For weapon action functions with parameters a few tricks are necessary
-// because the misc fields are already used. This serves as a base class
-// for all parameter lists for weapon functions.
-struct FWeaponParam
-{
-	SBYTE wp_xoffset;
-	BYTE wp_yoffset;
-};
+// All state parameters are stored in this array now.
+// The first 2 parameters for each function call represent 
+// the old misc1/misc2 values, even for non-weapons
 
-extern TArray<FWeaponParam *> WeaponParams;
+extern TArray<intptr_t> StateParameters;
 
 struct FState
 {
@@ -106,7 +106,7 @@ struct FState
 
 	inline int GetFrame() const
 	{
-		return Frame & ~(SF_FULLBRIGHT|SF_BIGTIC|SF_WEAPONPARAM);
+		return Frame & ~(SF_FULLBRIGHT|SF_BIGTIC|SF_STATEPARAM);
 	}
 	inline int GetFullbright() const
 	{
@@ -160,6 +160,15 @@ struct FState
 		Frame = (Frame & (SF_FULLBRIGHT|SF_BIGTIC)) | (frame-'A');
 	}
 };
+
+// A truly awful hack to get to the state that called an action function
+// without knowing whether it has been called from a weapon or actor.
+extern FState * CallingState;
+int CheckIndex(int paramsize, FState ** pcallstate=NULL);
+
+// This is used when an inventory item's use state sequence is executed.
+bool CallStateChain(AActor * actor, FState * State);
+
 
 FArchive &operator<< (FArchive &arc, FState *&state);
 
@@ -262,6 +271,9 @@ enum
 	ADEF_RenderFlags,
 	ADEF_Translation,
 	ADEF_MinMissileChance,
+	ADEF_MeleeRange,
+	ADEF_MaxDropOffHeight,
+	ADEF_MaxStepHeight,
 
 	ADEF_SpawnState,
 	ADEF_SeeState,
@@ -276,6 +288,9 @@ enum
 	ADEF_EDeathState,
 	ADEF_RaiseState,
 	ADEF_WoundState,
+	ADEF_YesState,
+	ADEF_NoState,
+	ADEF_GreetingsState,
 
 	ADEF_StrifeType,	// Not really a property. Used to init StrifeTypes[] in p_conversation.h.
 	ADEF_StrifeTeaserType,
@@ -308,6 +323,7 @@ enum
 	ADEF_Ammo_BackpackMaxAmount,
 
 	ADEF_Weapon_Flags,
+	ADEF_Weapon_FlagsSet,
 	ADEF_Weapon_AmmoGive1,
 	ADEF_Weapon_AmmoGive2,
 	ADEF_Weapon_AmmoUse1,

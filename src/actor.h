@@ -262,6 +262,14 @@ enum
 	MF4_FIRERESIST		= 0x00080000,	// Actor takes half damage from fire
 	MF4_NOSPLASHALERT	= 0x00100000,	// Splashes don't alert this monster
 	MF4_SYNCHRONIZED	= 0x00200000,	// For actors spawned at load-time only: Do not randomize tics
+	MF4_NOTARGETSWITCH	= 0x00400000,	// monster never switches target until current one is dead
+	MF4_VFRICTION		= 0x00800000,	// Internal flag used by A_PainAttack to push a monster down
+	MF4_DONTHURTSPECIES	= 0x01000000,	// Don't hurt one's own kind with explosions (hitscans, too?)
+	MF4_SHIELDREFLECT	= 0x02000000,
+	MF4_DEFLECT			= 0x04000000,	// different projectile reflection styles
+	MF4_ALLOWPARTICLES	= 0x08000000,	// this puff type can be replaced by particles
+	MF4_NOEXTREMEDEATH	= 0x10000000,	// this projectile or weapon never gibs its victim
+	MF4_EXTREMEDEATH	= 0x20000000,	// this projectile or weapon always gibs its victim
 
 // --- mobj.renderflags ---
 
@@ -378,6 +386,9 @@ enum
 	AMETA_DeathHeight,		// fixed (height on normal death)
 	AMETA_BurnHeight,		// fixed (height on burning death)
 	AMETA_StrifeName,		// string (for named Strife objects)
+	AMETA_BloodColor,		// colorized blood
+	AMETA_GibHealth,		// negative health below which this monster dies an extreme death
+	AMETA_WoundHealth,		// health needed to enter wound state
 };
 
 // Map Object definition.
@@ -538,6 +549,9 @@ public:
 	// Moves the other actor's inventory to this one
 	void ObtainInventory (AActor *other);
 
+	// Die. Now.
+	virtual bool Massacre ();
+
 // info for drawing
 // NOTE: The first member variable *must* be x.
 	fixed_t	 		x,y,z;
@@ -595,6 +609,7 @@ public:
 	WORD			SpawnPoint[3]; 	// For nightmare respawn
 	WORD			SpawnAngle;
 	AActor			*tracer;		// Thing being chased/attacked for tracers
+	AActor			*master;		// Thing which spawned this one (prevents mutual attacks)
 	fixed_t			floorclip;		// value to use for floor clipping
 	SWORD			tid;			// thing identifier
 	BYTE			special;		// special
@@ -605,6 +620,7 @@ public:
 	BYTE			waterlevel;		// 0=none, 1=feet, 2=waist, 3=eyes
 	BYTE			MinMissileChance;// [RH] If a random # is > than this, then missile attack.
 	WORD			SpawnFlags;
+	fixed_t			meleerange;
 
 	// a linked list of sectors where this object appears
 	struct msecnode_s	*touching_sectorlist;				// phares 3/14/98
@@ -628,6 +644,7 @@ public:
 	WORD UseSound;		// [RH] Sound to play when an actor is used.
 
 	fixed_t Speed;
+	fixed_t MaxDropOffHeight, MaxStepHeight;
 	SDWORD Mass;
 	SWORD PainChance;
 	BYTE DamageType;
@@ -645,6 +662,11 @@ public:
 	FState *EDeathState;
 	FState *RaiseState;
 	FState *WoundState;
+	FState *HealState;
+	FState *CrushState;
+	FState *YesState;
+	FState *NoState;
+	FState *GreetingsState;
 
 	// [RH] The dialogue to show when this actor is "used."
 	FStrifeDialogueNode *Conversation;

@@ -24,7 +24,7 @@ void A_AlienSpectreDeath (AActor *);
 void A_AlertMonsters (AActor *);
 void A_Tracer2 (AActor *);
 
-AActor *P_SpawnSubMissile (AActor *source, TypeInfo *type);
+AActor *P_SpawnSubMissile (AActor *source, TypeInfo *type, AActor *target);
 
 // Alien Spectre 1 -----------------------------------------------------------
 
@@ -113,7 +113,7 @@ IMPLEMENT_ACTOR (AAlienSpectre1, Strife, 129, 0)
 	PROP_Flags (MF_SPECIAL|MF_SOLID|MF_SHOOTABLE|MF_NOGRAVITY|
 				MF_FLOAT|MF_SHADOW|MF_COUNTKILL|MF_NOTDMATCH|MF_STRIFEx8000000)
 	PROP_Flags2 (MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
-	PROP_Flags3 (MF3_DONTMORPH)
+	PROP_Flags3 (MF3_DONTMORPH|MF3_NOBLOCKMONST)
 	PROP_Flags4 (MF4_INCOMBAT|MF4_LOOKALLAROUND|MF4_SPECTRAL|MF4_NOICEDEATH)
 	PROP_MinMissileChance (150)
 	PROP_RenderStyle (STYLE_Translucent)
@@ -449,11 +449,11 @@ void A_20314 (AActor *self)
 void A_20424 (AActor *self)
 {
 	self->angle += ANGLE_90;
-	P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningH3));
+	P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningH3), self);
 	self->angle += ANGLE_180;
-	P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningH3));
+	P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningH3), self);
 	self->angle += ANGLE_90;
-	P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningH3));
+	P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningH3), self);
 }
 
 void A_20334 (AActor *self)
@@ -472,7 +472,7 @@ void A_20334 (AActor *self)
 	for (int i = 0; i < 20; ++i)
 	{
 		self->angle += ANGLE_180 / 20;
-		P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningBall2));
+		P_SpawnSubMissile (self, RUNTIME_CLASS(ASpectralLightningBall2), self);
 	}
 	self->angle -= ANGLE_180 / 20 * 10;
 }
@@ -533,12 +533,12 @@ void A_AlienSpectreDeath (AActor *self)
 		{ // If the Bishop is dead, set quest item 22
 			player->GiveInventoryType (QuestItemClasses[21]);
 		}
-		if (player->FindInventory (QuestItemClasses[24]) == NULL)
-		{
+		if (player->FindInventory (QuestItemClasses[23]) == NULL)
+		{	// Macil is calling us back...
 			log = 87;
 		}
 		else
-		{
+		{	// You weild the power of the complete Sigil.
 			log = 85;
 		}
 		EV_DoDoor (DDoor::doorOpen, NULL, NULL, 222, 8*FRACUNIT, 0, 0, 0);
@@ -548,11 +548,11 @@ void A_AlienSpectreDeath (AActor *self)
 		// You Killed Macil!
 		player->GiveInventoryType (QuestItemClasses[23]);
 		if (player->FindInventory (QuestItemClasses[24]) == NULL)
-		{
+		{	// Richter has taken over. Macil is a snake.
 			log = 79;
 		}
 		else
-		{
+		{	// Back to the factory for another Sigil!
 			log = 106;
 		}
 	}
@@ -569,11 +569,11 @@ void A_AlienSpectreDeath (AActor *self)
 		}
 		sigil = player->FindInventory<ASigil>();
 		if (sigil != NULL && sigil->NumPieces == 5)
-		{
+		{	// You weild the power of the complete Sigil.
 			log = 85;
 		}
 		else
-		{
+		{	// Another Sigil piece. Woohoo!
 			log = 83;
 		}
 		EV_DoFloor (DFloor::floorLowerToLowest, NULL, 666, FRACUNIT, 0, 0, 0);

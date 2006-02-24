@@ -49,6 +49,7 @@
 #include "p_enemy.h"
 #include "a_action.h"
 #include "decallib.h"
+#include "i_system.h"
 
 // MACROS ------------------------------------------------------------------
 
@@ -193,6 +194,7 @@ END_DEFAULTS
 void ProcessActor(void (*process)(FState *, int));
 void ProcessWeapon(void (*process)(FState *, int));
 void FinishThingdef();
+void InitDecorateTranslations();
 
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
 
@@ -333,6 +335,7 @@ void LoadDecorations (void (*process)(FState *, int))
 {
 	int lastlump, lump;
 
+	InitDecorateTranslations();
 	lastlump = 0;
 	while ((lump = Wads.FindLump ("DECORATE", &lastlump)) != -1)
 	{

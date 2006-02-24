@@ -23,6 +23,8 @@
 void I_InitMusicWin32 ();
 void I_ShutdownMusicWin32 ();
 
+extern float relative_volume;
+
 // The base music class. Everything is derived from this --------------------
 
 class MusInfo
@@ -192,6 +194,7 @@ protected:
 
 typedef void (__stdcall *SNESAPUInfo_TYPE) (DWORD*, DWORD*, DWORD*);
 typedef void (__stdcall *GetAPUData_TYPE) (void**, BYTE**, BYTE**, DWORD**, void**, void**, DWORD**, DWORD**);
+typedef void (__stdcall *LoadSPCFile_TYPE) (void*);
 typedef void (__stdcall *ResetAPU_TYPE) (DWORD);
 typedef void (__stdcall *SetDSPAmp_TYPE) (DWORD);
 typedef void (__stdcall *FixAPU_TYPE) (WORD, BYTE, BYTE, BYTE, BYTE, BYTE);
@@ -225,6 +228,7 @@ protected:
 
 	SNESAPUInfo_TYPE SNESAPUInfo;
 	GetAPUData_TYPE GetAPUData;
+	LoadSPCFile_TYPE LoadSPCFile;
 	ResetAPU_TYPE ResetAPU;
 	SetDSPAmp_TYPE SetDSPAmp;
 	FixAPU_TYPE FixAPU;

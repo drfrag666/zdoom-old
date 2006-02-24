@@ -41,6 +41,7 @@ IMPLEMENT_ACTOR (AOracle, Strife, 199, 0)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD|MF_COUNTKILL|MF_NOTDMATCH)
 	PROP_Flags2 (MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
 	PROP_Flags4 (MF4_FIRERESIST)
+	PROP_MaxDropOffHeight (32)
 	PROP_MinMissileChance (150)
 	PROP_Tag ("ORACLE")
 END_DEFAULTS
@@ -67,4 +68,20 @@ void A_WakeOracleSpectre (AActor *self)
 		spectre->target = self->target;
 		spectre->SetState (spectre->SeeState);
 	}
+}
+
+
+//============================================================================
+//
+// AOracle :: TakeSpecialDamage
+//
+// The Oracle is invulnerable to the first stage Sigil.
+//
+//============================================================================
+
+int AOracle::TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, int damagetype)
+{
+	if (inflictor->IsKindOf (RUNTIME_CLASS(ASpectralLightningV1)))
+		return -1;
+	return damage;
 }

@@ -308,6 +308,10 @@ CVAR (Float, joy_forwardspeed,	-1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Float, joy_sidespeed,		 1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Float, joy_upspeed,		-1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
+// set this to false to make keypad-enter a usable separate key!
+CVAR (Bool, k_mergekeys, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CVAR (Bool, k_allowfullscreentoggle, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+
 static FBaseCVar * const JoyConfigVars[] =
 {
 	&joy_xaxis, &joy_yaxis, &joy_zaxis, &joy_xrot, &joy_yrot, &joy_zrot, &joy_slider, &joy_dial,
@@ -650,7 +654,7 @@ LRESULT CALLBACK WndProc (HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			event.data2 = 1;
 			D_PostEvent (&event);
 		}
-		if (wParam == '\r')
+		if (wParam == '\r' && k_allowfullscreentoggle)
 		{
 			ToggleFullscreen = !ToggleFullscreen;
 		}
@@ -1847,17 +1851,20 @@ static void KeyRead ()
 	toState[DIK_TAB] = fromState[DIK_TAB];
 	toState[DIK_NUMLOCK] = fromState[DIK_NUMLOCK];
 
-	// "Merge" multiple keys that are considered to be the same.
-	// Also clear out the alternate versions after merging.
-	toState[DIK_RETURN]		|= toState[DIK_NUMPADENTER];
-	toState[DIK_LMENU]		|= toState[DIK_RMENU];
-	toState[DIK_LCONTROL]	|= toState[DIK_RCONTROL];
-	toState[DIK_LSHIFT]		|= toState[DIK_RSHIFT];
+	if (k_mergekeys)
+	{
+		// "Merge" multiple keys that are considered to be the same.
+		// Also clear out the alternate versions after merging.
+		toState[DIK_RETURN]		|= toState[DIK_NUMPADENTER];
+		toState[DIK_LMENU]		|= toState[DIK_RMENU];
+		toState[DIK_LCONTROL]	|= toState[DIK_RCONTROL];
+		toState[DIK_LSHIFT]		|= toState[DIK_RSHIFT];
 
-	toState[DIK_NUMPADENTER] = 0;
-	toState[DIK_RMENU]		 = 0;
-	toState[DIK_RCONTROL]	 = 0;
-	toState[DIK_RSHIFT]		 = 0;
+		toState[DIK_NUMPADENTER] = 0;
+		toState[DIK_RMENU]		 = 0;
+		toState[DIK_RCONTROL]	 = 0;
+		toState[DIK_RSHIFT]		 = 0;
+	}
 
 	// Now generate events for any keys that differ between the states
 	if (!GUICapture)

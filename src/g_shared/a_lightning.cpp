@@ -109,18 +109,20 @@ void DLightningThinker::LightningFlash ()
 	tempSec = sectors;
 	for (i = numsectors, j = 0; i > 0; --i, ++j, ++tempSec)
 	{
+		// allow combination of the lightning sector specials with bit masks
+		int special = (tempSec->special&0xff);
 		if (tempSec->ceilingpic == skyflatnum
-			|| tempSec->special == Light_IndoorLightning1
-			|| tempSec->special == Light_IndoorLightning2
-			|| tempSec->special == Light_OutdoorLightning)
+			|| special == Light_IndoorLightning1
+			|| special == Light_IndoorLightning2
+			|| special == Light_OutdoorLightning)
 		{
 			LightningLightLevels[j] = tempSec->lightlevel;
 			LightningLightLevels[numsectors+(j>>3)] |= 1<<(j&7);
-			if (tempSec->special == Light_IndoorLightning1)
+			if (special == Light_IndoorLightning1)
 			{
 				tempSec->lightlevel = MIN<int> (tempSec->lightlevel+64, flashLight);
 			}
-			else if (tempSec->special == Light_IndoorLightning2)
+			else if (special == Light_IndoorLightning2)
 			{
 				tempSec->lightlevel = MIN<int> (tempSec->lightlevel+32, flashLight);
 			}

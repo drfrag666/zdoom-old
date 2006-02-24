@@ -423,6 +423,8 @@ public:
 	void Serialize (FArchive &arc);
 	void Tick ();
 
+	bool IsLift() const { return m_Type == platDownWaitUpStay || m_Type == platDownWaitUpStayStone; }
+
 protected:
 	DPlat (sector_t *sector);
 
@@ -591,6 +593,8 @@ public:
 
 	void Serialize (FArchive &arc);
 	void Tick ();
+
+	bool StartClosing ();
 protected:
 	line_t *m_Line1, *m_Line2;
 	int m_Frame;

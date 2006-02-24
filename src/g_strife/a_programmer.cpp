@@ -25,7 +25,6 @@ class AProgrammer : public AActor
 	DECLARE_ACTOR (AProgrammer, AActor)
 public:
 	void NoBlockingSet ();
-	bool OkayToSwitchTarget (AActor *other);
 };
 
 FState AProgrammer::States[] =
@@ -95,20 +94,14 @@ IMPLEMENT_ACTOR (AProgrammer, Strife, 71, 0)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_NOGRAVITY|MF_FLOAT|
 				MF_NOBLOOD|MF_COUNTKILL|MF_NOTDMATCH)
 	PROP_Flags2 (MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
-	PROP_Flags3 (MF3_DONTMORPH)
-	PROP_Flags4 (MF4_LOOKALLAROUND|MF4_FIRERESIST|MF4_NOICEDEATH)
+	PROP_Flags3 (MF3_DONTMORPH|MF3_NOBLOCKMONST)
+	PROP_Flags4 (MF4_LOOKALLAROUND|MF4_FIRERESIST|MF4_NOICEDEATH|MF4_NOTARGETSWITCH)
 	PROP_MinMissileChance (150)
 	PROP_AttackSound ("programmer/attack")
 	PROP_PainSound ("programmer/pain")
 	PROP_DeathSound ("programmer/death")
 	PROP_ActiveSound ("programmer/active")
 END_DEFAULTS
-
-bool AProgrammer::OkayToSwitchTarget (AActor *other)
-{
-	// The Programmer never switches his target until his current one is dead.
-	return false;
-}
 
 //============================================================================
 //
@@ -132,14 +125,14 @@ public:
 
 FState AProgrammerBase::States[] =
 {
-	S_BRIGHT (BASE, 'A',  5, A_Explode,		&States[1]),
-	S_BRIGHT (BASE, 'B',  5, NULL,			&States[2]),
-	S_BRIGHT (BASE, 'C',  5, NULL,			&States[3]),
-	S_BRIGHT (BASE, 'D',  5, NULL,			&States[4]),
-	S_NORMAL (BASE, 'E',  5, NULL,			&States[5]),
-	S_NORMAL (BASE, 'F',  5, NULL,			&States[6]),
-	S_NORMAL (BASE, 'G',  5, NULL,			&States[7]),
-	S_NORMAL (BASE, 'H', -1, NULL,			NULL)
+	S_BRIGHT (BASE, 'A',  5, A_ExplodeAndAlert,	&States[1]),
+	S_BRIGHT (BASE, 'B',  5, NULL,				&States[2]),
+	S_BRIGHT (BASE, 'C',  5, NULL,				&States[3]),
+	S_BRIGHT (BASE, 'D',  5, NULL,				&States[4]),
+	S_NORMAL (BASE, 'E',  5, NULL,				&States[5]),
+	S_NORMAL (BASE, 'F',  5, NULL,				&States[6]),
+	S_NORMAL (BASE, 'G',  5, NULL,				&States[7]),
+	S_NORMAL (BASE, 'H', -1, NULL,				NULL)
 };
 
 IMPLEMENT_ACTOR (AProgrammerBase, Strife, -1, 0)

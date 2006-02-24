@@ -5,6 +5,7 @@
 #include "p_enemy.h"
 #include "s_sound.h"
 
+void A_AlertOthers (AActor *);
 void A_CloseUpShop (AActor *);
 void A_ClearSoundTarget (AActor *);
 void A_PlayActiveSound (AActor *);
@@ -15,13 +16,8 @@ class AMerchant : public AActor
 {
 	DECLARE_ACTOR (AMerchant, AActor)
 public:
-	void ConversationAnimation (int animnum);
+	int TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, int damagetype);
 };
-
-void A_PainCatch (AActor *m)
-{
-	m=m;
-}
 
 FState AMerchant::States[] =
 {
@@ -59,7 +55,7 @@ FState AMerchant::States[] =
 	S_NORMAL (MRBD, 'F',	6, NULL,				&States[S_MERCHANT_STND]),
 
 #define S_MERCHANT_PAIN (S_MERCHANT_BD+10)
-	S_NORMAL (MRPN, 'A',	3, A_PainCatch,			&States[S_MERCHANT_PAIN+1]),
+	S_NORMAL (MRPN, 'A',	3, A_AlertOthers,		&States[S_MERCHANT_PAIN+1]),
 	S_NORMAL (MRPN, 'B',	3, A_Pain,				&States[S_MERCHANT_PAIN+2]),
 	S_NORMAL (MRPN, 'C',	3, NULL,				&States[S_MERCHANT_PAIN+3]),
 	S_NORMAL (MRPN, 'D',	9, A_CloseUpShop,		&States[S_MERCHANT_PAIN+4]),
@@ -83,6 +79,9 @@ IMPLEMENT_ACTOR (AMerchant, Strife, -1, 0)
 	PROP_SpawnState (S_MERCHANT_STND)
 	PROP_SeeState (S_MERCHANT_PAIN)
 	PROP_PainState (S_MERCHANT_PAIN)
+	PROP_GreetingsState (S_MERCHANT_GT)
+	PROP_YesState (S_MERCHANT_YES)
+	PROP_NoState (S_MERCHANT_NO)
 
 	PROP_SpawnHealthLong (10000000)
 	PROP_PainChance (150)
@@ -93,20 +92,14 @@ IMPLEMENT_ACTOR (AMerchant, Strife, -1, 0)
 	PROP_Flags4 (MF4_NOSPLASHALERT)
 END_DEFAULTS
 
-void AMerchant::ConversationAnimation (int animnum)
+int AMerchant::TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, int damagetype)
 {
-	switch (animnum)
+	target = source;
+	if (PainState != NULL)
 	{
-	case 0:
-		SetState (&States[S_MERCHANT_GT]);
-		break;
-	case 1:
-		SetState (&States[S_MERCHANT_YES]);
-		break;
-	case 2:
-		SetState (&States[S_MERCHANT_NO]);
-		break;
+		SetState (PainState);
 	}
+	return -1;
 }
 
 // Weapon Smith -------------------------------------------------------------
@@ -176,6 +169,27 @@ END_DEFAULTS
 
 //============================================================================
 //
+// A_AlertOthers
+//
+// [RH] Split from A_CloseUpShop so that when merchants go into their pain
+// state, the very first thing they do is send out an alert, which should
+// prevent perpetual store closure. If we wait until A_CloseUpShop to do this,
+// it is possible to set up a chain reaction where one merchant sends out the
+// alert after another has already cleared their alert, causing that merchant
+// to go back on the alert and send out their own alert 9 tics later.
+//
+//============================================================================
+
+void A_AlertOthers (AActor *self)
+{
+	if (self->target != NULL && self->target->player != NULL)
+	{
+		P_NoiseAlert (self->target, self);
+	}
+}
+
+//============================================================================
+//
 // A_CloseUpShop
 //
 //============================================================================
@@ -183,10 +197,6 @@ END_DEFAULTS
 void A_CloseUpShop (AActor *self)
 {
 	EV_DoDoor (DDoor::doorCloseWaitOpen, NULL, self, 999, 8*FRACUNIT, 120*TICRATE, 0, 0);
-	if (self->target != NULL && self->target->player != NULL)
-	{
-		P_NoiseAlert (self->target, self);
-	}
 }
 
 //============================================================================

@@ -90,6 +90,7 @@ void STACK_ARGS DCanvas::DrawTexture (FTexture *img, int x0, int y0, DWORD tags_
 	int shadowColor = 0;
 	int virtWidth = this->GetWidth();
 	int virtHeight = this->GetHeight();
+	BOOL keepratio = false;
 
 	x0 <<= FRACBITS;
 	y0 <<= FRACBITS;
@@ -310,6 +311,10 @@ void STACK_ARGS DCanvas::DrawTexture (FTexture *img, int x0, int y0, DWORD tags_
 				spanptr = NULL;
 			}
 			break;
+
+		case DTA_KeepRatio:
+			keepratio = va_arg (tags, BOOL);
+			break;
 		}
 		tag = va_arg (tags, DWORD);
 	}
@@ -318,22 +323,22 @@ void STACK_ARGS DCanvas::DrawTexture (FTexture *img, int x0, int y0, DWORD tags_
 	if (virtWidth != Width || virtHeight != Height)
 	{
 		int myratio = CheckRatio (Width, Height);
-		if (myratio != 0)
+		if (myratio != 0 && !keepratio)
 		{ // The target surface is not 4:3, so expand the specified
 		  // virtual size to avoid undesired stretching of the image.
 		  // Does not handle non-4:3 virtual sizes. I'll worry about
 		  // those if somebody expresses a desire to use them.
 			x0 = Scale (Width*960, x0-virtWidth*FRACUNIT/2, virtWidth*BaseRatioSizes[myratio][0]) + Width*FRACUNIT/2;
 			y0 = Scale (Height, y0, virtHeight);
-			destwidth = FixedDiv (Width*960 * img->GetWidth(), virtWidth*BaseRatioSizes[myratio][0]);
-			destheight = FixedDiv (Height * img->GetHeight(), virtHeight);
+			destwidth = FixedDiv (Width*960 * (destwidth>>FRACBITS), virtWidth*BaseRatioSizes[myratio][0]);
+			destheight = FixedDiv (Height * (destheight>>FRACBITS), virtHeight);
 		}
 		else
 		{
 			x0 = Scale (Width, x0, virtWidth);
 			y0 = Scale (Height, y0, virtHeight);
-			destwidth = FixedDiv (Width * img->GetWidth(), virtWidth);
-			destheight = FixedDiv (Height * img->GetHeight(), virtHeight);
+			destwidth = FixedDiv (Width * (destwidth>>FRACBITS), virtWidth);
+			destheight = FixedDiv (Height * (destheight>>FRACBITS), virtHeight);
 		}
 	}
 
@@ -403,7 +408,7 @@ void STACK_ARGS DCanvas::DrawTexture (FTexture *img, int x0, int y0, DWORD tags_
 			unmaskedSpan[1].Length = 0;
 		}
 
-		fixed_t centeryback = 0;
+		fixed_t centeryback = centeryfrac;
 		centeryfrac = 0;
 
 		sprtopscreen = y0;

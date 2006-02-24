@@ -18,8 +18,8 @@ static int WriteBLOCKMAP (FILE *file);
 static int WriteBEHAVIOR (FILE *file);
 
 #define APPEND(pos,name) \
-	lumps[pos].FilePos = LONG(ftell (file)); \
-	lumps[pos].Size = LONG(Write##name (file)); \
+	lumps[pos].FilePos = LittleLong(ftell (file)); \
+	lumps[pos].Size = LittleLong(Write##name (file)); \
 	memcpy (lumps[pos].Name, #name, sizeof(#name)-1);
 
 CCMD (dumpmap)
@@ -61,7 +61,7 @@ CCMD (dumpmap)
 
 	fseek (file, 12, SEEK_SET);
 	
-	lumps[0].FilePos = LONG(12);
+	lumps[0].FilePos = LittleLong(12);
 	lumps[0].Size = 0;
 	uppercopy (lumps[0].Name, mapname);
 
@@ -91,11 +91,11 @@ static int WriteTHINGS (FILE *file)
 	mapthing2_t mt = { 0 };
 	AActor *mo = players[consoleplayer].mo;
 
-	mt.x = SHORT(short(mo->x >> FRACBITS));
-	mt.y = SHORT(short(mo->y >> FRACBITS));
-	mt.angle = SHORT(short(MulScale32 (mo->angle >> ANGLETOFINESHIFT, 360)));
-	mt.type = SHORT(1);
-	mt.flags = SHORT(7|224|MTF_SINGLE);
+	mt.x = LittleShort(short(mo->x >> FRACBITS));
+	mt.y = LittleShort(short(mo->y >> FRACBITS));
+	mt.angle = LittleShort(short(MulScale32 (mo->angle >> ANGLETOFINESHIFT, 360)));
+	mt.type = LittleShort(1);
+	mt.flags = LittleShort(7|224|MTF_SINGLE);
 	fwrite (&mt, sizeof(mt), 1, file);
 	return sizeof (mt);
 }
@@ -106,16 +106,16 @@ static int WriteLINEDEFS (FILE *file)
 
 	for (int i = 0; i < numlines; ++i)
 	{
-		mld.v1 = SHORT(short(lines[i].v1 - vertexes));
-		mld.v2 = SHORT(short(lines[i].v2 - vertexes));
-		mld.flags = SHORT(short(lines[i].flags));
+		mld.v1 = LittleShort(short(lines[i].v1 - vertexes));
+		mld.v2 = LittleShort(short(lines[i].v2 - vertexes));
+		mld.flags = LittleShort(short(lines[i].flags));
 		mld.special = lines[i].special;
 		for (int j = 0; j < 5; ++j)
 		{
 			mld.args[j] = (BYTE)lines[i].args[j];
 		}
-		mld.sidenum[0] = SHORT(lines[i].sidenum[0]);
-		mld.sidenum[1] = SHORT(lines[i].sidenum[1]);
+		mld.sidenum[0] = LittleShort(WORD(lines[i].sidenum[0]));
+		mld.sidenum[1] = LittleShort(WORD(lines[i].sidenum[1]));
 		fwrite (&mld, sizeof(mld), 1, file);
 	}
 	return numlines * sizeof(mld);
@@ -141,9 +141,9 @@ static int WriteSIDEDEFS (FILE *file)
 
 	for (int i = 0; i < numsides; ++i)
 	{
-		msd.textureoffset = SHORT(short(sides[i].textureoffset >> FRACBITS));
-		msd.rowoffset = SHORT(short(sides[i].rowoffset >> FRACBITS));
-		msd.sector = SHORT(short(sides[i].sector - sectors));
+		msd.textureoffset = LittleShort(short(sides[i].textureoffset >> FRACBITS));
+		msd.rowoffset = LittleShort(short(sides[i].rowoffset >> FRACBITS));
+		msd.sector = LittleShort(short(sides[i].sector - sectors));
 		uppercopy (msd.toptexture, GetTextureName (sides[i].toptexture));
 		uppercopy (msd.bottomtexture, GetTextureName (sides[i].bottomtexture));
 		uppercopy (msd.midtexture, GetTextureName (sides[i].midtexture));
@@ -158,8 +158,8 @@ static int WriteVERTEXES (FILE *file)
 
 	for (int i = 0; i < numvertexes; ++i)
 	{
-		mv.x = SHORT(short(vertexes[i].x >> FRACBITS));
-		mv.y = SHORT(short(vertexes[i].y >> FRACBITS));
+		mv.x = LittleShort(short(vertexes[i].x >> FRACBITS));
+		mv.y = LittleShort(short(vertexes[i].y >> FRACBITS));
 		fwrite (&mv, sizeof(mv), 1, file);
 	}
 	return numvertexes * sizeof(mv);
@@ -172,11 +172,11 @@ static int WriteSEGS (FILE *file)
 	ms.offset = 0;		// unused by ZDoom, so just leave it 0
 	for (int i = 0; i < numsegs; ++i)
 	{
-		ms.v1 = SHORT(short(segs[i].v1 - vertexes));
-		ms.v2 = SHORT(short(segs[i].v2 - vertexes));
-		ms.linedef = SHORT(short(segs[i].linedef - lines));
-		ms.side = SHORT(segs[i].sidedef - sides == segs[i].linedef->sidenum[0] ? 0 : 1);
-		ms.angle = SHORT(short(R_PointToAngle2 (segs[i].v1->x, segs[i].v1->y, segs[i].v2->x, segs[i].v2->y)>>16));
+		ms.v1 = LittleShort(short(segs[i].v1 - vertexes));
+		ms.v2 = LittleShort(short(segs[i].v2 - vertexes));
+		ms.linedef = LittleShort(short(segs[i].linedef - lines));
+		ms.side = LittleShort(segs[i].sidedef - sides == segs[i].linedef->sidenum[0] ? 0 : 1);
+		ms.angle = LittleShort(short(R_PointToAngle2 (segs[i].v1->x, segs[i].v1->y, segs[i].v2->x, segs[i].v2->y)>>16));
 		fwrite (&ms, sizeof(ms), 1, file);
 	}
 	return numsegs * sizeof(ms);
@@ -188,8 +188,8 @@ static int WriteSSECTORS (FILE *file)
 
 	for (int i = 0; i < numsubsectors; ++i)
 	{
-		mss.firstseg = SHORT((WORD)subsectors[i].firstline);
-		mss.numsegs = SHORT((WORD)subsectors[i].numlines);
+		mss.firstseg = LittleShort((WORD)subsectors[i].firstline);
+		mss.numsegs = LittleShort((WORD)subsectors[i].numlines);
 		fwrite (&mss, sizeof(mss), 1, file);
 	}
 	return numsubsectors * sizeof(mss);
@@ -201,15 +201,15 @@ static int WriteNODES (FILE *file)
 
 	for (int i = 0; i < numnodes; ++i)
 	{
-		mn.x = SHORT(short(nodes[i].x >> FRACBITS));
-		mn.y = SHORT(short(nodes[i].y >> FRACBITS));
-		mn.dx = SHORT(short(nodes[i].dx >> FRACBITS));
-		mn.dy = SHORT(short(nodes[i].dy >> FRACBITS));
+		mn.x = LittleShort(short(nodes[i].x >> FRACBITS));
+		mn.y = LittleShort(short(nodes[i].y >> FRACBITS));
+		mn.dx = LittleShort(short(nodes[i].dx >> FRACBITS));
+		mn.dy = LittleShort(short(nodes[i].dy >> FRACBITS));
 		for (int j = 0; j < 2; ++j)
 		{
 			for (int k = 0; k < 4; ++k)
 			{
-				mn.bbox[j][k] = SHORT(short(nodes[i].bbox[j][k] >> FRACBITS));
+				mn.bbox[j][k] = LittleShort(short(nodes[i].bbox[j][k] >> FRACBITS));
 			}
 			WORD child;
 			if ((size_t)nodes[i].children[j] & 1)
@@ -220,7 +220,7 @@ static int WriteNODES (FILE *file)
 			{
 				child = WORD((node_t *)nodes[i].children[j] - nodes);
 			}
-			mn.children[j] = SHORT(child);
+			mn.children[j] = LittleShort(child);
 		}
 		fwrite (&mn, sizeof(mn), 1, file);
 	}
@@ -233,13 +233,13 @@ static int WriteSECTORS (FILE *file)
 
 	for (int i = 0; i < numsectors; ++i)
 	{
-		ms.floorheight = SHORT(short(sectors[i].floortexz >> FRACBITS));
-		ms.ceilingheight = SHORT(short(sectors[i].ceilingtexz >> FRACBITS));
+		ms.floorheight = LittleShort(short(sectors[i].floortexz >> FRACBITS));
+		ms.ceilingheight = LittleShort(short(sectors[i].ceilingtexz >> FRACBITS));
 		uppercopy (ms.floorpic, GetTextureName (sectors[i].floorpic));
 		uppercopy (ms.ceilingpic, GetTextureName (sectors[i].ceilingpic));
-		ms.lightlevel = SHORT(sectors[i].lightlevel);
-		ms.special = SHORT(sectors[i].special);
-		ms.tag = SHORT(sectors[i].tag);
+		ms.lightlevel = LittleShort(sectors[i].lightlevel);
+		ms.special = LittleShort(sectors[i].special);
+		ms.tag = LittleShort(sectors[i].tag);
 		fwrite (&ms, sizeof(ms), 1, file);
 	}
 	return numsectors * sizeof(ms);

@@ -72,6 +72,7 @@ extern void ChildSigHandler (int signum);
 
 #include <fmod.h>
 
+EXTERN_CVAR (Float, snd_midivolume)
 EXTERN_CVAR (Int, snd_samplerate)
 EXTERN_CVAR (Int, snd_mididevice)
 
@@ -82,6 +83,8 @@ static bool MusicDown = true;
 
 MusInfo *currSong;
 int		nomusic = 0;
+float	relative_volume = 1.0f;
+float	saved_relative_volume = 1.0f;	// this could be used to implement an ACS FadeMusic function
 
 //==========================================================================
 //
@@ -97,7 +100,7 @@ CUSTOM_CVAR (Float, snd_musicvolume, 0.3f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 	else if (self > 1.f)
 		self = 1.f;
 	else if (currSong != NULL && !currSong->IsMIDI ())
-		currSong->SetVolume (self);
+		currSong->SetVolume (clamp<float>(self*relative_volume, 0.0f, 1.0f));
 }
 
 MusInfo::~MusInfo ()
@@ -150,13 +153,14 @@ void STACK_ARGS I_ShutdownMusic(void)
 }
 
 
-void I_PlaySong (void *handle, int _looping)
+void I_PlaySong (void *handle, int _looping, float rel_vol)
 {
 	MusInfo *info = (MusInfo *)handle;
 
 	if (!info || nomusic)
 		return;
 
+	saved_relative_volume = relative_volume = rel_vol;
 	info->Stop ();
 	info->Play (_looping ? true : false);
 	
@@ -286,9 +290,7 @@ void *I_RegisterSong (const char *filename, int offset, int len)
 			return 0;
 		}
 		fseek (file, -0x23, SEEK_CUR);
-		if (strncmp (header+4, "-SPC700 Sound File Data", 23) == 0 &&
-			header[0x21] == '\x1a' &&
-			header[0x22] == '\x1a')
+		if (strncmp (header+4, "-SPC700 Sound File Data", 23) == 0)
 		{
 			info = new SPCSong (file, len);
 		}
@@ -415,3 +417,25 @@ bool I_SetSongPosition (void *handle, int order)
 	return info ? info->SetPosition (order) : false;
 }
 
+// Sets relative music volume. Takes $musicvolume in SNDINFO into consideration
+void I_SetMusicVolume (float factor)
+{
+	factor = clamp<float>(factor, 0, 2.0f);
+	relative_volume = saved_relative_volume * factor;
+#ifdef _WIN32
+	snd_midivolume.Callback();
+#endif
+	snd_musicvolume.Callback();
+}
+
+CCMD(testmusicvol)
+{
+	if (argv.argc() > 1) 
+	{
+		relative_volume = (float)strtod(argv[1], NULL);
+#ifdef _WIN32
+		snd_midivolume.Callback();
+#endif
+		snd_musicvolume.Callback();
+	}
+}

@@ -46,8 +46,7 @@ void STACK_ARGS I_ShutdownMusic ();
 void I_BuildMIDIMenuList (struct value_s **values, float *numValues);
 
 // Volume.
-void I_SetMIDIVolume (float volume);
-void I_SetMusicVolume (int volume);
+void I_SetMusicVolume (float volume);
 
 // PAUSE game handling.
 void I_PauseSong (void *handle);
@@ -60,7 +59,7 @@ void *I_RegisterCDSong (int track, int cdid = 0);
 // Called by anything that wishes to start music.
 //	Plays a song, and when the song is done,
 //	starts playing it again in an endless loop.
-void I_PlaySong (void *handle, int looping);
+void I_PlaySong (void *handle, int looping, float relative_vol=1.f);
 
 // Stops a song.
 void I_StopSong (void *handle);

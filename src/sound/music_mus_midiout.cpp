@@ -7,6 +7,8 @@
 extern DWORD midivolume;
 extern UINT mididevice;
 
+EXTERN_CVAR (Float, snd_midivolume)
+
 static const BYTE CtrlTranslate[15] =
 {
 	0,	// program change
@@ -39,7 +41,7 @@ MUSSong2::MUSSong2 (FILE *file, int len)
 	if (MusHeader->Magic != MAKE_ID('M','U','S','\x1a'))
 		return;
 	
-	if (SHORT(MusHeader->NumChans) > 15)
+	if (LittleShort(MusHeader->NumChans) > 15)
 		return;
 
 	ExitEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
@@ -60,8 +62,8 @@ MUSSong2::MUSSong2 (FILE *file, int len)
 		Printf (PRINT_BOLD, "Could not create pause event for MIDI playback\n");
 	}
 
-	MusBuffer = (BYTE *)MusHeader + SHORT(MusHeader->SongStart);
-	MaxMusP = MIN<int> (SHORT(MusHeader->SongLen), len - SHORT(MusHeader->SongStart));
+	MusBuffer = (BYTE *)MusHeader + LittleShort(MusHeader->SongStart);
+	MaxMusP = MIN<int> (LittleShort(MusHeader->SongLen), len - LittleShort(MusHeader->SongStart));
 	MusP = 0;
 }
 
@@ -137,6 +139,7 @@ void MUSSong2::Play (bool looping)
 		}
 	}
 
+	snd_midivolume.Callback();	// set volume to current music's properties
 	PlayerThread = CreateThread (NULL, 0, PlayerProc, this, 0, &tid);
 	if (PlayerThread == NULL)
 	{
@@ -336,7 +339,7 @@ int MUSSong2::SendCommand ()
 		case MUS_SYSEVENT:
 			status |= MIDI_CTRLCHANGE;
 			mid1 = CtrlTranslate[t];
-			mid2 = t == 12 ? SHORT(MusHeader->NumChans) : 0;
+			mid2 = t == 12 ? LittleShort(MusHeader->NumChans) : 0;
 			break;
 			
 		case MUS_CTRLCHANGE:

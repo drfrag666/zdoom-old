@@ -435,7 +435,7 @@ bool EV_SilentLineTeleport (line_t *line, int side, AActor *thing, int id,
 	int i;
 	line_t *l;
 
-	if (side || thing->flags2 & MF2_NOTELEPORT || !line || line->sidenum[1] == NO_INDEX)
+	if (side || thing->flags2 & MF2_NOTELEPORT || !line || line->sidenum[1] == NO_SIDE)
 		return false;
 
 	for (i = -1; (i = P_FindLineFromID (id, i)) >= 0; )

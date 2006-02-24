@@ -539,7 +539,7 @@ void drawline2d (float x1, float y1, float x2, float y2, BYTE col)
 	if ((y2 > y1) || ((y2 == y1) && (x2 > x1))) { f = x1; x1 = x2; x2 = f; f = y1; y1 = y2; y2 = f; }
 
 	dx = x2-x1; dy = y2-y1; if ((dx == 0) && (dy == 0)) return;
-	fxresm1 = (float)screen->GetWidth()-.5; fyresm1 = (float)screen->GetHeight()-.5;
+	fxresm1 = (float)RenderTarget->GetWidth()-.5; fyresm1 = (float)RenderTarget->GetHeight()-.5;
 		 if (x1 >= fxresm1) { if (x2 >= fxresm1) return; y1 += (fxresm1-x1)*dy/dx; x1 = fxresm1; }
 	else if (x1 <        0) { if (x2 <        0) return; y1 += (      0-x1)*dy/dx; x1 =       0; }
 		 if (x2 >= fxresm1) {                            y2 += (fxresm1-x2)*dy/dx; x2 = fxresm1; }
@@ -551,8 +551,8 @@ void drawline2d (float x1, float y1, float x2, float y2, BYTE col)
 
 	dx = x2-x1; dy = y2-y1;
 	i = (long)(MAX(fabsf(dx)+1,fabsf(dy)+1)); f = 65536.f/((float)i);
-	x = (long)(x1*65536.f)+32768; xi = (long)(dx*f); xup16 = (screen->GetWidth()<<16);
-	y = (long)(y1*65536.f)+32768; yi = (long)(dy*f); yup16 = (screen->GetHeight()<<16);
+	x = (long)(x1*65536.f)+32768; xi = (long)(dx*f); xup16 = (RenderTarget->GetWidth()<<16);
+	y = (long)(y1*65536.f)+32768; yi = (long)(dy*f); yup16 = (RenderTarget->GetHeight()<<16);
 	do
 	{
 		if (((unsigned long)x < (unsigned long)xup16) && ((unsigned long)y < (unsigned long)yup16))
@@ -593,7 +593,7 @@ void fillconvpoly (float x[], float y[], int n, int col, int bcol)
 		{
 			xi = (x[j] - x[i]) / (y[j] - y[i]);
 			xx = (y2 - y[j]) * xi + x[j];
-			if (y2 >= screen->GetHeight()) { xx = xx - (y2 - screen->GetHeight() + 1)*xi; y2 = screen->GetHeight()-1; }
+			if (y2 >= RenderTarget->GetHeight()) { xx = xx - (y2 - RenderTarget->GetHeight() + 1)*xi; y2 = RenderTarget->GetHeight()-1; }
 			for (; y2 >= yy; --y2)
 			{
 				lastx[y2] = MAX (0, int(ceilf(xx))); xx = xx - xi;
@@ -606,7 +606,7 @@ void fillconvpoly (float x[], float y[], int n, int col, int bcol)
 	{
 		j = i + 1; if (j == n) j = 0;
 		y2 = int(y[j]);
-		if (y2 >= screen->GetHeight()) y2 = screen->GetHeight()-1;
+		if (y2 >= RenderTarget->GetHeight()) y2 = RenderTarget->GetHeight()-1;
 		if (y2 > yy)
 		{
 			xi = (x[j] - x[i]) / (y[j] - y[i]);
@@ -616,8 +616,8 @@ void fillconvpoly (float x[], float y[], int n, int col, int bcol)
 			for (; yy <= y2; ++yy)
 			{
 				//drawline2d(lastx[yy], yy, int(ceilf(xx)), yy, ncol); xx = xx + xi;
-				int xxx = MIN(screen->GetWidth(), int(ceilf(xx)));
-				if (yy < screen->GetHeight() && lastx[yy] < xxx) memset(screen->GetBuffer()+yy*screen->GetPitch()+lastx[yy], ncol, xxx-lastx[yy]);
+				int xxx = MIN(RenderTarget->GetWidth(), int(ceilf(xx)));
+				if (yy < RenderTarget->GetHeight() && lastx[yy] < xxx) memset(RenderTarget->GetBuffer()+yy*RenderTarget->GetPitch()+lastx[yy], ncol, xxx-lastx[yy]);
 				xx = xx + xi;
 				ncol = ncol ^ maskhack;
 			}
@@ -665,7 +665,7 @@ void drawquad(float x0, float y0, float x1, float y1, float x2, float y2, float 
 void printnum(int x, int y, int num)
 {
 	char foo[16]; sprintf (foo, "%d", num);
-	screen->DrawText (CR_WHITE, x, y, foo);
+	RenderTarget->DrawText (CR_WHITE, x, y, foo);
 }
 
 void drawpolymosttest()
@@ -676,13 +676,13 @@ void drawpolymosttest()
 
 	fcol = 0; ccol = 0;
 
-	screen->Clear(0, 0, screen->GetWidth(), screen->GetHeight(), 0);
+	RenderTarget->Clear(0, 0, RenderTarget->GetWidth(), RenderTarget->GetHeight(), 0);
 	for (vsp = ovsp->Next; vsp->Next != &TestPoly.UsedList; ovsp = vsp, vsp = nvsp)
 	{
 		nvsp = vsp->Next;
 		if (vsp->CTag == -1 && vsp->FTag == -1)
 		{ // Hide spans that have been clipped away
-			vsp->Cy[0] = vsp->Cy[1] = vsp->Fy[0] = vsp->Fy[1] = screen->GetHeight()/2;
+			vsp->Cy[0] = vsp->Cy[1] = vsp->Fy[0] = vsp->Fy[1] = RenderTarget->GetHeight()/2;
 		}
 
 		if (vsp->CTag != ovsp->CTag) cx0 = vsp->X, cy0 = vsp->Cy[0];
@@ -698,9 +698,9 @@ void drawpolymosttest()
 		if(vsp->FTag != nvsp->FTag)
 		{ // fill the floor region
 			maskhack = 0x78;
-			drawquad(fx0, fy0+1, nvsp->X, vsp->Fy[1]+1, nvsp->X, screen->GetHeight(), fx0, screen->GetHeight(), fcol, fcol);
+			drawquad(fx0, fy0+1, nvsp->X, vsp->Fy[1]+1, nvsp->X, RenderTarget->GetHeight(), fx0, RenderTarget->GetHeight(), fcol, fcol);
 			maskhack = 0; fcol ^= 0x78;
-			printnum(int(fx0 + nvsp->X) / 2, screen->GetHeight()-10, vsp->FTag);
+			printnum(int(fx0 + nvsp->X) / 2, RenderTarget->GetHeight()-10, vsp->FTag);
 		}
 
 		// fill the unclipped middle region
@@ -718,8 +718,8 @@ void drawpolymosttest()
 	{
 		if (px0 < px1)
 		{
-			drawline2d (px0, py0, px0, screen->GetHeight()-1, 47);
-			drawline2d (px1, py1, px1, screen->GetHeight()-1, 47);
+			drawline2d (px0, py0, px0, RenderTarget->GetHeight()-1, 47);
+			drawline2d (px1, py1, px1, RenderTarget->GetHeight()-1, 47);
 		}
 		else
 		{

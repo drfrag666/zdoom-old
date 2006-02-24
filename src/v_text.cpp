@@ -201,7 +201,7 @@ void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *st
 			{
 				newcolor = normalcolor;
 			}
-			else if (newcolor >= 'A' && newcolor < 'A' + NUM_TEXT_COLORS)
+			else if (newcolor >= 'A' && newcolor < NUM_TEXT_COLORS + 'A')
 			{
 				newcolor -= 'A';
 			}

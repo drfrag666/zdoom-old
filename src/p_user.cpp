@@ -45,6 +45,7 @@
 #include "cmdlib.h"
 #include "sbar.h"
 #include "f_finale.h"
+#include "c_console.h"
 
 static FRandom pr_healradius ("HealRadius");
 
@@ -109,6 +110,11 @@ void player_s::SetLogNumber (int num)
 	{
 		FMemLump data = Wads.ReadLump (lumpnum);
 		SetLogText ((char *)data.GetMem());
+
+		// Print log text to console
+		AddToConsole(-1, TEXTCOLOR_GOLD);
+		AddToConsole(-1, LogText);
+		AddToConsole(-1, "\n");
 	}
 }
 
@@ -119,6 +125,16 @@ void player_s::SetLogText (const char *text)
 
 IMPLEMENT_ABSTRACT_ACTOR (APlayerPawn)
 IMPLEMENT_ABSTRACT_ACTOR (APlayerChunk)
+
+void APlayerPawn::Serialize (FArchive &arc)
+{
+	Super::Serialize (arc);
+
+	if (SaveVersion >= 229)
+	{
+		arc << JumpZ;
+	}
+}
 
 void APlayerPawn::BeginPlay ()
 {
@@ -359,7 +375,7 @@ void APlayerPawn::Die (AActor *source, AActor *inflictor)
 	}
 	else
 	{
-		if (dmflags2 & DF2_YES_WEAPONDROP)
+		if (player != NULL && (dmflags2 & DF2_YES_WEAPONDROP))
 		{ // Voodoo dolls don't drop weapons
 			AWeapon *weap = player->ReadyWeapon;
 			if (weap != NULL)
@@ -1086,7 +1102,8 @@ void P_PlayerThink (player_t *player)
 			}
 			else if (!(dmflags & DF_NO_JUMP) && onground && !player->jumpTics)
 			{
-				player->mo->momz += player->mo->GetJumpZ ()*35/TICRATE;
+				fixed_t JumpZ = (player->mo->JumpZ > 0 ? player->mo->JumpZ : player->mo->GetJumpZ ());	// [GRB]
+				player->mo->momz += JumpZ*35/TICRATE;
 				S_Sound (player->mo, CHAN_BODY, "*jump", 1, ATTN_NORM);
 				player->mo->flags2 &= ~MF2_ONMOBJ;
 				player->jumpTics = 18*TICRATE/35;
@@ -1196,15 +1213,18 @@ void P_PlayerThink (player_t *player)
 		}
 
 		// Handle air supply
-		if (player->mo->waterlevel < 3 ||
-			(player->mo->flags2 & MF2_INVULNERABLE) ||
-			(player->cheats & CF_GODMODE))
+		if (level.airsupply>0)
 		{
-			player->air_finished = level.time + 10*TICRATE;
-		}
-		else if (player->air_finished <= level.time && !(level.time & 31))
-		{
-			P_DamageMobj (player->mo, NULL, NULL, 2 + 2*((level.time-player->air_finished)/TICRATE), MOD_WATER);
+			if (player->mo->waterlevel < 3 ||
+				(player->mo->flags2 & MF2_INVULNERABLE) ||
+				(player->cheats & CF_GODMODE))
+			{
+				player->air_finished = level.time + level.airsupply;
+			}
+			else if (player->air_finished <= level.time && !(level.time & 31))
+			{
+				P_DamageMobj (player->mo, NULL, NULL, 2 + 2*((level.time-player->air_finished)/TICRATE), MOD_WATER);
+			}
 		}
 	}
 

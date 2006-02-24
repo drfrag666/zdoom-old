@@ -912,7 +912,7 @@ static int PatchThing (int thingy)
 				{
 					if (IsNum (strval))
 					{
-						// Force the top 5 bits to 0 so that the user is forced
+						// Force the top 4 bits to 0 so that the user is forced
 						// to use the mnemonics to change them. And MF_SLIDE doesn't
 						// exist anymore, so 0 that too.
 						value[0] |= atoi(strval) & 0x07ffdfff;

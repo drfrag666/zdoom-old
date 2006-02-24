@@ -521,6 +521,9 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 	if (Button_Attack.bDown)
 		cmd->ucmd.buttons |= BT_ATTACK;
 
+	if (Button_AltAttack.bDown)
+		cmd->ucmd.buttons |= BT_ALTATTACK;
+
 	if (Button_Use.bDown)
 		cmd->ucmd.buttons |= BT_USE;
 
@@ -618,6 +621,9 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 	cmd->ucmd.sidemove <<= 8;
 }
 
+//[Graf Zahl] This really helps if the mouse update rate can't be increased!
+CVAR (Bool,		smooth_mouse,	false,	CVAR_GLOBALCONFIG|CVAR_ARCHIVE)
+
 void G_AddViewPitch (int look)
 {
 	if (gamestate == GS_TITLELEVEL)
@@ -634,7 +640,7 @@ void G_AddViewPitch (int look)
 	}
 	if (look != 0)
 	{
-		LocalKeyboardTurner = false;
+		LocalKeyboardTurner = smooth_mouse;
 	}
 }
 
@@ -647,7 +653,7 @@ void G_AddViewAngle (int yaw)
 	LocalViewAngle -= yaw << 16;
 	if (yaw != 0)
 	{
-		LocalKeyboardTurner = false;
+		LocalKeyboardTurner = smooth_mouse;
 	}
 }
 
@@ -673,10 +679,11 @@ static void ChangeSpy (bool forward)
 	// Otherwise, cycle to the next player.
 	bool checkTeam = !demoplayback && deathmatch;
 	int pnum = players[consoleplayer].camera->player - players;
+	int step = forward ? 1 : -1;
 
 	do
 	{
-		if (forward) pnum++; else pnum--;
+		pnum += step;
 		pnum &= MAXPLAYERS-1;
 		if (playeringame[pnum] &&
 			(!checkTeam || players[pnum].mo->IsTeammate (players[consoleplayer].mo) ||
@@ -1056,7 +1063,7 @@ void G_PlayerFinishLevel (int player, EFinishLevelType mode)
 		}
 	}
 
-	if (mode == FINISH_NoHub)
+	if (mode == FINISH_NoHub && !(level.flags & LEVEL_KEEPFULLINVENTORY))
 	{ // Reduce all owned (visible) inventory to 1 item each
 		for (item = p->mo->Inventory; item != NULL; item = item->Inventory)
 		{
@@ -1092,6 +1099,7 @@ void G_PlayerReborn (int player)
 	botskill_t  b_skill;//Added by MC:
 	APlayerPawn *actor;
 	const TypeInfo *cls;
+	char		*log;
 
 	p = &players[player];
 
@@ -1105,6 +1113,7 @@ void G_PlayerReborn (int player)
 	memcpy (&userinfo, &p->userinfo, sizeof(userinfo));
 	actor = p->mo;
 	cls = p->cls;
+	log = p->LogText;
 
 	memset (p, 0, sizeof(*p));
 
@@ -1117,6 +1126,7 @@ void G_PlayerReborn (int player)
 	memcpy (&p->userinfo, &userinfo, sizeof(userinfo));
 	p->mo = actor;
 	p->cls = cls;
+	p->LogText = log;
 
     p->skill = b_skill;	//Added by MC:
 
@@ -1461,7 +1471,7 @@ void G_LoadGame (char* name)
 	}
 }
 
-static bool CheckSingleWad (char *name, bool &printRequires)
+static bool CheckSingleWad (char *name, bool &printRequires, bool printwarn)
 {
 	if (name == NULL)
 	{
@@ -1469,15 +1479,18 @@ static bool CheckSingleWad (char *name, bool &printRequires)
 	}
 	if (!Wads.CheckIfWadLoaded (name))
 	{
-		if (!printRequires)
+		if (printwarn)
 		{
-			printRequires = true;
-			Printf ("This savegame needs these wads:\n%s", name);
+			if (!printRequires)
+			{
+				Printf ("This savegame needs these wads:\n%s", name);
+			}
+			else
+			{
+				Printf (", %s", name);
+			}
 		}
-		else
-		{
-			Printf (", %s", name);
-		}
+		printRequires = true;
 		delete[] name;
 		return false;
 	}
@@ -1486,19 +1499,22 @@ static bool CheckSingleWad (char *name, bool &printRequires)
 }
 
 // Return false if not all the needed wads have been loaded.
-static bool G_CheckSaveGameWads (PNGHandle *png)
+bool G_CheckSaveGameWads (PNGHandle *png, bool printwarn)
 {
 	char *text;
 	bool printRequires = false;
 
 	text = M_GetPNGText (png, "Game WAD");
-	CheckSingleWad (text, printRequires);
+	CheckSingleWad (text, printRequires, printwarn);
 	text = M_GetPNGText (png, "Map WAD");
-	CheckSingleWad (text, printRequires);
+	CheckSingleWad (text, printRequires, printwarn);
 
 	if (printRequires)
 	{
-		Printf ("\n");
+		if (printwarn)
+		{
+			Printf ("\n");
+		}
 		return false;
 	}
 
@@ -1601,7 +1617,7 @@ void G_DoLoadGame ()
 		return;
 	}
 
-	if (!G_CheckSaveGameWads (png))
+	if (!G_CheckSaveGameWads (png, true))
 	{
 		fclose (stdfile);
 		return;
@@ -1626,12 +1642,12 @@ void G_DoLoadGame ()
 	}
 
 	// dearchive all the modifications
-	if (M_FindPNGChunk (png, MAKE_ID('p','t','I','c')) == 8)
+	if (M_FindPNGChunk (png, MAKE_ID('p','t','I','c') == 8))
 	{
 		DWORD time[2];
 		fread (&time, 8, 1, stdfile);
-		time[0] = BELONG((unsigned int)time[0]);
-		time[1] = BELONG((unsigned int)time[1]);
+		time[0] = BigLong((unsigned int)time[0]);
+		time[1] = BigLong((unsigned int)time[1]);
 		level.time = Scale (time[1], TICRATE, time[0]);
 	}
 	else
@@ -1735,6 +1751,13 @@ string G_BuildSaveName (const char *prefix, int slot)
 
 CVAR (Int, autosavenum, 0, CVAR_NOSET|CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Int, disableautosave, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CUSTOM_CVAR (Int, autosavecount, 4, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+{
+	if (self < 0)
+		self = 0;
+	if (self > 20)
+		self = 20;
+}
 
 extern void P_CalcHeight (player_t *);
 
@@ -1754,7 +1777,7 @@ void G_DoAutoSave ()
 	UCVarValue num;
 	char *readableTime;
 	
-	num.Int = (autosavenum + 1) & 3;
+	num.Int = (autosavenum + 1) % autosavecount;
 	autosavenum.ForceSet (num, CVAR_Int);
 
 	savegamefile = G_BuildSaveName ("auto", num.Int);
@@ -1935,9 +1958,9 @@ void G_DoSaveGame (bool okForQuicksave)
 		M_AppendPNGText (stdfile, "Important CVARs", (char *)vars);
 	}
 
-	if (level.time != 0)
+	if (level.time != 0 || level.maptime != 0)
 	{
-		DWORD time[2] = { BELONG(TICRATE), BELONG(level.time) };
+		DWORD time[2] = { BigLong(TICRATE), BigLong(level.time) };
 		M_AppendPNGChunk (stdfile, MAKE_ID('p','t','I','c'), (BYTE *)&time, 8);
 	}
 

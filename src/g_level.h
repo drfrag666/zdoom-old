@@ -38,6 +38,7 @@
 #include "doomdef.h"
 #include "m_fixed.h"
 #include "tarray.h"
+#include "name.h"
 
 #define NUM_WORLDVARS			256
 #define NUM_GLOBALVARS			64
@@ -95,8 +96,18 @@
 #define LEVEL_ADDITIVE_SCROLLERS	UCONST64(0x1000000000)		// scrollers add their momentum instead of averaging it
 #define LEVEL_CAVERNS_OF_DARKNESS	UCONST64(0x2000000000)		// to translate the special sector types of CoD.
 
+#define LEVEL_KEEPFULLINVENTORY		UCONST64(0x4000000000)		// doesn't reduce the amount of inventory items to 1
+
 struct acsdefered_s;
 class FBehavior;
+
+struct FSpecialAction
+{
+	name Type;					// this is initialized before the actors...
+	BYTE Action;
+	WORD Args[5];				// must allow 16 bit tags for 666 & 667!
+	FSpecialAction *Next;
+};
 
 struct level_info_s
 {
@@ -118,7 +129,7 @@ struct level_info_s
 	FCompressedMemFile	*snapshot;
 	DWORD		snapshotVer;
 	struct acsdefered_s *defered;
-	char		skypic2[8];
+	char		skypic2[9];
 	fixed_t		skyspeed1;
 	fixed_t		skyspeed2;
 	DWORD		fadeto;
@@ -128,11 +139,18 @@ struct level_info_s
 	float		gravity;
 	float		aircontrol;
 	int			WarpTrans;
+	int			airsupply;
 
 	// Redirection: If any player is carrying the specified item, then
 	// you go to the RedirectMap instead of this one.
 	const TypeInfo *RedirectType;
 	char		RedirectMap[9];
+
+	char		enterpic[9];
+	char		exitpic[9];
+	char		intermusic[9];
+
+	FSpecialAction * specialactions;
 };
 typedef struct level_info_s level_info_t;
 
@@ -148,6 +166,7 @@ struct level_locals_s
 	void AddScroller (DScroller *, int secnum);
 
 	int			time;
+	int			maptime;
 	int			starttime;
 	int			partime;
 	int			sucktime;
@@ -189,6 +208,7 @@ struct level_locals_s
 	float		gravity;
 	fixed_t		aircontrol;
 	fixed_t		airfriction;
+	int			airsupply;
 
 	FBehavior	*behavior;
 

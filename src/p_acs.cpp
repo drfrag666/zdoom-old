@@ -30,9 +30,8 @@
 ** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **---------------------------------------------------------------------------
 **
-** This code makes lots of little-endian assumptions. If ZDoom ever gets
-** ported to a big-endian system, you'll need to go through this file with
-** a fine tooth comb.
+** This code at one time made lots of little-endian assumptions.
+** I think it should be better now, but I have no real way to test it.
 */
 
 #include <assert.h>
@@ -225,7 +224,7 @@ static void GiveInventory (AActor *activator, const char *type, int amount)
 {
 	const TypeInfo *info;
 
-	if (amount <= 0)
+	if (amount <= 0 || type == NULL)
 	{
 		return;
 	}
@@ -299,6 +298,10 @@ static void TakeInventory (AActor *activator, const char *type, int amount)
 {
 	const TypeInfo *info;
 
+	if (type == NULL)
+	{
+		return;
+	}
 	if (strcmp (type, "Armor") == 0)
 	{
 		type = "BasicArmor";
@@ -336,7 +339,7 @@ static void TakeInventory (AActor *activator, const char *type, int amount)
 
 static int CheckInventory (AActor *activator, const char *type)
 {
-	if (activator == NULL)
+	if (activator == NULL || type == NULL)
 		return 0;
 
 	if (strcmp (type, "Armor") == 0)
@@ -677,7 +680,7 @@ FBehavior::FBehavior (int lumpnum)
 	
 	if (Format == ACS_Old)
 	{
-		DWORD dirofs = LONG(((DWORD *)object)[1]);
+		DWORD dirofs = LittleLong(((DWORD *)object)[1]);
 		DWORD pretag = ((DWORD *)(object + dirofs))[-1];
 
 		Chunks = object + len;
@@ -687,14 +690,14 @@ FBehavior::FBehavior (int lumpnum)
 			 pretag == MAKE_ID('A','C','S','E')))
 		{
 			Format = (pretag == MAKE_ID('A','C','S','e')) ? ACS_LittleEnhanced : ACS_Enhanced;
-			Chunks = object + LONG(((DWORD *)(object + dirofs))[-2]);
+			Chunks = object + LittleLong(((DWORD *)(object + dirofs))[-2]);
 			// Forget about the compatibility cruft at the end of the lump
-			DataSize = LONG(((DWORD *)object)[1]) - 8;
+			DataSize = LittleLong(((DWORD *)object)[1]) - 8;
 		}
 	}
 	else
 	{
-		Chunks = object + LONG(((DWORD *)object)[1]);
+		Chunks = object + LittleLong(((DWORD *)object)[1]);
 	}
 
 	LoadScriptsDirectory ();
@@ -726,7 +729,7 @@ FBehavior::FBehavior (int lumpnum)
 		Functions = FindChunk (MAKE_ID('F','U','N','C'));
 		if (Functions != NULL)
 		{
-			NumFunctions = LONG(((DWORD *)Functions)[1]) / 8;
+			NumFunctions = LittleLong(((DWORD *)Functions)[1]) / 8;
 			Functions += 8;
 		}
 
@@ -735,11 +738,11 @@ FBehavior::FBehavior (int lumpnum)
 		chunk = (DWORD *)FindChunk (MAKE_ID('M','I','N','I'));
 		while (chunk != NULL)
 		{
-			int numvars = LONG(chunk[1])/4 - 1;
-			int firstvar = LONG(chunk[2]);
+			int numvars = LittleLong(chunk[1])/4 - 1;
+			int firstvar = LittleLong(chunk[2]);
 			for (i = 0; i < numvars; ++i)
 			{
-				MapVarStore[i+firstvar] = LONG(chunk[3+i]);
+				MapVarStore[i+firstvar] = LittleLong(chunk[3+i]);
 			}
 			chunk = (DWORD *)NextChunk ((BYTE *)chunk);
 		}
@@ -755,13 +758,13 @@ FBehavior::FBehavior (int lumpnum)
 		chunk = (DWORD *)FindChunk (MAKE_ID('A','R','A','Y'));
 		if (chunk != NULL)
 		{
-			NumArrays = LONG(chunk[1])/8;
+			NumArrays = LittleLong(chunk[1])/8;
 			ArrayStore = new ArrayInfo[NumArrays];
 			memset (ArrayStore, 0, sizeof(*Arrays)*NumArrays);
 			for (i = 0; i < NumArrays; ++i)
 			{
-				MapVarStore[LONG(chunk[2+i*2])] = i;
-				ArrayStore[i].ArraySize = LONG(chunk[3+i*2]);
+				MapVarStore[LittleLong(chunk[2+i*2])] = i;
+				ArrayStore[i].ArraySize = LittleLong(chunk[3+i*2]);
 				ArrayStore[i].Elements = new SDWORD[ArrayStore[i].ArraySize];
 				memset(ArrayStore[i].Elements, 0, ArrayStore[i].ArraySize*sizeof(DWORD));
 			}
@@ -771,14 +774,14 @@ FBehavior::FBehavior (int lumpnum)
 		chunk = (DWORD *)FindChunk (MAKE_ID('A','I','N','I'));
 		while (chunk != NULL)
 		{
-			int arraynum = MapVarStore[LONG(chunk[2])];
+			int arraynum = MapVarStore[LittleLong(chunk[2])];
 			if ((unsigned)arraynum < (unsigned)NumArrays)
 			{
-				int initsize = MIN<int> (ArrayStore[arraynum].ArraySize, (LONG(chunk[1])-4)/4);
+				int initsize = MIN<int> (ArrayStore[arraynum].ArraySize, (LittleLong(chunk[1])-4)/4);
 				SDWORD *elems = ArrayStore[arraynum].Elements;
 				for (i = 0; i < initsize; ++i)
 				{
-					elems[i] = LONG(chunk[3+i]);
+					elems[i] = LittleLong(chunk[3+i]);
 				}
 			}
 			chunk = (DWORD *)NextChunk((BYTE *)chunk);
@@ -789,7 +792,7 @@ FBehavior::FBehavior (int lumpnum)
 		chunk = (DWORD *)FindChunk (MAKE_ID('A','I','M','P'));
 		if (chunk != NULL)
 		{
-			NumTotalArrays += LONG(chunk[2]);
+			NumTotalArrays += LittleLong(chunk[2]);
 		}
 		if (NumTotalArrays != 0)
 		{
@@ -824,7 +827,7 @@ FBehavior::FBehavior (int lumpnum)
 			{
 				for (DWORD i = 0; i < chunk[1]/4; ++i)
 				{
-					int arraynum = MapVarStore[LONG(chunk[i+2])];
+					int arraynum = MapVarStore[LittleLong(chunk[i+2])];
 					if ((unsigned)arraynum < (unsigned)NumArrays)
 					{
 						SDWORD *elems = ArrayStore[arraynum].Elements;
@@ -913,7 +916,7 @@ FBehavior::FBehavior (int lumpnum)
 					char *parse = (char *)&chunk[2];
 					for (DWORD j = 0; j < chunk[1]; )
 					{
-						DWORD varNum = LONG(*(DWORD *)&parse[j]);
+						DWORD varNum = LittleLong(*(DWORD *)&parse[j]);
 						j += 4;
 						int impNum = lib->FindMapVarName (&parse[j]);
 						if (impNum >= 0)
@@ -930,11 +933,11 @@ FBehavior::FBehavior (int lumpnum)
 				{
 					chunk = (DWORD *)FindChunk(MAKE_ID('A','I','M','P'));
 					char *parse = (char *)&chunk[3];
-					for (DWORD j = 0; j < LONG(chunk[2]); ++j)
+					for (DWORD j = 0; j < LittleLong(chunk[2]); ++j)
 					{
-						DWORD varNum = LONG(*(DWORD *)parse);
+						DWORD varNum = LittleLong(*(DWORD *)parse);
 						parse += 4;
-						DWORD expectedSize = LONG(*(DWORD *)parse);
+						DWORD expectedSize = LittleLong(*(DWORD *)parse);
 						parse += 4;
 						int impNum = lib->FindMapArray (parse);
 						if (impNum >= 0)
@@ -1025,10 +1028,10 @@ void FBehavior::LoadScriptsDirectory ()
 				ScriptPtr2 *ptr1 = &scripts.po[i];
 				ScriptPtr  *ptr2 = &Scripts[i];
 
-				ptr2->Number = LONG(ptr1->Number) % 1000;
-				ptr2->Type = LONG(ptr1->Number) / 1000;
-				ptr2->ArgCount = LONG(ptr1->ArgCount);
-				ptr2->Address = LONG(ptr1->Address);
+				ptr2->Number = LittleLong(ptr1->Number) % 1000;
+				ptr2->Type = LittleLong(ptr1->Number) / 1000;
+				ptr2->ArgCount = LittleLong(ptr1->ArgCount);
+				ptr2->Address = LittleLong(ptr1->Address);
 			}
 		}
 		break;
@@ -1051,10 +1054,10 @@ void FBehavior::LoadScriptsDirectory ()
 				ScriptPtr1 *ptr1 = &scripts.pi[i];
 				ScriptPtr  *ptr2 = &Scripts[i];
 
-				ptr2->Number = SHORT(ptr1->Number);
-				ptr2->Type = SHORT(ptr1->Type);
-				ptr2->ArgCount = LONG(ptr1->ArgCount);
-				ptr2->Address = LONG(ptr1->Address);
+				ptr2->Number = LittleShort(ptr1->Number);
+				ptr2->Type = LittleShort(ptr1->Type);
+				ptr2->ArgCount = LittleLong(ptr1->ArgCount);
+				ptr2->Address = LittleLong(ptr1->Address);
 			}
 		}
 		else
@@ -1068,10 +1071,10 @@ void FBehavior::LoadScriptsDirectory ()
 				ScriptPtr3 *ptr1 = &scripts.pe[i];
 				ScriptPtr  *ptr2 = &Scripts[i];
 
-				ptr2->Number = SHORT(ptr1->Number);
+				ptr2->Number = LittleShort(ptr1->Number);
 				ptr2->Type = ptr1->Type;
 				ptr2->ArgCount = ptr1->ArgCount;
-				ptr2->Address = LONG(ptr1->Address);
+				ptr2->Address = LittleLong(ptr1->Address);
 			}
 		}
 		break;
@@ -1102,10 +1105,10 @@ void FBehavior::LoadScriptsDirectory ()
 		scripts.dw += 2;
 		for (i = max; i > 0; --i, scripts.w += 2)
 		{
-			ScriptPtr *ptr = const_cast<ScriptPtr *>(FindScript (SHORT(scripts.w[0])));
+			ScriptPtr *ptr = const_cast<ScriptPtr *>(FindScript (LittleShort(scripts.w[0])));
 			if (ptr != NULL)
 			{
-				ptr->Flags = SHORT(scripts.w[1]);
+				ptr->Flags = LittleShort(scripts.w[1]);
 			}
 		}
 	}
@@ -1118,10 +1121,10 @@ void FBehavior::LoadScriptsDirectory ()
 		scripts.dw += 2;
 		for (i = max; i > 0; --i, scripts.w += 2)
 		{
-			ScriptPtr *ptr = const_cast<ScriptPtr *>(FindScript (SHORT(scripts.w[0])));
+			ScriptPtr *ptr = const_cast<ScriptPtr *>(FindScript (LittleShort(scripts.w[0])));
 			if (ptr != NULL)
 			{
-				ptr->VarCount = SHORT(scripts.w[1]);
+				ptr->VarCount = LittleShort(scripts.w[1]);
 			}
 		}
 	}
@@ -1723,7 +1726,7 @@ void DLevelScript::SetLineTexture (int lineid, int side, int position, int name)
 	{
 		side_t *sidedef;
 
-		if (lines[linenum].sidenum[side] == NO_INDEX)
+		if (lines[linenum].sidenum[side] == NO_SIDE)
 			continue;
 		sidedef = sides + lines[linenum].sidenum[side];
 
@@ -1927,6 +1930,7 @@ void DLevelScript::DoSetFont (int fontnum)
 #define APROP_RenderStyle	4
 #define APROP_Ambush		10
 #define APROP_Invulnerable	11
+#define APROP_JumpZ			12	// [GRB]
 #define APROP_SeeSound		5	// Sounds can only be set, not gotten
 #define APROP_AttackSound	6
 #define APROP_PainSound		7
@@ -1972,6 +1976,8 @@ void DLevelScript::DoSetActorProperty (AActor *actor, int property, int value)
 	case APROP_RenderStyle:	actor->RenderStyle = value;	break;
 	case APROP_Ambush:		if (value) actor->flags |= MF_AMBUSH; else actor->flags &= ~MF_AMBUSH;		break;
 	case APROP_Invulnerable:if (value) actor->flags2 |= MF2_INVULNERABLE; else actor->flags2 &= ~MF2_INVULNERABLE;		break;
+	case APROP_JumpZ:		if (actor->IsKindOf (RUNTIME_CLASS (APlayerPawn)))
+								static_cast<APlayerPawn *>(actor)->JumpZ = value;						break; 	// [GRB]
 	case APROP_SeeSound:	actor->SeeSound = S_FindSound (FBehavior::StaticLookupString (value));		break;
 	case APROP_AttackSound:	actor->AttackSound = S_FindSound (FBehavior::StaticLookupString (value));	break;
 	case APROP_PainSound:	actor->PainSound = S_FindSound (FBehavior::StaticLookupString (value));		break;
@@ -2009,11 +2015,19 @@ int DLevelScript::GetActorProperty (int tid, int property)
 	case APROP_Alpha:		return actor->alpha;
 	case APROP_RenderStyle:	return actor->RenderStyle;
 	case APROP_Ambush:		return !!(actor->flags & MF_AMBUSH);
+	case APROP_JumpZ:		if (actor->IsKindOf (RUNTIME_CLASS (APlayerPawn)))
+							{
+								return static_cast<APlayerPawn *>(actor)->JumpZ;	// [GRB]
+							}
+							else
+							{
+								return 0;
+							}
 	default:				return 0;
 	}
 }
 
-#define NEXTWORD	(LONG(*pc++))
+#define NEXTWORD	(LittleLong(*pc++))
 #define NEXTBYTE	(fmt==ACS_LittleEnhanced?getbyte(pc):NEXTWORD)
 #define STACK(a)	(Stack[sp - (a)])
 #define PushToStack(a)	(Stack[sp++] = (a))

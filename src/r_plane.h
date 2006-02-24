@@ -45,6 +45,15 @@ struct visplane_s
 	angle_t		angle;				// [RH] Support flat rotation
 	ASkyViewpoint *skybox;			// [RH] Support sky boxes
 
+	// [RH] This set of variables copies information from the time when the
+	// visplane is created. They are only used by stacks so that you can
+	// have stacked sectors inside a skybox. If the visplane is not for a
+	// stack, then they are unused.
+	int			extralight;
+	float		visibility;
+	fixed_t		viewx, viewy, viewz;
+	angle_t		viewangle;
+
 	unsigned short *bottom;			// [RH] bottom and top arrays are dynamically
 	unsigned short pad;				//		allocated immediately after the
 	unsigned short top[3];			//		visplane.

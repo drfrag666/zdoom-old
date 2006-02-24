@@ -48,17 +48,24 @@
 #include "i_system.h"
 #include "gi.h"
 #include "cmdlib.h"
+#include "sc_man.h"
 
-// This is a font character that loads a patch and recolors it.
-class FFontChar1 : public FPatchTexture
+// This is a font character that loads a texture and recolors it.
+class FFontChar1 : public FTexture
 {
 public:
-	FFontChar1 (int sourcelump, const BYTE *sourceremap);
+   FFontChar1 (int sourcelump, const BYTE *sourceremap);
+   const BYTE *GetColumn (unsigned int column, const Span **spans_out);
+   const BYTE *GetPixels ();
+   void Unload ();
+   ~FFontChar1 ();
 
 protected:
-	void MakeTexture ();
+   void MakeTexture ();
 
-	const BYTE *SourceRemap;
+   FTexture * BaseTexture;
+   BYTE *Pixels;
+   const BYTE *SourceRemap;
 };
 
 // This is a font character that reads RLE compressed data.
@@ -233,10 +240,18 @@ FFont::FFont (const char *name, const char *nametemplate, int first, int count, 
 		}
 	}
 
-	SpaceWidth = (Chars['N' - first].Pic->GetWidth() + 1) / 2;
+	if ('N'-first>=0 && 'N'-first<count && Chars['N' - first].Pic)
+	{
+		SpaceWidth = (Chars['N' - first].Pic->GetWidth() + 1) / 2;
+	}
+	else
+	{
+		SpaceWidth = 4;
+	}
 	BuildTranslations (luminosity, identity);
 
 	delete[] luminosity;
+	delete[] charlumps;
 }
 
 FFont::~FFont ()
@@ -677,7 +692,7 @@ void FSingleLumpFont::LoadFON2 (int lump, const BYTE *data)
 	widths2 = new int[count];
 	if (data[11] & 1)
 	{
-		GlobalKerning = SHORT(*(SWORD *)&data[12]);
+		GlobalKerning = LittleShort(*(SWORD *)&data[12]);
 		widths = (WORD *)(data + 14);
 	}
 	else
@@ -689,7 +704,7 @@ void FSingleLumpFont::LoadFON2 (int lump, const BYTE *data)
 
 	if (data[8])
 	{
-		totalwidth = SHORT(widths[0]);
+		totalwidth = LittleShort(widths[0]);
 		for (i = 0; i < count; ++i)
 		{
 			widths2[i] = totalwidth;
@@ -701,7 +716,7 @@ void FSingleLumpFont::LoadFON2 (int lump, const BYTE *data)
 	{
 		for (i = 0; i < count; ++i)
 		{
-			widths2[i] = SHORT(widths[i]);
+			widths2[i] = LittleShort(widths[i]);
 			totalwidth += widths2[i];
 		}
 		palette = (BYTE *)(widths + i);
@@ -860,39 +875,73 @@ void FSingleLumpFont::BuildTranslations2 ()
 }
 
 FFontChar1::FFontChar1 (int sourcelump, const BYTE *sourceremap)
-: FPatchTexture (sourcelump, FTexture::TEX_FontChar),
-  SourceRemap (sourceremap)
+: SourceRemap (sourceremap)
 {
-	// Make this texture unnamed
-	Name[0] = 0;
+	UseType = FTexture::TEX_FontChar;
+	Wads.GetLumpName(Name, sourcelump);
+	Name[8] = 0;
+	BaseTexture = TexMan[Name];		// it has already been added!
+	Name[0] = 0;					// Make this texture unnamed
+
+	// now copy all the properties from the base texture
+	Width = BaseTexture->GetWidth();
+	Height = BaseTexture->GetHeight();
+	TopOffset = BaseTexture->TopOffset;
+	LeftOffset = BaseTexture->LeftOffset;
+	WidthBits = BaseTexture->WidthBits;
+	HeightBits = BaseTexture->HeightBits;
+	ScaleX = BaseTexture->ScaleX;
+	ScaleY = BaseTexture->ScaleY;
+	WidthMask = (1 << WidthBits) - 1;
+	Pixels = NULL;
+}
+
+const BYTE *FFontChar1::GetPixels ()
+{
+	if (Pixels == NULL)
+	{
+		MakeTexture ();
+	}
+	return Pixels;
 }
 
 void FFontChar1::MakeTexture ()
 {
 	// Make the texture as normal, then remap it so that all the colors
 	// are at the low end of the palette
-	FPatchTexture::MakeTexture ();
+	Pixels = new BYTE[Width*Height];
+	const BYTE *pix = BaseTexture->GetPixels();
 
-	BYTE *col = Pixels;
-
-	for (int x = 0; x < Width; ++x)
+	for (int x = 0; x < Width*Height; ++x)
 	{
-		Span *span = Spans[x];
-
-		while (span->Length != 0)
-		{
-			int bot = span->TopOffset + span->Length;
-			for (int y = span->TopOffset; y < bot; ++y)
-			{
-				col[y] = SourceRemap[col[y]];
-			}
-			span++;
-		}
-
-		col += Height;
+		Pixels[x]=SourceRemap[pix[x]];
 	}
 }
 
+const BYTE *FFontChar1::GetColumn (unsigned int column, const Span **spans_out)
+{
+	if (Pixels == NULL)
+	{
+		MakeTexture ();
+	}
+
+	BaseTexture->GetColumn(column, spans_out);
+	return Pixels + column*Height;
+}
+
+void FFontChar1::Unload ()
+{
+	if (Pixels != NULL)
+	{
+		delete[] Pixels;
+		Pixels = NULL;
+	}
+}
+
+FFontChar1::~FFontChar1 ()
+{
+	Unload ();
+}
 
 FFontChar2::FFontChar2 (int sourcelump, int sourcepos, int width, int height)
 : SourceLump (sourcelump), SourcePos (sourcepos), Pixels (0), Spans (0)
@@ -1031,4 +1080,263 @@ void FFontChar2::MakeTexture ()
 	}
 
 	Spans = CreateSpans (Pixels);
+}
+
+//===========================================================================
+// 
+// Essentially a normal multilump font but 
+// with an explicit list of character patches
+//
+//===========================================================================
+class FSpecialFont : public FFont
+{
+public:
+	FSpecialFont (const char *name, int first, int count, int *lumplist, const bool *notranslate);
+};
+
+
+FSpecialFont::FSpecialFont (const char *name, int first, int count, int *lumplist, const bool *notranslate)
+{
+	int i, j, lump;
+	char buffer[12];
+	int *charlumps;
+	byte usedcolors[256], identity[256];
+	double *luminosity;
+	int maxyoffs;
+	int TotalColors;
+
+	Name=copystring(name);
+	Chars = new CharData[count];
+	charlumps = new int[count];
+	PatchRemap = new BYTE[256];
+	Ranges = NULL;
+	FirstChar = first;
+	LastChar = first + count - 1;
+	FontHeight = 0;
+	GlobalKerning = false;
+	memset (usedcolors, 0, 256);
+	Name = copystring (name);
+	Next = FirstFont;
+	FirstFont = this;
+
+	maxyoffs = 0;
+
+	for (i = 0; i < count; i++)
+	{
+		lump = charlumps[i] = lumplist[i];
+		if (lump >= 0)
+		{
+			Wads.GetLumpName(buffer, lump);
+			FTexture *pic = TexMan[TexMan.AddPatch (buffer)];
+			int height = pic->GetHeight();
+			int yoffs = pic->TopOffset;
+
+			if (yoffs > maxyoffs)
+			{
+				maxyoffs = yoffs;
+			}
+			height += abs (yoffs);
+			if (height > FontHeight)
+			{
+				FontHeight = height;
+			}
+
+			RecordTextureColors (pic, usedcolors);
+		}
+	}
+
+	// exclude the non-translated colors from the translation calculation
+	if (notranslate != NULL)
+	{
+		for (i = 0; i < 256; i++)
+			if (notranslate[i])
+				usedcolors[i] = false;
+	}
+
+	TotalColors = ActiveColors = SimpleTranslation (usedcolors, PatchRemap, identity, &luminosity);
+
+	// Map all untranslated colors into the table of used colors
+	if (notranslate != NULL)
+	{
+		for (i = 0; i < 256; i++) 
+		{
+			if (notranslate[i]) 
+			{
+				PatchRemap[i] = TotalColors;
+				identity[TotalColors] = i;
+				TotalColors++;
+			}
+		}
+	}
+
+	for (i = 0; i < count; i++)
+	{
+		if (charlumps[i] >= 0)
+		{
+			Chars[i].Pic = new FFontChar1 (charlumps[i], PatchRemap);
+		}
+		else
+		{
+			Chars[i].Pic = NULL;
+		}
+	}
+
+	// Special fonts normally don't have all characters so be careful here!
+	if ('N'-first>=0 && 'N'-first<count && Chars['N' - first].Pic) 
+	{
+		SpaceWidth = (Chars['N' - first].Pic->GetWidth() + 1) / 2;
+	}
+	else
+	{
+		SpaceWidth = 4;
+	}
+
+	BuildTranslations (luminosity, identity);
+
+	// add the untranslated colors to the Ranges table
+	if (ActiveColors < TotalColors)
+	{
+		int factor = 1;
+		byte *oldranges = Ranges;
+		Ranges = new byte[NUM_TEXT_COLORS * TotalColors * factor];
+
+		for (i = 0; i < CR_UNTRANSLATED; i++)
+		{
+			memcpy (&Ranges[i * TotalColors * factor], &oldranges[i * ActiveColors * factor], ActiveColors * factor);
+
+			for (j = ActiveColors; j < TotalColors; j++)
+			{
+				Ranges[TotalColors*i + j] = identity[j];
+			}
+		}
+		delete[] oldranges;
+	}
+	ActiveColors=TotalColors;
+
+	delete[] luminosity;
+	delete[] charlumps;
+}
+
+
+//===========================================================================
+// 
+// Initialize a list of custom multipatch fonts
+//
+//===========================================================================
+
+void V_InitCustomFonts()
+{
+	int lumplist[256];
+	bool notranslate[256];
+	char namebuffer[16], templatebuf[16];
+	int adder=0;
+	int i;
+	int llump,lastlump=-1;
+	int format;
+	int start;
+	int first;
+	int count;
+
+
+	while ((llump = Wads.FindLump ("FONTDEFS", &lastlump)) != -1)
+	{
+		SC_OpenLumpNum (llump, "FONTDEFS");
+		while (SC_GetString())
+		{
+			memset (lumplist, -1, sizeof(lumplist));
+			memset (notranslate, 0, sizeof(notranslate));
+			strncpy (namebuffer, sc_String, 15);
+			namebuffer[15] = 0;
+			format = 0;
+			start = 33;
+			first = 33;
+			count = 223;
+
+			SC_MustGetStringName ("{");
+			while (!SC_CheckString ("}"))
+			{
+				SC_MustGetString();
+				if (SC_Compare ("TEMPLATE"))
+				{
+					if (format == 2) goto wrong;
+					SC_MustGetString();
+					strncpy (templatebuf, sc_String, 16);
+					templatebuf[15] = 0;
+					format = 1;
+				}
+				else if (SC_Compare ("BASE"))
+				{
+					if (format == 2) goto wrong;
+					SC_MustGetNumber();
+					start = sc_Number;
+					format = 1;
+				}
+				else if (SC_Compare ("FIRST"))
+				{
+					if (format == 2) goto wrong;
+					SC_MustGetNumber();
+					first = sc_Number;
+					format = 1;
+				}
+				else if (SC_Compare ("COUNT"))
+				{
+					if (format == 2) goto wrong;
+					SC_MustGetNumber();
+					count = sc_Number;
+					format = 1;
+				}
+				else if (SC_Compare ("NOTRANSLATION"))
+				{
+					if (format == 1) goto wrong;
+					while (SC_CheckNumber() && !sc_Crossed)
+					{
+						if (sc_Number >= 0 && sc_Number < 256)
+							notranslate[sc_Number] = true;
+					}
+					format=2;
+				}
+				else
+				{
+					if (format == 1) goto wrong;
+					int *p = &lumplist[*(unsigned char*)sc_String];
+					SC_MustGetString();
+					*p = Wads.CheckNumForName (sc_String);
+					format=2;
+				}
+			}
+			if (format==1)
+			{
+				new FFont (namebuffer, templatebuf, first, count, start);
+			}
+			else if (format==2)
+			{
+				for (i = 0; i < 256; i++)
+				{
+					if (lumplist[i] != -1)
+					{
+						first = i;
+						break;
+					}
+				}
+				for (i = 255; i >= 0; i--)
+				{
+					if (lumplist[i] != -1)
+					{
+						count = i - first + 1;
+						break;
+					}
+				}
+				if (count>0)
+				{
+					new FSpecialFont (namebuffer, first, count, &lumplist[first], notranslate);
+				}
+			}
+			else goto wrong;
+		}
+		SC_Close ();
+	}
+	return;
+
+wrong:
+	SC_ScriptError ("Invalid combination of properties in font '%s'", namebuffer);
 }

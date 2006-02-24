@@ -253,7 +253,7 @@ void AScriptedMarine::Tick ()
 	{
 		if (MissileState == &States[S_MPLAY_ATK_DSHOTGUN])
 		{ // Play SSG reload sounds
-			int ticks = level.time - special1;
+			int ticks = level.maptime - special1;
 			if (ticks < 47)
 			{
 				switch (ticks)
@@ -276,7 +276,7 @@ void AScriptedMarine::Tick ()
 		}
 		else
 		{ // Wait for a long refire time
-			if (level.time >= special1)
+			if (level.maptime >= special1)
 			{
 				special1 = 0;
 			}
@@ -567,7 +567,7 @@ void A_M_FireShotgun (AActor *self)
 	{
 		P_GunShot2 (self, false, pitch, RUNTIME_CLASS(ABulletPuff));
 	}
-	self->special1 = level.time + 27;
+	self->special1 = level.maptime + 27;
 }
 
 //============================================================================
@@ -613,7 +613,7 @@ void A_M_FireShotgun2 (AActor *self)
 					  pitch + (pr_m_fireshotgun2.Random2() * 332063), damage,
 					  MOD_UNKNOWN, RUNTIME_CLASS(ABulletPuff));
 	}
-	self->special1 = level.time;
+	self->special1 = level.maptime;
 }
 
 //============================================================================
@@ -688,7 +688,7 @@ void A_M_FireRailgun (AActor *self)
 		return;
 
 	A_MonsterRail (self);
-	self->special1 = level.time + 50;
+	self->special1 = level.maptime + 50;
 }
 
 //============================================================================
@@ -704,7 +704,7 @@ void A_M_FirePlasma (AActor *self)
 
 	A_FaceTarget (self);
 	P_SpawnMissile (self, self->target, RUNTIME_CLASS(APlasmaBall));
-	self->special1 = level.time + 20;
+	self->special1 = level.maptime + 20;
 }
 
 //============================================================================
@@ -744,7 +744,7 @@ void A_M_FireBFG (AActor *self)
 
 	A_FaceTarget (self);
 	P_SpawnMissile (self, self->target, RUNTIME_CLASS(ABFGBall));
-	self->special1 = level.time + 30;
+	self->special1 = level.maptime + 30;
 	self->PainChance = MARINE_PAIN_CHANCE;
 }
 

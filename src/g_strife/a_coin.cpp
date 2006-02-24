@@ -14,6 +14,7 @@ IMPLEMENT_ACTOR (ACoin, Strife, 93, 0)
 	PROP_StrifeTeaserType2 (165)
 	PROP_SpawnState (0)
 	PROP_Flags (MF_SPECIAL|MF_DROPPED|MF_NOTDMATCH)
+	PROP_Flags2 (MF2_FLOORCLIP)
 	PROP_Inventory_MaxAmountLong (INT_MAX)
 	PROP_Inventory_FlagsSet (IF_INVBAR)
 	PROP_Inventory_Icon ("I_COIN")
@@ -161,4 +162,54 @@ bool AGold300::TryPickup (AActor *toucher)
 {
 	toucher->GiveInventoryType (QuestItemClasses[2]);
 	return Super::TryPickup (toucher);
+}
+
+//===========================================================================
+//
+// ACoin :: CreateTossable
+//
+// Gold drops in increments of 50 if you have that much, less if you don't.
+//
+//===========================================================================
+
+AInventory *ACoin::CreateTossable ()
+{
+	ACoin *tossed;
+
+	if ((ItemFlags & IF_UNDROPPABLE) || Owner == NULL || Amount <= 0)
+	{
+		return NULL;
+	}
+	if (Amount >= 50)
+	{
+		Amount -= 50;
+		tossed = Spawn<AGold50> (Owner->x, Owner->y, Owner->z);
+	}
+	else if (Amount >= 25)
+	{
+		Amount -= 25;
+		tossed = Spawn<AGold25> (Owner->x, Owner->y, Owner->z);
+	}
+	else if (Amount >= 10)
+	{
+		Amount -= 10;
+		tossed = Spawn<AGold10> (Owner->x, Owner->y, Owner->z);
+	}
+	else if (Amount > 1)
+	{
+		Amount -= 1;
+		tossed = Spawn<ACoin> (Owner->x, Owner->y, Owner->z);
+	}
+	else
+	{
+		BecomePickup ();
+		tossed = this;
+	}
+	tossed->flags &= ~(MF_SPECIAL|MF_SOLID);
+	tossed->DropTime = 30;
+	if (tossed != this && Amount <= 0)
+	{
+		Destroy ();
+	}
+	return tossed;
 }

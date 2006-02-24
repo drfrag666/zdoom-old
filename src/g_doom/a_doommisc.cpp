@@ -103,10 +103,12 @@ FState ABulletPuff::States[] =
 
 IMPLEMENT_ACTOR (ABulletPuff, Doom, -1, 131)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
+	PROP_Flags4 (MF4_ALLOWPARTICLES)
 	PROP_RenderStyle (STYLE_Translucent)
 	PROP_Alpha (TRANSLUC50)
 
 	PROP_SpawnState (0)
+	PROP_MeleeState (2)
 END_DEFAULTS
 
 void ABulletPuff::BeginPlay ()

@@ -1349,15 +1349,30 @@ void A_BFGSpray (AActor *mo)
 	int 				damage;
 	angle_t 			an;
 	AActor				*thingToHit;
+	const TypeInfo		*spraytype = NULL;
+	int					numrays = 40;
+
+	int index = CheckIndex (2, NULL);
+	if (index >= 0) 
+	{
+		spraytype = TypeInfo::FindType ((const char *)StateParameters[index]);
+		numrays = (int)StateParameters[index+1];
+		if (numrays < 0)
+			numrays = 40;
+	}
+	if (spraytype == NULL)
+	{
+		spraytype = RUNTIME_CLASS(ABFGExtra);
+	}
 
 	// [RH] Don't crash if no target
 	if (!mo->target)
 		return;
 
 	// offset angles from its attack angle
-	for (i = 0; i < 40; i++)
+	for (i = 0; i < numrays; i++)
 	{
-		an = mo->angle - ANG90/2 + ANG90/40*i;
+		an = mo->angle - ANG90/2 + ANG90/numrays*i;
 
 		// mo->target is the originator (player) of the missile
 		P_AimLineAttack (mo->target, an, 16*64*FRACUNIT, ANGLE_1*32);
@@ -1365,7 +1380,7 @@ void A_BFGSpray (AActor *mo)
 		if (!linetarget)
 			continue;
 
-		Spawn<ABFGExtra> (linetarget->x, linetarget->y,
+		Spawn (spraytype, linetarget->x, linetarget->y,
 			linetarget->z + (linetarget->height>>2));
 		
 		damage = 0;

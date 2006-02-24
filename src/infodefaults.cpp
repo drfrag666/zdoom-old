@@ -179,48 +179,54 @@ static void ApplyActorDefault (int defnum, const char *datastr, int dataint)
 		}
 		break;
 
-	case ADEF_XScale:		actor->xscale = dataint;		break;
-	case ADEF_YScale:		actor->yscale = dataint;		break;
-	case ADEF_SpawnHealth:	actor->health = dataint;		break;
-	case ADEF_ReactionTime:	actor->reactiontime = dataint;	break;
-	case ADEF_PainChance:	actor->PainChance = dataint;	break;
-	case ADEF_Speed:		actor->Speed = dataint;			break;
-	case ADEF_Radius:		actor->radius = dataint;		break;
-	case ADEF_Height:		actor->height = dataint;		break;
-	case ADEF_Mass:			actor->Mass = dataint;			break;
-	case ADEF_Damage:		actor->damage = dataint;		break;
-	case ADEF_DamageType:	actor->DamageType = dataint;	break;
-	case ADEF_Flags:		actor->flags = dataint;			break;
-	case ADEF_Flags2:		actor->flags2 = dataint;		break;
-	case ADEF_Flags3:		actor->flags3 = dataint;		break;
-	case ADEF_Flags4:		actor->flags4 = dataint;		break;
-	case ADEF_FlagsSet:		actor->flags |= dataint;		break;
-	case ADEF_Flags2Set:	actor->flags2 |= dataint;		break;
-	case ADEF_Flags3Set:	actor->flags3 |= dataint;		break;
-	case ADEF_Flags4Set:	actor->flags4 |= dataint;		break;
-	case ADEF_FlagsClear:	actor->flags &= ~dataint;		break;
-	case ADEF_Flags2Clear:	actor->flags2 &= ~dataint;		break;
-	case ADEF_Flags3Clear:	actor->flags3 &= ~dataint;		break;
-	case ADEF_Flags4Clear:	actor->flags4 &= ~dataint;		break;
-	case ADEF_Alpha:		actor->alpha = dataint;			break;
-	case ADEF_RenderStyle:	actor->RenderStyle = dataint;	break;
-	case ADEF_RenderFlags:	actor->renderflags = dataint;	break;
-	case ADEF_Translation:	actor->Translation = dataint;	break;
-	case ADEF_MinMissileChance: actor->MinMissileChance = dataint; break;
+	case ADEF_XScale:			actor->xscale = dataint;			break;
+	case ADEF_YScale:			actor->yscale = dataint;			break;
+	case ADEF_SpawnHealth:		actor->health = dataint;			break;
+	case ADEF_ReactionTime:		actor->reactiontime = dataint;		break;
+	case ADEF_PainChance:		actor->PainChance = dataint;		break;
+	case ADEF_Speed:			actor->Speed = dataint;				break;
+	case ADEF_Radius:			actor->radius = dataint;			break;
+	case ADEF_Height:			actor->height = dataint;			break;
+	case ADEF_Mass:				actor->Mass = dataint;				break;
+	case ADEF_Damage:			actor->damage = dataint;			break;
+	case ADEF_DamageType:		actor->DamageType = dataint;		break;
+	case ADEF_Flags:			actor->flags = dataint;				break;
+	case ADEF_Flags2:			actor->flags2 = dataint;			break;
+	case ADEF_Flags3:			actor->flags3 = dataint;			break;
+	case ADEF_Flags4:			actor->flags4 = dataint;			break;
+	case ADEF_FlagsSet:			actor->flags |= dataint;			break;
+	case ADEF_Flags2Set:		actor->flags2 |= dataint;			break;
+	case ADEF_Flags3Set:		actor->flags3 |= dataint;			break;
+	case ADEF_Flags4Set:		actor->flags4 |= dataint;			break;
+	case ADEF_FlagsClear:		actor->flags &= ~dataint;			break;
+	case ADEF_Flags2Clear:		actor->flags2 &= ~dataint;			break;
+	case ADEF_Flags3Clear:		actor->flags3 &= ~dataint;			break;
+	case ADEF_Flags4Clear:		actor->flags4 &= ~dataint;			break;
+	case ADEF_Alpha:			actor->alpha = dataint;				break;
+	case ADEF_RenderStyle:		actor->RenderStyle = dataint;		break;
+	case ADEF_RenderFlags:		actor->renderflags = dataint;		break;
+	case ADEF_Translation:		actor->Translation = dataint;		break;
+	case ADEF_MinMissileChance:	actor->MinMissileChance = dataint;	break;
+	case ADEF_MeleeRange:		actor->meleerange = dataint;		break;
+	case ADEF_MaxDropOffHeight:	actor->MaxDropOffHeight = dataint;	break;
+	case ADEF_MaxStepHeight:	actor->MaxStepHeight = dataint;		break;
 
-	case ADEF_SpawnState:	actor->SpawnState = datastate;	break;
-	case ADEF_SeeState:		actor->SeeState = datastate;	break;
-	case ADEF_PainState:	actor->PainState = datastate;	break;
-	case ADEF_MeleeState:	actor->MeleeState = datastate;	break;
-	case ADEF_MissileState:	actor->MissileState = datastate; break;
-	case ADEF_CrashState:	actor->CrashState = datastate;	break;
-	case ADEF_DeathState:	actor->DeathState = datastate;	break;
-	case ADEF_XDeathState:	actor->XDeathState = datastate;	break;
-	case ADEF_BDeathState:	actor->BDeathState = datastate;	break;
-	case ADEF_IDeathState:	actor->IDeathState = datastate;	break;
-	case ADEF_EDeathState:	actor->EDeathState = datastate;	break;
-	case ADEF_RaiseState:	actor->RaiseState = datastate;	break;
-	case ADEF_WoundState:	actor->WoundState = datastate;	break;
+	case ADEF_SpawnState:		actor->SpawnState = datastate;		break;
+	case ADEF_SeeState:			actor->SeeState = datastate;		break;
+	case ADEF_PainState:		actor->PainState = datastate;		break;
+	case ADEF_MeleeState:		actor->MeleeState = datastate;		break;
+	case ADEF_MissileState:		actor->MissileState = datastate;	break;
+	case ADEF_CrashState:		actor->CrashState = datastate;		break;
+	case ADEF_DeathState:		actor->DeathState = datastate;		break;
+	case ADEF_XDeathState:		actor->XDeathState = datastate;		break;
+	case ADEF_BDeathState:		actor->BDeathState = datastate;		break;
+	case ADEF_IDeathState:		actor->IDeathState = datastate;		break;
+	case ADEF_EDeathState:		actor->EDeathState = datastate;		break;
+	case ADEF_RaiseState:		actor->RaiseState = datastate;		break;
+	case ADEF_WoundState:		actor->WoundState = datastate;		break;
+	case ADEF_YesState:			actor->YesState = datastate;		break;
+	case ADEF_NoState:			actor->NoState = datastate;			break;
+	case ADEF_GreetingsState:	actor->GreetingsState = datastate;	break;
 
 	case ADEF_StrifeType:	if (!(gameinfo.flags & GI_SHAREWARE)) StrifeTypes[dataint] = sgClass;	break;
 	case ADEF_StrifeTeaserType:
@@ -266,6 +272,7 @@ static void ApplyActorDefault (int defnum, const char *datastr, int dataint)
 	case ADEF_Ammo_BackpackMaxAmount:ammo->BackpackMaxAmount = dataint; break;
 
 	case ADEF_Weapon_Flags:			weapon->WeaponFlags = dataint; break;
+	case ADEF_Weapon_FlagsSet:		weapon->WeaponFlags |= dataint; break;
 	case ADEF_Weapon_UpSound:		weapon->UpSound = datasound; break;
 	case ADEF_Weapon_ReadySound:	weapon->ReadySound = datasound; break;
 	case ADEF_Weapon_SisterType:	weapon->SisterWeaponType = datatype; break;
@@ -311,7 +318,7 @@ void FActorInfo::ApplyDefaults (BYTE *defaults)
 #if _MSC_VER
 	const BYTE *parser = DefaultList;
 
-	const char *datastr;
+	const char *datastr = NULL;
 	int dataint = 0;
 	int defnum;
 	int deftype;

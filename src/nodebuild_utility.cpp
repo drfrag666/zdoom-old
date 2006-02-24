@@ -141,9 +141,9 @@ void FNodeBuilder::MakeSegsFromSides ()
 	for (i = 0; i < Level.NumLines; ++i)
 	{
 		share1 = NULL;
-		if (Level.Lines[i].sidenum[0] != NO_INDEX)
+		if (Level.Lines[i].sidenum[0] != NO_SIDE)
 		{
-			WORD backside;
+			DWORD backside;
 
 			seg.linedef = i;
 			seg.sidedef = Level.Lines[i].sidenum[0];
@@ -171,9 +171,9 @@ void FNodeBuilder::MakeSegsFromSides ()
 			Printf ("Linedef %d does not have a front side.\n", i);
 		}
 
-		if (Level.Lines[i].sidenum[1] != NO_INDEX)
+		if (Level.Lines[i].sidenum[1] != NO_SIDE)
 		{
-			WORD backside;
+			DWORD backside;
 
 			seg.linedef = i;
 			seg.sidedef = Level.Lines[i].sidenum[1];
@@ -191,7 +191,7 @@ void FNodeBuilder::MakeSegsFromSides ()
 				Vertices[seg.v1].segs = j;
 				Vertices[seg.v2].segs2 = j;
 
-				if (Level.Lines[i].sidenum[0] != NO_INDEX && share1 == NULL)
+				if (Level.Lines[i].sidenum[0] != NO_SIDE && share1 == NULL)
 				{
 					Segs[j-1].partner = j;
 					Segs[j].partner = j-1;

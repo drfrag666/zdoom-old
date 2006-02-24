@@ -250,6 +250,9 @@ public:
 #define PROP_RenderFlags(x)				ADD_WORD_PROP(ADEF_RenderFlags,x)
 #define PROP_Translation(x,y)			ADD_WORD_PROP(ADEF_Translation,((x)<<8)|(y))
 #define PROP_MinMissileChance(x)		ADD_BYTE_PROP(ADEF_MinMissileChance,x)
+#define PROP_MeleeRange(x)				ADD_FIXD_PROP(ADEF_MeleeRange,x)
+#define PROP_MaxDropOffHeight(x)		ADD_FIXD_PROP(ADEF_MaxDropOffHeight,x)
+#define PROP_MaxStepHeight(x)			ADD_FIXD_PROP(ADEF_MaxStepHeight,x)
 
 #define PROP_SpawnState(x)				ADD_BYTE_PROP(ADEF_SpawnState,x)
 #define PROP_SeeState(x)				ADD_BYTE_PROP(ADEF_SeeState,x)
@@ -264,6 +267,9 @@ public:
 #define PROP_EDeathState(x)				ADD_BYTE_PROP(ADEF_EDeathState,x)
 #define PROP_RaiseState(x)				ADD_BYTE_PROP(ADEF_RaiseState,x)
 #define PROP_WoundState(x)				ADD_BYTE_PROP(ADEF_WoundState,x)
+#define PROP_YesState(x)				ADD_BYTE_PROP(ADEF_YesState,x)
+#define PROP_NoState(x)					ADD_BYTE_PROP(ADEF_NoState,x)
+#define PROP_GreetingsState(x)			ADD_BYTE_PROP(ADEF_GreetingsState,x)
 
 #define PROP_StrifeType(x)				ADD_WORD_PROP(ADEF_StrifeType,x)
 #define PROP_StrifeTeaserType(x)		ADD_WORD_PROP(ADEF_StrifeTeaserType,x)
@@ -298,6 +304,7 @@ public:
 #define PROP_Ammo_BackpackMaxAmount(x)	ADD_WORD_PROP(ADEF_Ammo_BackpackMaxAmount,x)
 
 #define PROP_Weapon_Flags(x)			ADD_LONG_PROP(ADEF_Weapon_Flags,x)
+#define PROP_Weapon_FlagsSet(x)			ADD_LONG_PROP(ADEF_Weapon_FlagsSet,x)
 #define PROP_Weapon_AmmoGive1(x)		ADD_BYTE_PROP(ADEF_Weapon_AmmoGive1,x)
 #define PROP_Weapon_AmmoGive2(x)		ADD_BYTE_PROP(ADEF_Weapon_AmmoGive2,x)
 #define PROP_Weapon_AmmoUse1(x)			ADD_BYTE_PROP(ADEF_Weapon_AmmoUse1,x)

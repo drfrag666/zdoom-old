@@ -120,8 +120,9 @@ void A_FreezeDeath (AActor *actor)
 {
 	int t = pr_freezedeath();
 	actor->tics = 75+t+pr_freezedeath();
-	actor->flags |= MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD;
+	actor->flags |= MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD|MF_ICECORPSE;
 	actor->flags2 |= MF2_PUSHABLE|MF2_TELESTOMP|MF2_PASSMOBJ|MF2_SLIDE;
+	actor->flags3 |= MF3_CRASHED;
 	actor->height = actor->GetDefault()->height;
 	S_Sound (actor, CHAN_BODY, "misc/freeze", 1, ATTN_NORM);
 

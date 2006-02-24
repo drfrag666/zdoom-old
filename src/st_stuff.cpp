@@ -21,7 +21,6 @@
 //
 //-----------------------------------------------------------------------------
 
-//#include "am_map.h"
 #include "d_protocol.h"
 #include "gstrings.h"
 #include "c_cvars.h"

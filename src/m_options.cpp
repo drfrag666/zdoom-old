@@ -142,6 +142,30 @@ enum
 
 /*=======================================
  *
+ * Confirm Menu - Used by safemore
+ *
+ *=======================================*/
+static void ActivateConfirm (char *text, void (*func)());
+static void ConfirmIsAGo ();
+
+static menuitem_t ConfirmItems[] = {
+	{ whitetext,NULL,									{NULL}, {0}, {0}, {0}, {NULL} },
+	{ redtext,	"Do you really want to do this?",		{NULL}, {0}, {0}, {0}, {NULL} },
+	{ redtext,	" ",									{NULL}, {0}, {0}, {0}, {NULL} },
+	{ rightmore,"Yes",									{NULL}, {0}, {0}, {0}, {(value_t*)ConfirmIsAGo} },
+	{ rightmore,"No",									{NULL}, {0}, {0}, {0}, {(value_t*)M_PopMenuStack} },
+};
+
+static menu_t ConfirmMenu = {
+	"PLEASE CONFIRM",
+	3,
+	sizeof(ConfirmItems)/sizeof(ConfirmItems[0]),
+	140,
+	ConfirmItems,
+};
+
+/*=======================================
+ *
  * Options Menu
  *
  *=======================================*/
@@ -174,8 +198,8 @@ static menuitem_t OptionItems[] =
 	{ more,		"Display Options",		{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)VideoOptions} },
 	{ more,		"Set video mode",		{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)SetVidMode} },
 	{ redtext,	" ",					{NULL},					{0.0}, {0.0},	{0.0}, {NULL} },
-	{ more,		"Reset to defaults",	{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)Reset2Defaults} },
-	{ more,		"Reset to last saved",	{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)Reset2Saved} },
+	{ safemore,	"Reset to defaults",	{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)Reset2Defaults} },
+	{ safemore,	"Reset to last saved",	{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)Reset2Saved} },
 	{ more,		"Go to console",		{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)GoToConsole} },
 };
 
@@ -342,6 +366,7 @@ static menuitem_t ControlsItems[] =
 	{ redtext,	" ",					{NULL},	{0.0}, {0.0}, {0.0}, {NULL} },
 	{ whitetext,"Controls",				{NULL},	{0.0}, {0.0}, {0.0}, {NULL} },
 	{ control,	"Fire",					{NULL}, {0.0}, {0.0}, {0.0}, {(value_t *)"+attack"} },
+	{ control,	"Secondary Fire",		{NULL}, {0.0}, {0.0}, {0.0}, {(value_t *)"+altattack"} },
 	{ control,	"Use / Open",			{NULL}, {0.0}, {0.0}, {0.0}, {(value_t *)"+use"} },
 	{ control,	"Move forward",			{NULL}, {0.0}, {0.0}, {0.0}, {(value_t *)"+forward"} },
 	{ control,	"Move backward",		{NULL}, {0.0}, {0.0}, {0.0}, {(value_t *)"+back"} },
@@ -408,12 +433,9 @@ menu_t ControlsMenu =
  *
  *=======================================*/
 static void StartMessagesMenu (void);
-static void StartMapColorsMenu (void);
+static void StartAutomapMenu (void);
 
-EXTERN_CVAR (Bool, am_rotate)
-EXTERN_CVAR (Bool, am_overlay)
 EXTERN_CVAR (Bool, st_scale)
-EXTERN_CVAR (Bool, am_usecustomcolors)
 EXTERN_CVAR (Int,  r_detail)
 EXTERN_CVAR (Bool, r_stretchsky)
 EXTERN_CVAR (Int,  r_columnmethod)
@@ -470,7 +492,8 @@ static value_t Wipes[] = {
 };
 
 static menuitem_t VideoItems[] = {
-	{ more,		"Messages",				{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)StartMessagesMenu} },
+	{ more,		"Message Options",		{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)StartMessagesMenu} },
+	{ more,		"Automap Options",		{NULL},					{0.0}, {0.0},	{0.0}, {(value_t *)StartAutomapMenu} },
 	{ redtext,	" ",					{NULL},					{0.0}, {0.0},	{0.0}, {NULL} },
 	{ slider,	"Screen size",			{&screenblocks},	   	{3.0}, {12.0},	{1.0}, {NULL} },
 	{ slider,	"Brightness",			{&Gamma},			   	{1.0}, {3.0},	{0.1}, {NULL} },
@@ -489,24 +512,57 @@ static menuitem_t VideoItems[] = {
 	{ discrete, "Rocket Trails",		{&cl_rockettrails},		{2.0}, {0.0},	{0.0}, {OnOff} },
 	{ discrete, "Blood Type",			{&cl_bloodtype},	   	{3.0}, {0.0},	{0.0}, {BloodTypes} },
 	{ discrete, "Bullet Puff Type",		{&cl_pufftype},			{2.0}, {0.0},	{0.0}, {PuffTypes} },
-	{ redtext,	" ",					{NULL},					{0.0}, {0.0},	{0.0}, {NULL} },
-	{ discrete, "Rotate automap",		{&am_rotate},		   	{2.0}, {0.0},	{0.0}, {OnOff} },
-	{ discrete, "Overlay automap",		{&am_overlay},			{2.0}, {0.0},	{0.0}, {OnOff} },
-	{ discrete, "Use traditional Doom map colors",	{&am_usecustomcolors},	{2.0}, {0.0},	{0.0}, {NoYes} },
-	{ more,		"Customize map colors",	{NULL},					{0.0}, {0.0},	{0.0}, {(value_t*)StartMapColorsMenu} },
 };
 
 menu_t VideoMenu =
 {
 	"DISPLAY OPTIONS",
 	0,
-#ifdef _WIN32
-	22,
-#else
-	20,
-#endif
+	sizeof(VideoItems)/sizeof(VideoItems[0]),
 	0,
 	VideoItems,
+};
+
+/*=======================================
+ *
+ * Automap Menu
+ *
+ *=======================================*/
+static void StartMapColorsMenu (void);
+
+EXTERN_CVAR (Bool, am_rotate)
+EXTERN_CVAR (Bool, am_overlay)
+EXTERN_CVAR (Bool, am_usecustomcolors)
+EXTERN_CVAR (Bool, am_showitems)
+EXTERN_CVAR (Bool, am_showmonsters)
+EXTERN_CVAR (Bool, am_showsecrets)
+EXTERN_CVAR (Bool, am_showtime)
+
+static value_t MapColorTypes[] = {
+	{ 1, "Custom" },
+	{ 0, "Traditional Doom" }
+};
+
+static menuitem_t AutomapItems[] = {
+	{ discrete, "Map color set",		{&am_usecustomcolors},	{2.0}, {0.0},	{0.0}, {MapColorTypes} },
+	{ more,		"Set custom colors",	{NULL},					{0.0}, {0.0},	{0.0}, {(value_t*)StartMapColorsMenu} },
+	{ redtext,	" ",					{NULL},					{0.0}, {0.0},	{0.0}, {NULL} },
+	{ discrete, "Rotate automap",		{&am_rotate},		   	{2.0}, {0.0},	{0.0}, {OnOff} },
+	{ discrete, "Overlay automap",		{&am_overlay},			{2.0}, {0.0},	{0.0}, {OnOff} },
+	{ redtext,	" ",					{NULL},					{0.0}, {0.0},	{0.0}, {NULL} },
+	{ discrete, "Show item counts",		{&am_showitems},		{2.0}, {0.0},	{0.0}, {OnOff} },
+	{ discrete, "Show monster counts",	{&am_showmonsters},		{2.0}, {0.0},	{0.0}, {OnOff} },
+	{ discrete, "Show secret counts",	{&am_showsecrets},		{2.0}, {0.0},	{0.0}, {OnOff} },
+	{ discrete, "Show time elapsed",	{&am_showtime},			{2.0}, {0.0},	{0.0}, {OnOff} },
+};
+
+menu_t AutomapMenu =
+{
+	"AUTOMAP OPTIONS",
+	0,
+	sizeof(AutomapItems)/sizeof(AutomapItems[0]),
+	0,
+	AutomapItems,
 };
 
 /*=======================================
@@ -514,6 +570,7 @@ menu_t VideoMenu =
  * Map Colors Menu
  *
  *=======================================*/
+static void DefaultCustomColors();
 
 EXTERN_CVAR (Color, am_backcolor)
 EXTERN_CVAR (Color, am_yourcolor)
@@ -537,11 +594,13 @@ EXTERN_CVAR (Color, am_intralevelcolor)
 EXTERN_CVAR (Color, am_interlevelcolor)
 
 static menuitem_t MapColorsItems[] = {
+	{ rsafemore,   "Restore default custom colors",				{NULL},					{0}, {0}, {0}, {(value_t*)DefaultCustomColors} },
+	{ redtext,	   " ",											{NULL},					{0}, {0}, {0}, {0} },
 	{ colorpicker, "Background",								{&am_backcolor},		{0}, {0}, {0}, {0} },
 	{ colorpicker, "You",										{&am_yourcolor},		{0}, {0}, {0}, {0} },
-	{ colorpicker, "One-sided walls",							{&am_wallcolor},		{0}, {0}, {0}, {0} },
-	{ colorpicker, "Two-sided walls with different floors",		{&am_fdwallcolor},		{0}, {0}, {0}, {0} },
-	{ colorpicker, "Two-sided walls with different ceilings",	{&am_cdwallcolor},		{0}, {0}, {0}, {0} },
+	{ colorpicker, "1-sided walls",								{&am_wallcolor},		{0}, {0}, {0}, {0} },
+	{ colorpicker, "2-sided walls with different floors",		{&am_fdwallcolor},		{0}, {0}, {0}, {0} },
+	{ colorpicker, "2-sided walls with different ceilings",		{&am_cdwallcolor},		{0}, {0}, {0}, {0} },
 	{ colorpicker, "Map grid",									{&am_gridcolor},		{0}, {0}, {0}, {0} },
 	{ colorpicker, "Center point",								{&am_xhaircolor},		{0}, {0}, {0}, {0} },
 	{ colorpicker, "Not-yet-seen walls",						{&am_notseencolor},		{0}, {0}, {0}, {0} },
@@ -549,13 +608,13 @@ static menuitem_t MapColorsItems[] = {
 	{ colorpicker, "Teleporter to the same map",				{&am_intralevelcolor},	{0}, {0}, {0}, {0} },
 	{ colorpicker, "Teleporter to a different map",				{&am_interlevelcolor},	{0}, {0}, {0}, {0} },
 	{ redtext,		" ",										{NULL},					{0}, {0}, {0}, {0} },
-	{ colorpicker, "Invisible two-sided walls (for cheat)",		{&am_tswallcolor},		{0}, {0}, {0}, {0} },
+	{ colorpicker, "Invisible 2-sided walls (for cheat)",		{&am_tswallcolor},		{0}, {0}, {0}, {0} },
 	{ colorpicker, "Secret walls (for cheat)",					{&am_secretwallcolor},	{0}, {0}, {0}, {0} },
 	{ colorpicker, "Actors (for cheat)",						{&am_thingcolor},		{0}, {0}, {0}, {0} },
 	{ redtext,		" ",										{NULL},					{0}, {0}, {0}, {0} },
 	{ colorpicker, "You (overlay)",								{&am_ovyourcolor},		{0}, {0}, {0}, {0} },
-	{ colorpicker, "One-sided walls (overlay)",					{&am_ovwallcolor},		{0}, {0}, {0}, {0} },
-	{ colorpicker, "Two-sided walls (overlay)",					{&am_ovotherwallscolor},{0}, {0}, {0}, {0} },
+	{ colorpicker, "1-sided walls (overlay)",					{&am_ovwallcolor},		{0}, {0}, {0}, {0} },
+	{ colorpicker, "2-sided walls (overlay)",					{&am_ovotherwallscolor},{0}, {0}, {0}, {0} },
 	{ colorpicker, "Not-yet-seen walls (overlay)",				{&am_ovunseencolor},	{0}, {0}, {0}, {0} },
 	{ colorpicker, "Teleporter (overlay)",						{&am_ovtelecolor},		{0}, {0}, {0}, {0} },
 	{ colorpicker, "Actors (overlay) (for cheat)",				{&am_ovthingcolor},		{0}, {0}, {0}, {0} },
@@ -566,7 +625,7 @@ menu_t MapColorsMenu =
 	"CUSTOMIZE MAP COLORS",
 	0,
 	sizeof(MapColorsItems)/sizeof(MapColorsItems[0]),
-	48,
+	42,
 	MapColorsItems,
 };
 
@@ -623,7 +682,7 @@ menu_t ColorPickerMenu =
  * Messages Menu
  *
  *=======================================*/
-EXTERN_CVAR (Bool, con_scaletext)
+EXTERN_CVAR (Int,  con_scaletext)
 EXTERN_CVAR (Bool, con_centernotify)
 EXTERN_CVAR (Int,  msg0color)
 EXTERN_CVAR (Int,  msg1color)
@@ -632,6 +691,13 @@ EXTERN_CVAR (Int,  msg3color)
 EXTERN_CVAR (Int,  msg4color)
 EXTERN_CVAR (Int,  msgmidcolor)
 EXTERN_CVAR (Int,  msglevel)
+
+static value_t ScaleValues[] =
+{
+	{ 0.0, "Off" },
+	{ 1.0, "On" },
+	{ 2.0, "Double" }
+};
 
 static value_t TextColors[] =
 {
@@ -655,7 +721,7 @@ static value_t MessageLevels[] = {
 };
 
 static menuitem_t MessagesItems[] = {
-	{ discrete,	"Scale text in high res", {&con_scaletext},		{2.0}, {0.0}, 	{0.0}, {OnOff} },
+	{ discrete,	"Scale text in high res", {&con_scaletext},		{3.0}, {0.0}, 	{0.0}, {ScaleValues} },
 	{ discrete, "Minimum message level", {&msglevel},		   	{3.0}, {0.0},   {0.0}, {MessageLevels} },
 	{ discrete, "Center messages",		{&con_centernotify},	{2.0}, {0.0},	{0.0}, {OnOff} },
 	{ redtext,	" ",					{NULL},					{0.0}, {0.0},	{0.0}, {NULL} },
@@ -851,14 +917,15 @@ static menu_t DMFlagsMenu =
 static menuitem_t CompatibilityItems[] = {
 	{ bitflag,	"Find shortest textures like Doom",			{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_SHORTTEX} },
 	{ bitflag,	"Use buggier stair building",				{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_STAIRINDEX} },
-	{ bitflag,	"Limit Pain Elementals to 20 Lost Souls",	{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_LIMITPAIN} },
+	{ bitflag,	"Limit Pain Elementals' Lost Souls",		{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_LIMITPAIN} },
 	{ bitflag,	"Don't let others hear your pickups",		{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_SILENTPICKUP} },
 	{ bitflag,	"Actors are infinitely tall",				{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_NO_PASSMOBJ} },
 	{ bitflag,	"Cripple sound for silent BFG trick",		{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_MAGICSILENCE} },
 	{ bitflag,	"Enable wall running",						{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_WALLRUN} },
 	{ bitflag,	"Spawn item drops on the floor",			{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_NOTOSSDROPS} },
-	{ bitflag,  "All special lines can block use lines",	{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_USEBLOCKING} },
+	{ bitflag,  "All special lines can block <use>",		{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_USEBLOCKING} },
 	{ bitflag,	"Disable BOOM door light effect",			{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_NODOORLIGHT} },
+	{ bitflag,	"Raven scroll types use original speed",	{&compatflags}, {0}, {0}, {0}, {(value_t *)COMPATF_RAVENSCROLL} },
 };
 
 static menu_t CompatibilityMenu =
@@ -1030,6 +1097,20 @@ void M_FreeValues (value_t **values, int num)
 	}
 }
 
+static void ActivateConfirm (char *text, void (*func)())
+{
+	ConfirmItems[0].label = text;
+	ConfirmItems[0].e.mfunc = func;
+	ConfirmMenu.lastOn = 3;
+	M_SwitchMenu (&ConfirmMenu);
+}
+
+static void ConfirmIsAGo ()
+{
+	M_PopMenuStack ();
+	ConfirmItems[0].e.mfunc ();
+}
+
 //
 //		Set some stuff up for the video modes menu
 //
@@ -1156,7 +1237,7 @@ static void CalcIndent (menu_t *menu)
 				widest = thiswidth;
 		}
 	}
-	menu->indent = widest + 6;
+	menu->indent = widest + 4;
 }
 
 void M_SwitchMenu (menu_t *menu)
@@ -1292,13 +1373,16 @@ void M_OptDrawer ()
 			switch (item->type)
 			{
 			case more:
+			case safemore:
 				x = CurrentMenu->indent - width;
 				color = MoreColor;
 				break;
 
 			case numberedmore:
+			case rsafemore:
+			case rightmore:
 				x = CurrentMenu->indent + 14;
-				color = CR_GREEN;
+				color = item->type != rightmore ? CR_GREEN : MoreColor;
 				break;
 
 			case redtext:
@@ -2078,11 +2162,23 @@ void M_OptResponder (event_t *ev)
 			S_Sound (CHAN_VOICE, "menu/choose", 1, ATTN_NONE);
 			SetModesMenu (NewWidth, NewHeight, NewBits);
 		}
-		else if ((item->type == more || item->type == numberedmore) && item->e.mfunc)
+		else if ((item->type == more ||
+				  item->type == numberedmore ||
+				  item->type == rightmore ||
+				  item->type == rsafemore ||
+				  item->type == safemore)
+				 && item->e.mfunc)
 		{
 			CurrentMenu->lastOn = CurrentItem;
 			S_Sound (CHAN_VOICE, "menu/choose", 1, ATTN_NONE);
-			item->e.mfunc();
+			if (item->type == safemore || item->type == rsafemore)
+			{
+				ActivateConfirm (item->label, item->e.mfunc);
+			}
+			else
+			{
+				item->e.mfunc();
+			}
 		}
 		else if (item->type == discrete || item->type == cdiscrete)
 		{
@@ -2205,6 +2301,18 @@ static void StartMessagesMenu (void)
 	M_SwitchMenu (&MessagesMenu);
 }
 
+static void StartAutomapMenu (void)
+{
+	M_SwitchMenu (&AutomapMenu);
+}
+
+CCMD (menu_automap)
+{
+	M_StartControlPanel (true);
+	OptionsActive = true;
+	StartAutomapMenu ();
+}
+
 static void StartMapColorsMenu (void)
 {
 	M_SwitchMenu (&MapColorsMenu);
@@ -2215,6 +2323,18 @@ CCMD (menu_mapcolors)
 	M_StartControlPanel (true);
 	OptionsActive = true;
 	StartMapColorsMenu ();
+}
+
+static void DefaultCustomColors ()
+{
+	// Find the color cvars by scanning the MapColors menu.
+	for (int i = 0; i < MapColorsMenu.numitems; ++i)
+	{
+		if (MapColorsItems[i].type == colorpicker)
+		{
+			MapColorsItems[i].a.colorcvar->ResetToDefault ();
+		}
+	}
 }
 
 static void ColorPickerDrawer ()

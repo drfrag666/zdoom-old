@@ -189,12 +189,12 @@ void DRotatePoly::Tick ()
 	{
 		unsigned int absSpeed = abs (m_Speed);
 
-		if (m_Dist == ~0u)
+		if ((unsigned int)m_Dist == ~0u)
 		{ // perpetual polyobj
 			return;
 		}
 		m_Dist -= absSpeed;
-		if (m_Dist <= 0)
+		if (m_Dist == 0)
 		{
 			polyobj_t *poly = GetPolyobj (m_PolyObj);
 			if (poly->specialdata == this)
@@ -204,7 +204,7 @@ void DRotatePoly::Tick ()
 			SN_StopSequence (poly);
 			Destroy ();
 		}
-		else if (m_Dist < absSpeed)
+		else if ((unsigned int)m_Dist < absSpeed)
 		{
 			m_Speed = m_Dist * (m_Speed < 0 ? -1 : 1);
 		}
@@ -304,7 +304,7 @@ void DMovePoly::Tick ()
 
 	if (PO_MovePolyobj (m_PolyObj, m_xSpeed, m_ySpeed))
 	{
-		unsigned int absSpeed = abs (m_Speed);
+		int absSpeed = abs (m_Speed);
 		m_Dist -= absSpeed;
 		if (m_Dist <= 0)
 		{
@@ -820,9 +820,9 @@ void DoMovePolyobj (polyobj_t *po, int x, int y)
 			linedef->bbox[BOXBOTTOM] += y;
 			linedef->bbox[BOXLEFT] += x;
 			linedef->bbox[BOXRIGHT] += x;
-			if (linedef->sidenum[0] != NO_INDEX)
+			if (linedef->sidenum[0] != NO_SIDE)
 				ADecal::MoveChain (sides[linedef->sidenum[0]].BoundActors, x, y);
-			if (linedef->sidenum[1] != NO_INDEX)
+			if (linedef->sidenum[1] != NO_SIDE)
 				ADecal::MoveChain (sides[linedef->sidenum[1]].BoundActors, x, y);
 			linedef->validcount = validcount;
 		}
@@ -909,9 +909,9 @@ BOOL PO_RotatePolyobj (int num, angle_t angle)
 		{
 			UpdateSegBBox(*segList);
 			line_t *line = (*segList)->linedef;
-			if (line->sidenum[0] != NO_INDEX)
+			if (line->sidenum[0] != NO_SIDE)
 				ADecal::FixForSide (&sides[line->sidenum[0]]);
-			if (line->sidenum[1] != NO_INDEX)
+			if (line->sidenum[1] != NO_SIDE)
 				ADecal::FixForSide (&sides[line->sidenum[1]]);
 			line->validcount = validcount;
 		}
@@ -933,9 +933,9 @@ BOOL PO_RotatePolyobj (int num, angle_t angle)
 			{
 				UpdateSegBBox(*segList);
 				line_t *line = (*segList)->linedef;
-				if (line->sidenum[0] != NO_INDEX)
+				if (line->sidenum[0] != NO_SIDE)
 					ADecal::FixForSide (&sides[line->sidenum[0]]);
-				if (line->sidenum[1] != NO_INDEX)
+				if (line->sidenum[1] != NO_SIDE)
 					ADecal::FixForSide (&sides[line->sidenum[1]]);
 				line->validcount = validcount;
 			}

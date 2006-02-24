@@ -35,8 +35,6 @@ BITS 32
 
 %ifndef M_TARGET_LINUX
 
-%define FixedMul_ASM	_FixedMul_ASM
-%define FixedDiv_ASM	_FixedDiv_ASM
 %define CheckMMX	_CheckMMX
 %define EndMMX		_EndMMX
 %define DoBlending_MMX	_DoBlending_MMX
@@ -63,94 +61,6 @@ Blending256:
 %else
   SECTION .text
 %endif
-
-;-----------------------------------------------------------
-;
-; FixedMul_ASM
-;
-; Assembly version of FixedMul.
-;
-;-----------------------------------------------------------
-
-GLOBAL	FixedMul_ASM
-
-	align	16
-
-FixedMul_ASM:
-	mov	eax,[esp+4]
-	imul	dword [esp+8]
-	shrd	eax,edx,16
-	ret
-
-; Version of FixedMul_ASM for MSVC's __fastcall
-
-GLOBAL @FixedMul_ASM@8
-
-	align	16
-
-@FixedMul_ASM@8:
-	mov	eax,ecx
-	imul	edx
-	shrd	eax,edx,16
-	ret
-
-;-----------------------------------------------------------
-;
-; FixedDiv_ASM
-;
-; This is mostly what VC++ outputted for the original C
-; routine (which used to contain inline assembler
-; but doesn't anymore).
-;
-;-----------------------------------------------------------
-
-GLOBAL	FixedDiv_ASM
-
-	align	16
-
-FixedDiv_ASM:
-	push	ebp
-	push	ebx
-
-; 89   : 	if ((abs (a) >> 14) >= abs(b))
-
-	mov	edx,[esp+12]		; get a
-	 mov	eax,[esp+16]		; get b
-	mov	ecx,edx
-	 mov	ebx,eax
-	sar	ecx,31
-	 mov	ebp,edx
-	sar	ebx,31
-	 xor	ebp,ecx
-	xor	eax,ebx
-	 sub	ebp,ecx			; ebp is now abs(a)
-	sub	eax,ebx			; eax is now abs(b)
-
-	sar	ebp,14
-	 pop	ebx
-	cmp	ebp,eax
-	 jl	.L206
-
-; 90   : 		return (a^b)<0 ? MININT : MAXINT;
-
-	xor	edx,[esp+12]
-	 xor	eax,eax
-	pop	ebp
-	 test	edx,edx
-	setl	al
-	add	eax,0x7fffffff
-	ret
-
-	align	16
-
-.L206:
-	sar	edx,16			; (edx = ----aaaa)
-	 mov	eax,[esp+8]		; (eax = aaaaAAAA)
-	shl	eax,16			; (eax = AAAA0000)
-	 pop	ebp
-	idiv	dword [esp+8]
-
-	ret
 
 ;-----------------------------------------------------------
 ;

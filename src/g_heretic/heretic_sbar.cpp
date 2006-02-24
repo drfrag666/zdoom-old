@@ -349,15 +349,7 @@ private:
 		}
 		else
 		{
-			temp = HealthMarker;
-			if (temp < 0)
-			{
-				temp = 0;
-			}
-			else if (temp > 100)
-			{
-				temp = 100;
-			}
+			temp = MAX(0, HealthMarker);
 			if (oldlife != temp)
 			{
 				oldlife = temp;

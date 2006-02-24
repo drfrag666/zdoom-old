@@ -100,6 +100,7 @@ enum SICommands
 	SI_Map,
 	SI_Registered,
 	SI_ArchivePath,
+	SI_MusicVolume,
 	SI_IfDoom,
 	SI_IfHeretic,
 	SI_IfHexen,
@@ -118,6 +119,67 @@ struct FBloodSFX
 	SDWORD	LoopStart;	// loop position (-1 means no looping)
 	char	RawName[9];	// name of RAW resource
 };
+
+// music volume multipliers
+struct FMusicVolume
+{
+	FMusicVolume() : MusicName(), Volume(1) {}
+	FMusicVolume (const FMusicVolume &other)
+	{
+		MusicName = other.MusicName;
+		Volume = other.Volume;
+	}
+	FMusicVolume &operator= (const FMusicVolume &other)
+	{
+		MusicName = other.MusicName;
+		Volume = other.Volume;
+		return *this;
+	}
+
+	string MusicName;
+	float Volume;
+
+private:
+	void *operator new (size_t size, FMusicVolume *addr)
+	{
+		return addr;
+	}
+	void operator delete (void *, FMusicVolume *)
+	{
+	}
+
+#ifndef __GNUC__
+	template<> friend inline bool NeedsDestructor<FMusicVolume> ()
+	{
+		return true;
+	}
+	template<> friend inline void ConstructInTArray<FMusicVolume> (FMusicVolume *dst, const FMusicVolume &src)
+	{
+		new (dst) FMusicVolume(src);
+	}
+	template<> friend inline void ConstructEmptyInTArray<FMusicVolume> (FMusicVolume *dst)
+	{
+		new (dst) FMusicVolume;
+	}
+#else
+	template<struct FMusicVolume> friend inline bool NeedsDestructor<FMusicVolume> ();
+	template<struct FMusicVolume> friend inline void ConstructInTArray<FMusicVolume> (FMusicVolume *dst, const FMusicVolume &src)
+	template<struct FMusicVolume> friend inline void ConstructEmptyInTArray<FMusicVolume> (FMusicVolume *dst)
+#endif
+};
+
+template<> inline bool NeedsDestructor<FMusicVolume> ()
+{
+	return true;
+}
+template<> inline void ConstructInTArray<FMusicVolume> (FMusicVolume *dst, const FMusicVolume &src)
+{
+	new (dst) FMusicVolume(src);
+}
+template<> inline void ConstructEmptyInTArray<FMusicVolume> (FMusicVolume *dst)
+{
+	new (dst) FMusicVolume;
+}
 
 // EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
 
@@ -170,6 +232,7 @@ static const char *SICommandStrings[] =
 	"$map",
 	"$registered",
 	"$archivepath",
+	"$musicvolume",
 	"$ifdoom",
 	"$ifheretic",
 	"$ifhexen",
@@ -178,6 +241,7 @@ static const char *SICommandStrings[] =
 };
 
 static TArray<FRandomSoundList> S_rnd;
+static TArray<FMusicVolume> MusicVolumes;
 
 static int NumPlayerReserves;
 static bool DoneReserving;
@@ -194,6 +258,25 @@ static BYTE CurrentPitchMask;
 static FRandom pr_randsound ("RandSound");
 
 // CODE --------------------------------------------------------------------
+
+//==========================================================================
+//
+// S_GetMusicVolume
+//
+// Gets the relative volume for the given music track
+//==========================================================================
+
+float S_GetMusicVolume (const char *music)
+{
+	for (int i = 0; i < MusicVolumes.Size(); i++)
+	{
+		if (!stricmp(music, MusicVolumes[i].MusicName.GetChars()))
+		{
+			return MusicVolumes[i].Volume;
+		}
+	}
+	return 1.f;
+}
 
 //==========================================================================
 //
@@ -839,6 +922,16 @@ static void S_AddSNDINFO (int lump)
 					S_sfx[random.SfxHead].link = (WORD)S_rnd.Push (random);
 					S_sfx[random.SfxHead].bRandomHeader = true;
 				}
+				}
+				break;
+
+			case SI_MusicVolume: {
+				FMusicVolume mv;
+				SC_MustGetString();
+				mv.MusicName = sc_String;
+				SC_MustGetFloat();
+				mv.Volume = sc_Float;
+				MusicVolumes.Push (mv);
 				}
 				break;
 

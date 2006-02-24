@@ -57,10 +57,19 @@ static FRandom pr_scaredycat ("Anubis");
 static FRandom pr_facetarget ("FaceTarget");
 static FRandom pr_railface ("RailFace");
 static FRandom pr_dropitem ("DropItem");
-static FRandom pr_fastchase ("FastChase");
 static FRandom pr_look2 ("LookyLooky");
 static FRandom pr_look3 ("IGotHooky");
 static FRandom pr_slook ("SlooK");
+
+static FRandom pr_skiptarget("SkipTarget");
+
+// movement interpolation is fine for objects that are moved by their own
+// momentum. But for monsters it is problematic.
+// 1. They don't move every tic
+// 2. Their animation is not designed for movement interpolation
+// The result is that they tend to 'glide' across the floor
+// so this CVAR allows to switch it off.
+CVAR(Bool, nomonsterinterpolation, false, CVAR_GLOBALCONFIG|CVAR_ARCHIVE)
 
 //
 // P_NewChaseDir related LUT.
@@ -129,7 +138,7 @@ void P_RecursiveSound (sector_t *sec, AActor *soundtarget, bool splash, int soun
 	for (i = 0; i < sec->linecount; i++)
 	{
 		check = sec->lines[i];
-		if (check->sidenum[1] == NO_INDEX ||
+		if (check->sidenum[1] == NO_SIDE ||
 			!(check->flags & ML_TWOSIDED))
 		{
 			continue;
@@ -148,11 +157,15 @@ void P_RecursiveSound (sector_t *sec, AActor *soundtarget, bool splash, int soun
 		 || (other->floorplane.ZatPoint (check->v1->x, check->v1->y) >=
 			 sec->ceilingplane.ZatPoint (check->v1->x, check->v1->y) &&
 			 other->floorplane.ZatPoint (check->v2->x, check->v2->y) >=
-			 sec->ceilingplane.ZatPoint (check->v2->x, check->v2->y)))
+			 sec->ceilingplane.ZatPoint (check->v2->x, check->v2->y))
+		 || (other->floorplane.ZatPoint (check->v1->x, check->v1->y) >=
+			 other->ceilingplane.ZatPoint (check->v1->x, check->v1->y) &&
+			 other->floorplane.ZatPoint (check->v2->x, check->v2->y) >=
+			 other->ceilingplane.ZatPoint (check->v2->x, check->v2->y)))
 		{
 			continue;
 		}
-		
+
 		if (check->flags & ML_SOUNDBLOCK)
 		{
 			if (!soundblocks)
@@ -208,7 +221,7 @@ bool AActor::CheckMeleeRange ()
 	pl = target;
 	dist = P_AproxDistance (pl->x - x, pl->y - y);
 
-	if (dist >= MELEERANGE-20*FRACUNIT + pl->radius)
+	if (dist >= meleerange + pl->radius)
 		return false;
 
 	// [RH] If moving toward goal, then we've reached it.
@@ -314,6 +327,32 @@ bool AActor::SuggestMissileAttack (fixed_t dist)
 	return pr_checkmissilerange() >= MIN<int> (dist >> FRACBITS, MinMissileChance);
 }
 
+//=============================================================================
+//
+// P_HitFriend()
+//
+// killough 12/98
+// This function tries to prevent shooting at friends that get in the line of fire
+//
+// [GrafZahl] Taken from MBF but this has been cleaned up to make it readable.
+//
+//=============================================================================
+
+bool P_HitFriend(AActor * self)
+{
+	if (self->flags&MF_FRIENDLY && self->target != NULL)
+	{
+		angle_t angle = R_PointToAngle2 (self->x, self->y, self->target->x, self->target->y);
+		fixed_t dist = P_AproxDistance (self->x-self->target->x, self->y-self->target->y);
+		P_AimLineAttack (self, self->angle, dist, 0);
+		if (linetarget != NULL && linetarget != self->target)
+		{
+			return P_IsFriend(self, linetarget);
+		}
+	}
+	return false;
+}
+
 //
 // P_Move
 // Move in the current direction,
@@ -339,7 +378,7 @@ BOOL P_Move (AActor *actor)
 	if (!(actor->flags & MF_NOGRAVITY) && actor->z > actor->floorz
 		&& !(actor->flags2 & MF2_ONMOBJ))
 	{
-		if (actor->z > actor->floorz + gameinfo.StepHeight)
+		if (actor->z > actor->floorz + actor->MaxStepHeight)
 		{
 			return false;
 		}
@@ -374,6 +413,15 @@ BOOL P_Move (AActor *actor)
 
 	// killough 3/15/98: don't jump over dropoffs:
 	try_ok = P_TryMove (actor, tryx, tryy, false);
+
+	// [GrafZahl] Interpolating monster movement as it is done here just looks bad
+	// so make it switchable!
+	if (nomonsterinterpolation)
+	{
+		actor->PrevX = actor->x;
+		actor->PrevY = actor->y;
+		actor->PrevZ = actor->z;
+	}
 
 	if (try_ok && friction > ORIG_FRICTION)
 	{
@@ -1047,6 +1095,22 @@ AActor *LookForEnemiesInBlock (AActor *lookee, int index)
 			other = link;
 		}
 
+		// [MBF] If the monster is already engaged in a one-on-one attack
+		// with a healthy friend, don't attack around 60% the time.
+		
+		// [GrafZahl] This prevents friendlies from attacking all the same 
+		// target.
+		
+		if (other)
+		{
+			AActor *targ = other->target;
+			if (targ && targ->target == other && pr_skiptarget() > 100 && P_IsFriend(lookee, targ) &&
+				targ->health*2 >= targ->GetDefault()->health)
+			{
+				continue;
+			}
+		}
+
 		if (other == NULL || !P_CheckSight (lookee, other, 2))
 			continue;			// out of sight
 	/*						
@@ -1277,7 +1341,7 @@ void A_Look (AActor *actor)
 		TActorIterator<APatrolPoint> iterator (actor->args[1]);
 		actor->special = 0;
 		actor->goal = iterator.Next ();
-		actor->reactiontime = actor->args[2] * TICRATE + level.time;
+		actor->reactiontime = actor->args[2] * TICRATE + level.maptime;
 	}
 
 	actor->threshold = 0;		// any shot will wake up
@@ -1310,8 +1374,13 @@ void A_Look (AActor *actor)
 
 	if (targ && (targ->flags & MF_SHOOTABLE))
 	{
-		if (actor->flags & targ->flags & MF_FRIENDLY)
+		if (P_IsFriend(actor, targ))	// be a little more precise!
 		{
+			// If we find a valid target here, the wandering logic should *not*
+			// be activated! If would cause the seestate to be set twice.
+			if (P_LookForPlayers (actor, actor->flags4 & MF4_LOOKALLAROUND))
+				goto seeyou;
+
 			// Let the actor wander around aimlessly looking for a fight
 			if (actor->SeeState != NULL)
 			{
@@ -1348,7 +1417,7 @@ void A_Look (AActor *actor)
 	// [RH] Don't start chasing after a goal if it isn't time yet.
 	if (actor->target == actor->goal)
 	{
-		if (actor->reactiontime > level.time)
+		if (actor->reactiontime > level.maptime)
 			actor->target = NULL;
 	}
 	else if (actor->SeeSound)
@@ -1451,7 +1520,7 @@ nosee:
 	}
 	if (!(self->flags4 & MF4_STANDSTILL) && pr_look2() < 40)
 	{
-		self->SetState (self->SpawnState + 4);
+		self->SetState (self->SpawnState + 3);
 	}
 }
 
@@ -1462,10 +1531,15 @@ nosee:
 =
 = Actor has a melee attack, so it tries to close as fast as possible
 =
-==============
 */
+// [GrafZahl] integrated A_FastChase, A_SerpentChase and A_SerpentWalk into this
+// to allow the monsters using those functions to take advantage of the
+// enhancements.
+//
+//=============================================================================
+#define CLASS_BOSS_STRAFE_RANGE	64*10*FRACUNIT
 
-void A_Chase (AActor *actor)
+void A_DoChase (AActor *actor, bool fastchase, FState *meleestate, FState *missilestate, bool playactive, bool nightmarefast)
 {
 	int delta;
 
@@ -1503,7 +1577,7 @@ void A_Chase (AActor *actor)
 		}
 	}
 
-	if ((gameinfo.gametype & GAME_Raven) &&
+	if (nightmarefast &&
 		(gameskill == sk_nightmare || (dmflags & DF_FAST_MONSTERS)))
 	{ // Monsters move faster in nightmare mode
 		actor->tics -= actor->tics / 2;
@@ -1626,7 +1700,7 @@ void A_Chase (AActor *actor)
 			actor->goal = iterator.Next ();
 			if (actor->goal != NULL)
 			{
-				actor->reactiontime = actor->goal->args[1] * TICRATE + level.time;
+				actor->reactiontime = actor->goal->args[1] * TICRATE + level.maptime;
 			}
 			else
 			{
@@ -1641,24 +1715,57 @@ void A_Chase (AActor *actor)
 		goto nomissile;
 	}
 
+	// Strafe	(Hexen's class bosses)
+	// This was the sole reason for the separate A_FastChase function but
+	// it can be just as easily handled by a simple flag so the monsters
+	// can take advantage of all the other enhancements of A_Chase.
+
+	if (fastchase)
+	{
+		if (actor->special2 > 0)
+		{
+			actor->special2--;
+		}
+		else
+		{
+			actor->special2 = 0;
+			actor->momx = 0;
+			actor->momy = 0;
+			fixed_t dist = P_AproxDistance (actor->x - actor->target->x, actor->y - actor->target->y);
+			if (dist < CLASS_BOSS_STRAFE_RANGE)
+			{
+				if (pr_chase() < 100)
+				{
+					angle_t ang = R_PointToAngle2(actor->x, actor->y, actor->target->x, actor->target->y);
+					if (pr_chase() < 128) ang += ANGLE_90;
+					else ang -= ANGLE_90;
+					actor->momx = 13 * finecosine[ang>>ANGLETOFINESHIFT];
+					actor->momy = 13 * finesine[ang>>ANGLETOFINESHIFT];
+					actor->special2 = 3;		// strafe time
+				}
+			}
+		}
+
+	}
+
 	// [RH] Scared monsters attack less frequently
 	if (actor->target->player == NULL ||
 		!(actor->target->player->cheats & CF_FRIGHTENING) ||
 		pr_scaredycat() < 43)
 	{
 		// check for melee attack
-		if (actor->MeleeState && actor->CheckMeleeRange ())
+		if (meleestate && actor->CheckMeleeRange ())
 		{
 			if (actor->AttackSound)
 				S_SoundID (actor, CHAN_WEAPON, actor->AttackSound, 1, ATTN_NORM);
 
-			actor->SetState (actor->MeleeState);
+			actor->SetState (meleestate);
 			actor->flags &= ~MF_INCHASE;
 			return;
 		}
 		
 		// check for missile attack
-		if (actor->MissileState)
+		if (missilestate)
 		{
 			if (gameskill < sk_nightmare
 				&& actor->movecount && !(dmflags & DF_FAST_MONSTERS))
@@ -1669,7 +1776,7 @@ void A_Chase (AActor *actor)
 			if (!P_CheckMissileRange (actor))
 				goto nomissile;
 			
-			actor->SetState (actor->MissileState);
+			actor->SetState (missilestate);
 			actor->flags |= MF_JUSTATTACKED;
 			actor->flags4 |= MF4_INCOMBAT;
 			actor->flags &= ~MF_INCHASE;
@@ -1701,20 +1808,58 @@ void A_Chase (AActor *actor)
 			return; 	// got a new target
 		}
 	}
-	
+
+	//
 	// chase towards player
-	if (--actor->movecount < 0 || !P_Move (actor))
+	//
+
+	// class bosses don't do this when strafing
+	if (!fastchase || !actor->special2)
 	{
-		P_NewChaseDir (actor);
+		// CANTLEAVEFLOORPIC handling was completely missing in the non-serpent functions!
+		fixed_t oldX = actor->x;
+		fixed_t oldY = actor->y;
+		int oldFloor = actor->floorpic;
+
+		// chase towards player
+		if (--actor->movecount < 0 || !P_Move (actor))
+		{
+			P_NewChaseDir (actor);
+		}
+		
+		// if the move was illegal, reset it 
+		// (copied from A_SerpentChase - it applies to everything with CANTLEAVEFLOORPIC!)
+		if (actor->flags2&MF2_CANTLEAVEFLOORPIC && actor->floorpic != oldFloor )
+		{
+			if (P_TryMove (actor, oldX, oldY, false))
+			{
+				if (nomonsterinterpolation)
+				{
+					actor->PrevX = oldX;
+					actor->PrevY = oldY;
+				}
+			}
+			P_NewChaseDir (actor);
+		}
 	}
 	
 	// make active sound
-	if (pr_chase() < 3)
+	if (playactive && pr_chase() < 3)
 	{
 		actor->PlayActiveSound ();
 	}
 
 	actor->flags &= ~MF_INCHASE;
+}
+
+void A_Chase (AActor *actor)
+{
+	A_DoChase (actor, false, actor->MeleeState, actor->MissileState, true, !!(gameinfo.gametype & GAME_Raven));
+}
+
+void A_FastChase (AActor *actor)
+{
+	A_DoChase (actor, true, actor->MeleeState, actor->MissileState, true, true);
 }
 
 
@@ -1961,6 +2106,16 @@ void A_Explode (AActor *thing)
 	}
 }
 
+void A_ExplodeAndAlert (AActor *thing)
+{
+	A_Explode (thing);
+	if (thing->target != NULL && thing->target->player != NULL)
+	{
+		validcount++;
+		P_RecursiveSound (thing->Sector, thing->target, false, 0);
+	}
+}
+
 bool CheckBossDeath (AActor *actor)
 {
 	int i;
@@ -2009,6 +2164,25 @@ void A_BossDeath (AActor *actor)
 		MT_MINOTAUR,
 		MT_SORCERER2
 	} type;
+
+	// Do generic special death actions first
+	bool checked = false;
+	FSpecialAction *sa = level.info->specialactions;
+	while (sa)
+	{
+		if (name(actor->GetClass()->Name+1) == sa->Type)
+		{
+			if (!checked && !CheckBossDeath(actor))
+			{
+				return;
+			}
+			checked = true;
+
+			LineSpecials[sa->Action](NULL, actor, false, 
+				sa->Args[0], sa->Args[1], sa->Args[2], sa->Args[3], sa->Args[4]);
+		}
+		sa = sa->Next;
+	}
 
 	// [RH] These all depend on the presence of level flags now
 	//		rather than being hard-coded to specific levels/episodes.
@@ -2123,30 +2297,7 @@ int P_Massacre ()
 	{
 		if (!(actor->flags2 & MF2_DORMANT) && (actor->flags3 & MF3_ISMONSTER))
 		{
-			// killough 3/6/98: kill even if PE is dead
-			if (actor->health > 0)
-			{
-				killcount++;
-				actor->flags |= MF_SHOOTABLE;
-				actor->flags2 &= ~(MF2_DORMANT|MF2_INVULNERABLE);
-				do
-				{
-					P_DamageMobj (actor, NULL, NULL, 1000000, MOD_MASSACRE);
-				}
-				while (actor->health > 0);
-			}
-			if (actor->IsKindOf (RUNTIME_CLASS(APainElemental)))
-			{
-				FState *deadstate;
-				A_NoBlocking (actor);	// [RH] Use this instead of A_PainDie
-				deadstate = actor->DeathState;
-				if (deadstate != NULL)
-				{
-					while (deadstate->GetNextState() != NULL)
-						deadstate = deadstate->GetNextState();
-					actor->SetState (deadstate);
-				}
-			}
+			killcount += actor->Massacre();
 		}
 	}
 	return killcount;
@@ -2191,159 +2342,6 @@ bool A_RaiseMobj (AActor *actor)
 		}
 	}
 	return done;		// Reached target height
-}
-
-//============================================================================
-// Class Bosses
-//============================================================================
-#define CLASS_BOSS_STRAFE_RANGE	64*10*FRACUNIT
-
-void A_FastChase (AActor *actor)
-{
-	int delta;
-	fixed_t dist;
-	angle_t ang;
-	AActor *target;
-
-	if (actor->reactiontime)
-	{
-		actor->reactiontime--;
-	}
-
-	// Modify target threshold
-	if (actor->threshold)
-	{
-		actor->threshold--;
-	}
-
-	if (gameskill == sk_nightmare)
-	{ // Monsters move faster in nightmare mode
-		actor->tics -= actor->tics/2;
-		if (actor->tics < 3)
-		{
-			actor->tics = 3;
-		}
-	}
-
-//
-// turn towards movement direction if not there yet
-//
-	if (actor->movedir < 8)
-	{
-		actor->angle &= (7<<29);
-		delta = actor->angle-(actor->movedir << 29);
-		if (delta > 0)
-		{
-			actor->angle -= ANG90/2;
-		}
-		else if (delta < 0)
-		{
-			actor->angle += ANG90/2;
-		}
-	}
-
-	if (!actor->target || !(actor->target->flags&MF_SHOOTABLE))
-	{ // look for a new target
-		if (P_LookForPlayers(actor, true))
-		{ // got a new target
-			return;
-		}
-		actor->SetState (actor->SpawnState);
-		return;
-	}
-
-//
-// don't attack twice in a row
-//
-	if (actor->flags & MF_JUSTATTACKED)
-	{
-		actor->flags &= ~MF_JUSTATTACKED;
-		if (gameskill != sk_nightmare)
-			P_NewChaseDir (actor);
-		return;
-	}
-
-	// Strafe
-	if (actor->special2 > 0)
-	{
-		actor->special2--;
-	}
-	else
-	{
-		target = actor->target;
-		actor->special2 = 0;
-		actor->momx = actor->momy = 0;
-		dist = P_AproxDistance (actor->x - target->x,
-								actor->y - target->y);
-		if (dist < CLASS_BOSS_STRAFE_RANGE)
-		{
-			if (pr_fastchase() < 100)
-			{
-				ang = R_PointToAngle2(actor->x, actor->y,
-									target->x, target->y);
-				if (pr_fastchase() < 128)
-					ang += ANGLE_90;
-				else
-					ang -= ANGLE_90;
-				ang >>= ANGLETOFINESHIFT;
-				actor->momx = 13 * finecosine[ang];
-				actor->momy = 13 * finesine[ang];
-				actor->special2 = 3;		// strafe time
-			}
-		}
-	}
-
-//
-// check for missile attack
-//
-	if (actor->MissileState)
-	{
-		if (gameskill < sk_nightmare && actor->movecount)
-			goto nomissile;
-		if (!P_CheckMissileRange (actor))
-			goto nomissile;
-		actor->SetState (actor->MissileState);
-		actor->flags |= MF_JUSTATTACKED;
-		actor->flags4 |= MF4_INCOMBAT;
-		return;
-	}
-nomissile:
-
-//
-// possibly choose another target
-//
-	if ((multiplayer || actor->TIDtoHate)
-		&& !actor->threshold
-		&& !P_CheckSight (actor, actor->target, 0) )
-	{
-		bool lookForBetter = false;
-		BOOL gotNew;
-		if (actor->flags3 & MF3_NOSIGHTCHECK)
-		{
-			actor->flags3 &= ~MF3_NOSIGHTCHECK;
-			lookForBetter = true;
-		}
-		gotNew = P_LookForPlayers (actor, true);
-		if (lookForBetter)
-		{
-			actor->flags3 |= MF3_NOSIGHTCHECK;
-		}
-		if (gotNew)
-		{
-			return; 	// got a new target
-		}
-	}
-
-//
-// chase towards player
-//
-	if (!actor->special2)
-	{
-		if (--actor->movecount<0 || !P_Move (actor))
-		{
-			P_NewChaseDir (actor);
-		}
-	}
 }
 
 void A_ClassBossHealth (AActor *actor)

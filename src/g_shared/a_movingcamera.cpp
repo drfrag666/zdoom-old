@@ -535,6 +535,11 @@ void AActorMover::PostBeginPlay ()
 	{
 		Printf ("ActorMover %d: Can't find target %d\n", tid, args[3]);
 	}
+	else
+	{
+		special1 = tracer->flags;
+		special2 = tracer->flags2;
+	}
 }
 
 bool AActorMover::Interpolate ()

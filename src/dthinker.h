@@ -85,15 +85,15 @@ private:
 class FThinkerIterator
 {
 private:
-	TypeInfo *m_ParentType;
+	const TypeInfo *m_ParentType;
 	Node *m_CurrThinker;
 	BYTE m_Stat;
 	bool m_SearchStats;
 	bool m_SearchingFresh;
 
 public:
-	FThinkerIterator (TypeInfo *type, int statnum=MAX_STATNUM+1);
-	FThinkerIterator (TypeInfo *type, int statnum, DThinker *prev);
+	FThinkerIterator (const TypeInfo *type, int statnum=MAX_STATNUM+1);
+	FThinkerIterator (const TypeInfo *type, int statnum, DThinker *prev);
 	DThinker *Next ();
 	void Reinit ();
 };

@@ -229,66 +229,6 @@ inline void clearbufshort (void *buff, unsigned int count, WORD clear)
 	} while (--count);
 }
 
-inline void qinterpolatedown16 (SDWORD *out, DWORD count, SDWORD val, SDWORD delta)
-{
-	SDWORD odd = count;
-	if ((count >>= 1) != 0)
-	{
-		do
-		{
-			SDWORD temp = val + delta;
-			out[0] = val >> 16;
-			val = temp + delta;
-			out[1] = temp >> 16;
-			out += 2;
-		} while (--count);
-		if (!(odd & 1))
-			return;
-	}
-	*out = val >> 16;
-}
-
-inline void qinterpolatedown16short (short *out, DWORD count, SDWORD val, SDWORD delta)
-{
-	if ((size_t)out & 2)
-	{ // align to dword boundary
-		*out++ = (short)(val >> 16);
-		count--;
-		val += delta;
-	}
-	DWORD c2 = count>>1;
-	if (c2)
-	{
-		DWORD *o2 = (DWORD *)out;
-		do
-		{
-			SDWORD temp = val + delta;
-			*o2++ = (temp & 0xffff0000) | ((DWORD)val >> 16);
-			val = temp + delta;
-		} while (--c2);
-		out = (short *)o2;
-	}
-	if (count & 1)
-	{
-		*out = (short)(val >> 16);
-	}
-}
-
-
-	//returns num/den, dmval = num%den
-inline SDWORD DivMod (DWORD num, SDWORD den, SDWORD *dmval)
-{
-	*dmval = num%den;
-	return num/den;
-}
-
-	//returns num%den, dmval = num/den
-inline SDWORD ModDiv (DWORD num, SDWORD den, SDWORD *dmval)
-{
-	*dmval = num/den;
-	return num%den;
-}
-
 inline SDWORD ksgn (SDWORD a)
 {
 	if (a < 0) return -1;

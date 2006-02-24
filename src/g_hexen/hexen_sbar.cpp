@@ -430,7 +430,7 @@ private:
 		}
 		else
 		{
-			temp = clamp (HealthMarker, 0, 100);
+			temp = MAX (0, HealthMarker);
 			if (oldlife != temp)
 			{
 				oldlife = temp;

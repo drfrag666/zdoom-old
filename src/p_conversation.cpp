@@ -329,9 +329,9 @@ static FStrifeDialogueNode *ReadRetailNode (FWadLump *lump, DWORD &prevSpeakerTy
 	lump->Read (&speech, sizeof(speech));
 
 	// Byte swap all the ints in the original data
-	speech.SpeakerType = LONG(speech.SpeakerType);
-	speech.DropType = LONG(speech.DropType);
-	speech.Link = LONG(speech.Link);
+	speech.SpeakerType = LittleLong(speech.SpeakerType);
+	speech.DropType = LittleLong(speech.DropType);
+	speech.Link = LittleLong(speech.Link);
 
 	// Assign the first instance of a conversation as the default for its
 	// actor, so newly spawned actors will use this conversation by default.
@@ -399,8 +399,8 @@ static FStrifeDialogueNode *ReadTeaserNode (FWadLump *lump, DWORD &prevSpeakerTy
 	lump->Read (&speech, sizeof(speech));
 
 	// Byte swap all the ints in the original data
-	speech.SpeakerType = LONG(speech.SpeakerType);
-	speech.DropType = LONG(speech.DropType);
+	speech.SpeakerType = LittleLong(speech.SpeakerType);
+	speech.DropType = LittleLong(speech.DropType);
 
 	// Assign the first instance of a conversation as the default for its
 	// actor, so newly spawned actors will use this conversation by default.
@@ -470,13 +470,13 @@ static void ParseReplies (FStrifeDialogueReply **replyptr, Response *responses)
 	// Byte swap first.
 	for (j = 0; j < 5; ++j)
 	{
-		responses[j].GiveType = LONG(responses[j].GiveType);
-		responses[j].Link = LONG(responses[j].Link);
-		responses[j].Log = LONG(responses[j].Log);
+		responses[j].GiveType = LittleLong(responses[j].GiveType);
+		responses[j].Link = LittleLong(responses[j].Link);
+		responses[j].Log = LittleLong(responses[j].Log);
 		for (k = 0; k < 3; ++k)
 		{
-			responses[j].Item[k] = LONG(responses[j].Item[k]);
-			responses[j].Count[k] = LONG(responses[j].Count[k]);
+			responses[j].Item[k] = LittleLong(responses[j].Item[k]);
+			responses[j].Count[k] = LittleLong(responses[j].Count[k]);
 		}
 	}
 
@@ -530,20 +530,13 @@ static void ParseReplies (FStrifeDialogueReply **replyptr, Response *responses)
 
 		// QuickYes messages are shown when you meet the item checks.
 		// QuickNo messages are shown when you don't.
-		if (rsp->Link >= 0)
+		if (rsp->Yes[0] == '_' && rsp->Yes[1] == 0)
 		{
-			if (rsp->Yes[0] == '_' && rsp->Yes[1] == 0)
-			{
-				reply->QuickYes = NULL;
-			}
-			else
-			{
-				reply->QuickYes = ncopystring (rsp->Yes);
-			}
+			reply->QuickYes = NULL;
 		}
 		else
 		{
-			reply->QuickYes = NULL;
+			reply->QuickYes = ncopystring (rsp->Yes);
 		}
 		if (reply->ItemCheck[0] != 0)
 		{
@@ -832,6 +825,7 @@ void P_ResumeConversation ()
 
 static void DrawConversationMenu ()
 {
+	const char *speakerName;
 	int i, x, y, linesize;
 
 	assert (DialogueLines != NULL);
@@ -856,6 +850,20 @@ static void DrawConversationMenu ()
 	y = 16 * screen->GetHeight() / 200;
 	linesize = 10 * CleanYfac;
 
+	// Who is talking to you?
+	if (CurNode->SpeakerName != NULL)
+	{
+		speakerName = CurNode->SpeakerName;
+	}
+	else
+	{
+		speakerName = ConversationNPC->GetClass()->Meta.GetMetaString (AMETA_StrifeName);
+		if (speakerName == NULL)
+		{
+			speakerName = "Person";
+		}
+	}
+
 	// Dim the screen behind the dialogue (but only if there is no backdrop).
 	if (CurNode->Backdrop <= 0)
 	{
@@ -863,7 +871,7 @@ static void DrawConversationMenu ()
 		{ }
 		screen->Dim (0, 0.45f, 14 * screen->GetWidth() / 320, 13 * screen->GetHeight() / 200,
 			308 * screen->GetWidth() / 320 - 14 * screen->GetWidth () / 320,
-			CurNode->SpeakerName == NULL ? linesize * i + 6 * CleanYfac
+			speakerName == NULL ? linesize * i + 6 * CleanYfac
 			: linesize * i + 6 * CleanYfac + linesize * 3/2);
 	}
 
@@ -874,9 +882,9 @@ static void DrawConversationMenu ()
 		MIN(ConversationMenu.numitems * (gameinfo.gametype & GAME_Raven ? 9 : 8) + 4,
 		200 - ConversationMenu.y) * CleanYfac);
 
-	if (CurNode->SpeakerName != NULL)
+	if (speakerName != NULL)
 	{
-		screen->DrawText (CR_WHITE, x, y, CurNode->SpeakerName,
+		screen->DrawText (CR_WHITE, x, y, speakerName,
 			DTA_CleanNoMove, true, TAG_DONE);
 		y += linesize * 3 / 2;
 	}
@@ -984,6 +992,11 @@ static void PickConversationReply ()
 		players[consoleplayer].SetLogNumber (reply->LogNumber);
 	}
 
+	if (replyText != NULL)
+	{
+		Printf ("%s\n", replyText);
+	}
+
 	// Does this reply alter the speaker's conversation node? If NextNode is positive,
 	// the next time they talk, the will show the new node. If it is negative, then they
 	// will show the new node right away without terminating the dialogue.
@@ -1007,11 +1020,6 @@ static void PickConversationReply ()
 		{
 			ConversationNPC->Conversation = StrifeDialogues[rootnode + reply->NextNode - 1];
 		}
-	}
-
-	if (replyText != NULL)
-	{
-		Printf ("%s\n", replyText);
 	}
 
 	ConversationNPC->angle = ConversationNPCAngle;

@@ -639,7 +639,7 @@ void AltSoundRenderer::LoadSound (sfxinfo_t *sfx)
 			BYTE *sfxend, *sfx_p;
 			WAVEFORMAT fmtchunk;
 
-			if (LONG(((SDWORD *)sfxdata)[1]) > size - 8)
+			if (LittleLong(((SDWORD *)sfxdata)[1]) > size - 8)
 			{ // lump is too short
 				goto badwave;
 			}
@@ -648,14 +648,14 @@ void AltSoundRenderer::LoadSound (sfxinfo_t *sfx)
 				goto badwave;
 			}
 
-			sfxend = sfxdata + LONG(((DWORD *)sfxdata)[1]) + 8;
+			sfxend = sfxdata + LittleLong(((DWORD *)sfxdata)[1]) + 8;
 			sfx_p = sfxdata + 4*3;
 			fmtchunk.wFormatTag = ~0;
 
 			while (sfx_p < sfxend)
 			{
 				DWORD chunkid = ((DWORD *)sfx_p)[0];
-				DWORD chunklen = LONG(((DWORD *)sfx_p)[1]);
+				DWORD chunklen = LittleLong(((DWORD *)sfx_p)[1]);
 				sfx_p += 4*2;
 				if (chunkid == ID_fmt)
 				{
@@ -664,11 +664,11 @@ void AltSoundRenderer::LoadSound (sfxinfo_t *sfx)
 						continue;
 					}
 					memcpy (&fmtchunk, sfx_p, sizeof(fmtchunk));
-					fmtchunk.wFormatTag = SHORT(fmtchunk.wFormatTag);
-					fmtchunk.nChannels = SHORT(fmtchunk.nChannels);
-					fmtchunk.nSamplesPerSec = SHORT(fmtchunk.nSamplesPerSec);
-					fmtchunk.nAvgBytesPerSec = SHORT(fmtchunk.nAvgBytesPerSec);
-					fmtchunk.nBlockAlign = SHORT(fmtchunk.nBlockAlign);
+					fmtchunk.wFormatTag = LittleShort(fmtchunk.wFormatTag);
+					fmtchunk.nChannels = LittleShort(fmtchunk.nChannels);
+					fmtchunk.nSamplesPerSec = LittleShort(fmtchunk.nSamplesPerSec);
+					fmtchunk.nAvgBytesPerSec = LittleShort(fmtchunk.nAvgBytesPerSec);
+					fmtchunk.nBlockAlign = LittleShort(fmtchunk.nBlockAlign);
 				}
 				else if (chunkid == ID_data)
 				{
@@ -698,7 +698,7 @@ void AltSoundRenderer::LoadSound (sfxinfo_t *sfx)
 		}
 		else
 		{ // DMX
-			sfx->frequency = SHORT(((WORD *)sfxdata)[1]);
+			sfx->frequency = LittleShort(((WORD *)sfxdata)[1]);
 			if (sfx->frequency == 0)
 			{
 				sfx->frequency = 11025;
@@ -738,7 +738,7 @@ void AltSoundRenderer::LoadSound (sfxinfo_t *sfx)
 				sfx->data = new BYTE[len + 4];
 				for (SDWORD i = 0; i < len/2; ++i)
 				{
-					((SWORD *)sfx->data)[i] = SHORT(((SWORD *)sfxstart)[i]);
+					((SWORD *)sfx->data)[i] = LittleShort(((SWORD *)sfxstart)[i]);
 				}
 			}
 			else
@@ -747,7 +747,7 @@ void AltSoundRenderer::LoadSound (sfxinfo_t *sfx)
 				sfx->data = new BYTE[len / 2 + 4];
 				for (SDWORD i = 0; i < len/4; ++i)
 				{
-					((SWORD *)sfx->data)[i] = (SHORT(((SWORD *)sfxstart)[i*2]) + SHORT(((SWORD *)sfxstart)[i*2+1])) / 2;
+					((SWORD *)sfx->data)[i] = (LittleShort(((SWORD *)sfxstart)[i*2]) + LittleShort(((SWORD *)sfxstart)[i*2+1])) / 2;
 				}
 			}
 			sfx->ms = sfx->length * 1000 / sfx->frequency;

@@ -74,8 +74,8 @@ class AImpactDecal : public ADecal
 {
 	DECLARE_STATELESS_ACTOR (AImpactDecal, ADecal)
 public:
-	static AImpactDecal *StaticCreate (const char *name, fixed_t x, fixed_t y, fixed_t z, side_s *wall);
-	static AImpactDecal *StaticCreate (const FDecal *decal, fixed_t x, fixed_t y, fixed_t z, side_s *wall);
+	static AImpactDecal *StaticCreate (const char *name, fixed_t x, fixed_t y, fixed_t z, side_s *wall, PalEntry color=0);
+	static AImpactDecal *StaticCreate (const FDecal *decal, fixed_t x, fixed_t y, fixed_t z, side_s *wall, PalEntry color=0);
 
 	void BeginPlay ();
 	void Destroy ();

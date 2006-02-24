@@ -57,6 +57,9 @@ FConfigFile::FConfigFile (const char *pathname,
 	void (*nosechandler)(const char *pathname, FConfigFile *config, void *userdata),
 	void *userdata)
 {
+	Sections = CurrentSection = NULL;
+	LastSectionPtr = &Sections;
+	CurrentEntry = NULL;
 	ChangePathName (pathname);
 	LoadConfigFile (nosechandler, userdata);
 }

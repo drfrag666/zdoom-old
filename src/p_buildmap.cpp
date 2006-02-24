@@ -160,15 +160,15 @@ bool P_LoadBuildMap (BYTE *data, size_t len, mapthing2_t **sprites, int *numspr)
 		return P_LoadBloodMap (data, len, sprites, numspr);
 	}
 
-	numsectors = SHORT(*(WORD *)(data + 20));
+	numsectors = LittleShort(*(WORD *)(data + 20));
 	int numwalls;
 	int numsprites;
 
 	if (len < 26 + numsectors*sizeof(sectortype) ||
-		(numwalls = SHORT(*(WORD *)(data + 22 + numsectors*sizeof(sectortype))),
+		(numwalls = LittleShort(*(WORD *)(data + 22 + numsectors*sizeof(sectortype))),
 			len < 24 + numsectors*sizeof(sectortype) + numwalls*sizeof(walltype)) ||
-		LONG(*(DWORD *)data) != 7 ||
-		SHORT(*(WORD *)(data + 16)) >= 2048)
+		LittleLong(*(DWORD *)data) != 7 ||
+		LittleShort(*(WORD *)(data + 16)) >= 2048)
 	{ // Can't possibly be a version 7 BUILD map
 		return false;
 	}
@@ -336,11 +336,11 @@ static void LoadSectors (sectortype *bsec)
 		bsec->ceilingstat = WORD(bsec->ceilingstat);
 		bsec->floorstat = WORD(bsec->floorstat);
 
-		sec->floortexz = -(LONG(bsec->floorz) << 8);
+		sec->floortexz = -(LittleLong(bsec->floorz) << 8);
 		sec->floorplane.d = -sec->floortexz;
 		sec->floorplane.c = FRACUNIT;
 		sec->floorplane.ic = FRACUNIT;
-		sprintf (tnam, "BTIL%04d", SHORT(bsec->floorpicnum));
+		sprintf (tnam, "BTIL%04d", LittleShort(bsec->floorpicnum));
 		sec->floorpic = TexMan.GetTexture (tnam, FTexture::TEX_Build);
 		sec->floor_xscale = (bsec->floorstat & 8) ? FRACUNIT*2 : FRACUNIT;
 		sec->floor_yscale = (bsec->floorstat & 8) ? FRACUNIT*2 : FRACUNIT;
@@ -349,11 +349,11 @@ static void LoadSectors (sectortype *bsec)
 		sec->FloorLight = SHADE2LIGHT (bsec->floorshade);
 		sec->FloorFlags = SECF_ABSLIGHTING;
 
-		sec->ceilingtexz = -(LONG(bsec->ceilingz) << 8);
+		sec->ceilingtexz = -(LittleLong(bsec->ceilingz) << 8);
 		sec->ceilingplane.d = sec->ceilingtexz;
 		sec->ceilingplane.c = -FRACUNIT;
 		sec->ceilingplane.ic = -FRACUNIT;
-		sprintf (tnam, "BTIL%04d", SHORT(bsec->ceilingpicnum));
+		sprintf (tnam, "BTIL%04d", LittleShort(bsec->ceilingpicnum));
 		sec->ceilingpic = TexMan.GetTexture (tnam, FTexture::TEX_Build);
 		if (bsec->ceilingstat & 1)
 		{
@@ -447,17 +447,17 @@ static void LoadWalls (walltype *walls, int numwalls, sectortype *bsec)
 		char tnam[9];
 		int overpic, pic;
 
-		sprintf (tnam, "BTIL%04d", SHORT(walls[i].picnum));
+		sprintf (tnam, "BTIL%04d", LittleShort(walls[i].picnum));
 		pic = TexMan.GetTexture (tnam, FTexture::TEX_Build);
-		sprintf (tnam, "BTIL%04d", SHORT(walls[i].overpicnum));
+		sprintf (tnam, "BTIL%04d", LittleShort(walls[i].overpicnum));
 		overpic = TexMan.GetTexture (tnam, FTexture::TEX_Build);
 
-		walls[i].x = LONG(walls[i].x);
-		walls[i].y = LONG(walls[i].y);
-		walls[i].point2 = SHORT(walls[i].point2);
-		walls[i].cstat = SHORT(walls[i].cstat);
-		walls[i].nextwall = SHORT(walls[i].nextwall);
-		walls[i].nextsector = SHORT(walls[i].nextsector);
+		walls[i].x = LittleLong(walls[i].x);
+		walls[i].y = LittleLong(walls[i].y);
+		walls[i].point2 = LittleShort(walls[i].point2);
+		walls[i].cstat = LittleShort(walls[i].cstat);
+		walls[i].nextwall = LittleShort(walls[i].nextwall);
+		walls[i].nextsector = LittleShort(walls[i].nextsector);
 
 		sides[i].textureoffset = walls[i].xpanning << FRACBITS;
 		sides[i].rowoffset = walls[i].ypanning << FRACBITS;
@@ -574,13 +574,13 @@ static void LoadWalls (walltype *walls, int numwalls, sectortype *bsec)
 		}
 		if ((bsec->floorstat & 2) && (bsec->floorheinum != 0))
 		{ // floor is sloped
-			slope.heinum = -SHORT(bsec->floorheinum);
+			slope.heinum = -LittleShort(bsec->floorheinum);
 			slope.z[0] = slope.z[1] = slope.z[2] = -bsec->floorz;
 			CalcPlane (slope, sectors[i].floorplane);
 		}
 		if ((bsec->ceilingstat & 2) && (bsec->ceilingheinum != 0))
 		{ // ceiling is sloped
-			slope.heinum = -SHORT(bsec->ceilingheinum);
+			slope.heinum = -LittleShort(bsec->ceilingheinum);
 			slope.z[0] = slope.z[1] = slope.z[2] = -bsec->ceilingz;
 			CalcPlane (slope, sectors[i].ceilingplane);
 		}
@@ -671,10 +671,10 @@ vertex_t *FindVertex (fixed_t x, fixed_t y)
 
 static void CreateStartSpot (fixed_t *pos, mapthing2_t *start)
 {
-	short angle = SHORT(*(WORD *)(&pos[3]));
+	short angle = LittleShort(*(WORD *)(&pos[3]));
 	mapthing2_t mt =
 	{
-		0, short(LONG(pos[0])>>4), short((-LONG(pos[1]))>>4), 0,// tid, x, y, z
+		0, short(LittleLong(pos[0])>>4), short((-LittleLong(pos[1]))>>4), 0,// tid, x, y, z
 		short(Scale ((2048-angle)&2047, 360, 2048)), 1,	// angle, type
 		7|MTF_SINGLE|224,										// flags
 		// special and args are 0

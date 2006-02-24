@@ -51,7 +51,7 @@ FState AStrifeBishop::States[] =
 	S_BRIGHT (MLDR, 'G',	3, NULL,				&States[S_BISHOP_DIE+1]),
 	S_BRIGHT (MLDR, 'H',	5, A_Scream,			&States[S_BISHOP_DIE+2]),
 	S_BRIGHT (MLDR, 'I',	4, A_TossGib,			&States[S_BISHOP_DIE+3]),
-	S_BRIGHT (MLDR, 'J',	4, A_Explode,			&States[S_BISHOP_DIE+4]),
+	S_BRIGHT (MLDR, 'J',	4, A_ExplodeAndAlert,	&States[S_BISHOP_DIE+4]),
 	S_BRIGHT (MLDR, 'K',	4, NULL,				&States[S_BISHOP_DIE+5]),
 	S_BRIGHT (MLDR, 'L',	4, NULL,				&States[S_BISHOP_DIE+6]),
 	S_BRIGHT (MLDR, 'M',	4, A_NoBlocking,		&States[S_BISHOP_DIE+7]),
@@ -83,6 +83,7 @@ IMPLEMENT_ACTOR (AStrifeBishop, Strife, 187, 0)
 	PROP_Flags2 (MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
 	PROP_Flags4 (MF4_INCOMBAT|MF4_FIRERESIST|MF4_NOICEDEATH)
 	PROP_MinMissileChance (150)
+	PROP_MaxDropOffHeight (32)
 	PROP_StrifeType (64)
 	PROP_SeeSound ("bishop/sight")
 	PROP_PainSound ("bishop/pain")
@@ -115,7 +116,7 @@ FState ABishopMissile::States[] =
 	S_BRIGHT (MISS, 'A',	4, A_RocketInFlight,	&States[1]),
 	S_BRIGHT (MISS, 'B',	3, A_Tracer2,			&States[0]),
 
-	S_BRIGHT (SMIS, 'A',	5, A_Explode,			&States[3]),
+	S_BRIGHT (SMIS, 'A',	5, A_ExplodeAndAlert,	&States[3]),
 	S_BRIGHT (SMIS, 'B',	5, NULL,				&States[4]),
 	S_BRIGHT (SMIS, 'C',	4, NULL,				&States[5]),
 	S_BRIGHT (SMIS, 'D',	2, NULL,				&States[6]),
@@ -134,6 +135,7 @@ IMPLEMENT_ACTOR (ABishopMissile, Strife, -1, 0)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags2 (MF2_NOTELEPORT|MF2_PCROSS|MF2_IMPACT|MF2_SEEKERMISSILE)
 	PROP_Flags4 (MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 	PROP_SeeSound ("bishop/misl")
 	PROP_DeathSound ("bishop/mislx")
 END_DEFAULTS

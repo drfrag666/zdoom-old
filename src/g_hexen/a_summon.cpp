@@ -146,7 +146,7 @@ void A_Summon (AActor *actor)
 			return;
 		}
 
-		mo->StartTime = level.time;
+		mo->StartTime = level.maptime;
 		if (actor->tracer->flags & MF_CORPSE)
 		{	// Master dead
 			mo->tracer = NULL;		// No master

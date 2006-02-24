@@ -282,7 +282,7 @@ bool DCajunMaster::CleanAhead (AActor *thing, fixed_t x, fixed_t y, ticcmd_t *cm
 
     if (!(thing->flags & MF_NOCLIP) )
     {
-        fixed_t maxstep = gameinfo.StepHeight;
+		fixed_t maxstep = thing->MaxStepHeight;
         if (tmceilingz - tmfloorz < thing->height)
             return false;       // doesn't fit
 
@@ -292,7 +292,7 @@ bool DCajunMaster::CleanAhead (AActor *thing, fixed_t x, fixed_t y, ticcmd_t *cm
 				return false;
 
 			//Jumpable
-			if(tmfloorz>(thing->Sector->floorplane.ZatPoint (x, y)+gameinfo.StepHeight))
+			if(tmfloorz>(thing->Sector->floorplane.ZatPoint (x, y)+thing->MaxStepHeight))
 				cmd->ucmd.buttons |= BT_JUMP;
 
 
@@ -310,7 +310,7 @@ bool DCajunMaster::CleanAhead (AActor *thing, fixed_t x, fixed_t y, ticcmd_t *cm
 
 
 			if ( !(thing->flags&(MF_DROPOFF|MF_FLOAT))
-			&& tmfloorz - tmdropoffz > gameinfo.StepHeight )
+			&& tmfloorz - tmdropoffz > thing->MaxDropOffHeight )
 				return false;       // don't stand over a dropoff
 
 		}

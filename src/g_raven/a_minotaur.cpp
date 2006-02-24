@@ -257,7 +257,7 @@ void AMinotaur::Die (AActor *source, AActor *inflictor)
 			// [RH] Minotaurs can't be morphed, so this isn't needed
 			//if (!(mo->flags&MF_COUNTKILL)) continue;		// for morphed minotaurs
 			if (mo->flags&MF_CORPSE) continue;
-			if (mo->StartTime >= 0 && (level.time - StartTime) >= MAULATORTICS) continue;
+			if (mo->StartTime >= 0 && (level.maptime - StartTime) >= MAULATORTICS) continue;
 			if (mo->tracer != NULL && mo->tracer->player == tracer->player) break;
 		}
 
@@ -291,7 +291,7 @@ IMPLEMENT_STATELESS_ACTOR (AMinotaurFriend, Hexen, -1, 0)
 	PROP_Alpha (OPAQUE/3)
 
 	PROP_SpawnHealth (2500)
-	PROP_FlagsClear (MF_DROPOFF)
+	PROP_FlagsClear (MF_DROPOFF|MF_COUNTKILL)
 	PROP_FlagsSet (MF_FRIENDLY)
 	PROP_Flags2Clear (MF2_BOSS)
 	PROP_Flags2Set (MF2_TELESTOMP)
@@ -793,7 +793,7 @@ void A_MinotaurRoam (AActor *actor)
 	// In case pain caused him to skip his fade in.
 	actor->RenderStyle = STYLE_Normal;
 
-	if (self->StartTime >= 0 && (level.time - self->StartTime) >= MAULATORTICS)
+	if (self->StartTime >= 0 && (level.maptime - self->StartTime) >= MAULATORTICS)
 	{
 		P_DamageMobj (actor, NULL, NULL, 1000000, MOD_UNKNOWN);
 		return;
@@ -906,7 +906,7 @@ void A_MinotaurChase (AActor *actor)
 	// In case pain caused him to skip his fade in.
 	actor->RenderStyle = STYLE_Normal;
 
-	if (self->StartTime >= 0 && (level.time - self->StartTime) >= MAULATORTICS)
+	if (self->StartTime >= 0 && (level.maptime - self->StartTime) >= MAULATORTICS)
 	{
 		P_DamageMobj (actor, NULL, NULL, 1000000, MOD_UNKNOWN);
 		return;

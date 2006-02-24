@@ -35,6 +35,7 @@ IMPLEMENT_ACTOR (ASpectralLightningBase, Strife, -1, 0)
 	PROP_DeathState (0)
 	PROP_Flags2 (MF2_NOTELEPORT|MF2_IMPACT|MF2_PCROSS)
 	PROP_Flags4 (MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 	PROP_RenderStyle (STYLE_Add)
 	PROP_SeeSound ("weapons/sigil")
 	PROP_DeathSound ("weapons/sigilhit")
@@ -83,6 +84,7 @@ IMPLEMENT_ACTOR (ASpectralLightningBall1, Strife, -1, 0)
 	PROP_Damage (70)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags4 (MF4_SPECTRAL|MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 END_DEFAULTS
 
 // Spectral Lightning (Ball Shaped #2) --------------------------------------
@@ -112,6 +114,7 @@ IMPLEMENT_ACTOR (ASpectralLightningH1, Strife, -1, 0)
 	PROP_Damage (70)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags4 (MF4_SPECTRAL|MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 END_DEFAULTS
 
 // Spectral Lightning (Horizontal #2) -------------------------------------
@@ -174,6 +177,7 @@ IMPLEMENT_ACTOR (ASpectralLightningBigBall1, Strife, -1, 0)
 	PROP_Damage (130)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags4 (MF4_SPECTRAL|MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 END_DEFAULTS
 
 // Spectral Lightning (Big Ball #2 - less damaging) -------------------------
@@ -205,6 +209,7 @@ IMPLEMENT_ACTOR (ASpectralLightningV1, Strife, -1, 0)
 	PROP_Damage (100)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags4 (MF4_SPECTRAL|MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 END_DEFAULTS
 
 // Sigil Lightning (Vertical #2 - less damaging) ----------------------------
@@ -231,6 +236,8 @@ IMPLEMENT_ACTOR (ASpectralLightningSpot, Strife, -1, 0)
 	PROP_ReactionTime (70)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF)
 	PROP_Flags3 (MF3_FLOORHUGGER)
+	PROP_RenderStyle (STYLE_Translucent)
+	PROP_Alpha (HR_SHADOW)
 END_DEFAULTS
 
 // Sigil Lightning (Big Vertical #1) ----------------------------------------
@@ -253,6 +260,7 @@ IMPLEMENT_ACTOR (ASpectralLightningBigV1, Strife, -1, 0)
 	PROP_Damage (120)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags4 (MF4_SPECTRAL|MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 END_DEFAULTS
 
 // Actor 90 -----------------------------------------------------------------

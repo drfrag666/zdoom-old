@@ -911,6 +911,7 @@ void V_Init (void)
 
 	FBaseCVar::ResetColors ();
 	ConFont = new FSingleLumpFont ("ConsoleFont", Wads.GetNumForName ("CONFONT"));
+	V_InitCustomFonts ();
 
 	BuildTransTable (GPalette.BaseColors);
 }

@@ -85,8 +85,6 @@ enum
 	IF_PICKUPFLASH		= 1<<9,		// Item "flashes" when picked up
 	IF_ALWAYSPICKUP		= 1<<10,	// For IF_AUTOACTIVATE, MaxAmount=0 items: Always "pick up", even if it doesn't do anything
 	IF_FANCYPICKUPSOUND	= 1<<11,	// Play pickup sound in "surround" mode
-
-	IF_CHEATNOTWEAPON	= 1<<30,	// Give cheat considers this not a weapon (used by Sigil)
 };
 
 struct vissprite_t;
@@ -139,6 +137,7 @@ public:
 	virtual void GoAwayAndDie ();
 	virtual bool HandlePickup (AInventory *item);
 	virtual bool Use (bool pickup);
+	virtual void Travelled ();
 
 	virtual void AbsorbDamage (int damage, int damageType, int &newdamage);
 	virtual void AlterWeaponSprite (vissprite_t *vis);
@@ -148,6 +147,19 @@ public:
 private:
 	static int StaticLastMessageTic;
 	static const char *StaticLastMessage;
+};
+
+// CustomInventory: Supports the Use, Pickup, and Drop states from 96x
+class ACustomInventory : public AInventory
+{
+	DECLARE_STATELESS_ACTOR (ACustomInventory, AInventory)
+public:
+	FState *UseState, *PickupState, *DropState;
+
+	void Serialize (FArchive &arc);
+	bool TryPickup (AActor *toucher);
+	bool Use (bool pickup);
+	bool SpecialDropAction (AActor *dropper);
 };
 
 // Ammo: Something a weapon needs to operate
@@ -247,6 +259,8 @@ enum
 	WIF_EXTREME_DEATH =		0x00000800,	// weapon always causes an extreme death
 	WIF_HITS_GHOSTS =		0x00001000, // melee weapon can strike ghosts
 	WIF_STAFF2_KICKBACK =	0x00002000, // the powered-up Heretic staff has special kickback
+
+	WIF_CHEATNOTWEAPON	=	1<<27,		// Give cheat considers this not a weapon (used by Sigil)
 
 	// Flags used only by bot AI:
 

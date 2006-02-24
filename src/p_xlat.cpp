@@ -65,11 +65,14 @@ void P_TranslateLineDef (line_t *ld, maplinedef_t *mld)
 {
 	static FMemLump tlatebase;
 	const BYTE *tlate;
-	short special = SHORT(mld->special);
-	short tag = SHORT(mld->tag);
-	DWORD flags = SHORT(mld->flags);
+	short special = LittleShort(mld->special);
+	short tag = LittleShort(mld->tag);
+	DWORD flags = LittleShort(mld->flags);
 	BOOL passthrough;
 	int i;
+
+	// In Doom format maps, the tag is always the same as the line's id.
+	ld->id = tag;
 
 	if (flags & ML_TRANSLUCENT_STRIFE)
 	{
@@ -412,6 +415,13 @@ int P_TranslateSectorSpecial (int special)
 {
 	int high;
 
+	// Allow any supported sector special by or-ing 0x8000 to it in Doom format maps
+	// That's for those who like to mess around with existing maps. ;)
+	if (special & 0x8000)
+	{
+		return special & 0x7fff;
+	}
+	
 	if (special == 9)
 	{
 		return SECRET_MASK;
@@ -433,7 +443,7 @@ int P_TranslateSectorSpecial (int special)
 			}
 			else if (level.flags & LEVEL_CAVERNS_OF_DARKNESS)
 			{
-				// CoD uses 18 as an instant death sector type and 19 for healing the palyer
+				// CoD uses 18 as an instant death sector type and 19 for healing the player
 				if (special == 18) return high | Damage_InstantDeath;
 				if (special == 19) return high | Sector_Heal;
 			}

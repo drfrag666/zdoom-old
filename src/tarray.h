@@ -140,7 +140,7 @@ public:
 		}
 		return false;
 	}
-	void Delete (int index)
+	void Delete (unsigned int index)
 	{
 		DoDelete (index, index);
 		if (index < Count-1)

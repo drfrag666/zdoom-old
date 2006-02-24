@@ -227,6 +227,13 @@ static const char *MapInfoMapLevel[] =
 	"laxmonsteractivation",
 	"additive_scrollers",
 	"cod_level",
+	"interpic",
+	"exitpic",
+	"enterpic",
+	"intermusic",
+	"airsupply",
+	"specialaction",
+	"keepfullinventory",
 	NULL
 };
 
@@ -249,7 +256,8 @@ enum EMIType
 	MITYPE_MUSIC,
 	MITYPE_RELLIGHT,
 	MITYPE_CLRBYTES,
-	MITYPE_REDIRECT
+	MITYPE_REDIRECT,
+	MITYPE_SPECIALACTION
 };
 
 struct MapInfoHandler
@@ -325,6 +333,13 @@ MapHandlers[] =
 	{ MITYPE_SETFLAG,	LEVEL_LAXMONSTERACTIVATION, LEVEL_LAXACTIVATIONMAPINFO },
 	{ MITYPE_SETFLAG,	LEVEL_ADDITIVE_SCROLLERS, 0 },
 	{ MITYPE_SETFLAG,	LEVEL_CAVERNS_OF_DARKNESS, 0 },
+	{ MITYPE_LUMPNAME,	lioffset(exitpic), 0 },
+	{ MITYPE_LUMPNAME,	lioffset(exitpic), 0 },
+	{ MITYPE_LUMPNAME,	lioffset(enterpic), 0 },
+	{ MITYPE_LUMPNAME,	lioffset(intermusic), 0 },
+	{ MITYPE_INT,		lioffset(airsupply), 0 },
+	{ MITYPE_SPECIALACTION, lioffset(specialactions), 0 },
+	{ MITYPE_SETFLAG,	LEVEL_KEEPFULLINVENTORY, 0 },
 };
 
 static const char *MapInfoClusterLevel[] =
@@ -399,6 +414,7 @@ static void SetLevelDefaults (level_info_t *levelinfo)
 		// For maps without a BEHAVIOR, this will be cleared.
 		levelinfo->flags |= LEVEL_LAXMONSTERACTIVATION;
 	}
+	levelinfo->airsupply = 10;
 }
 
 //
@@ -843,6 +859,31 @@ static void ParseMapInfoLower (MapInfoHandler *handlers,
 			*((BYTE *)(info + handler->data1)) = 0;
 			*((BYTE *)(info + handler->data2)) = 0;
 			break;
+
+		case MITYPE_SPECIALACTION:
+			{
+				int FindLineSpecial(const char *str);
+
+				FSpecialAction **so = (FSpecialAction**)(info + handler->data1);
+				FSpecialAction *sa = new FSpecialAction;
+				sa->Next = *so;
+				*so = sa;
+				SC_SetCMode(true);
+				SC_MustGetString();
+				sa->Type = name(sc_String);
+				SC_CheckString(",");
+				SC_MustGetString();
+				strlwr(sc_String);
+				sa->Action = FindLineSpecial(sc_String);
+				int j = 0;
+				while (j < 5 && SC_CheckString(","))
+				{
+					SC_MustGetNumber();
+					sa->Args[j++] = sc_Number;
+				}
+				SC_SetCMode(false);
+			}
+			break;
 		}
 	}
 	if (levelinfo)
@@ -1016,6 +1057,8 @@ static void SetEndSequence (char *nextmap, int type)
 
 void G_SetForEndGame (char *nextmap)
 {
+	if (!strncmp(nextmap, "enDSeQ",6)) return;	// If there is already an end sequence please leave it alone!!!
+
 	if (gameinfo.gametype == GAME_Strife)
 	{
 		SetEndSequence (nextmap, gameinfo.flags & GI_SHAREWARE ? END_BuyStrife : END_Strife);
@@ -1227,6 +1270,12 @@ void G_InitNew (char *mapname, bool bTitleLevel)
 	StatusBar->NewGame ();
 	setsizeneeded = true;
 
+	// Set the initial quest log text for Strife.
+	for (i = 0; i < MAXPLAYERS; ++i)
+	{
+		players[i].SetLogText ("Find help");
+	}
+
 	// [RH] If this map doesn't exist, bomb out
 	if (Wads.CheckNumForName (mapname) == -1)
 	{
@@ -1240,6 +1289,10 @@ void G_InitNew (char *mapname, bool bTitleLevel)
 	else if (gameinfo.gametype & (GAME_Doom|GAME_Strife) && gameskill == sk_nightmare)
 	{
 		respawnmonsters = TICRATE;
+	}
+	else
+	{
+		respawnmonsters = 0;
 	}
 	// Monsters wait longer before respawning in Strife.
 	respawnmonsters *= gameinfo.gametype != GAME_Strife ? 12 : 16;
@@ -1274,6 +1327,7 @@ void G_InitNew (char *mapname, bool bTitleLevel)
 			ACS_GlobalArrays[i].Clear ();
 		}
 		level.time = 0;
+		level.maptime = 0;
 
 		if (!multiplayer || !deathmatch)
 		{
@@ -1509,6 +1563,7 @@ void G_DoCompleted (void)
 		{ // Reset time to zero if not entering/staying in a hub.
 			level.time = 0;
 		}
+		level.maptime = 0;
 	}
 
 	if (!deathmatch &&
@@ -1598,6 +1653,7 @@ void G_DoLoadLevel (int position, bool autosave)
 	// [RH] Fetch sky parameters from level_locals_t.
 	sky1texture = TexMan.GetTexture (level.skypic1, FTexture::TEX_Wall, FTextureManager::TEXMAN_Overridable);
 	sky2texture = TexMan.GetTexture (level.skypic2, FTexture::TEX_Wall, FTextureManager::TEXMAN_Overridable);
+	sky1pos = sky2pos = 0;
 
 	// [RH] Set up details about sky rendering
 	R_InitSkyMap ();
@@ -1652,7 +1708,11 @@ void G_DoLoadLevel (int position, bool autosave)
 	level.starttime = gametic;
 	G_UnSnapshotLevel (!savegamerestore);	// [RH] Restore the state of the level.
 	G_FinishTravel ();
-	players[consoleplayer].camera = players[consoleplayer].mo;	// view the guy you are playing
+	if (players[consoleplayer].camera == NULL ||
+		players[consoleplayer].camera->player != NULL)
+	{ // If we are viewing through a player, make sure it is us.
+        players[consoleplayer].camera = players[consoleplayer].mo;
+	}
 	StatusBar->AttachToPlayer (&players[consoleplayer]);
 	P_DoDeferedScripts ();	// [RH] Do script actions that were triggered on another map.
 	
@@ -1846,6 +1906,7 @@ void G_FinishTravel ()
 			{
 				inv->ChangeStatNum (STAT_INVENTORY);
 				inv->LinkToWorld ();
+				inv->Travelled ();
 			}
 		}
 	}
@@ -1887,6 +1948,7 @@ void G_InitLevelLocals ()
 		NormalLight.ChangeFade (level.fadeto);
 		*/
 	}
+	level.airsupply = info->airsupply*TICRATE;
 	level.outsidefog = info->outsidefog;
 	level.WallVertLight = info->WallVertLight;
 	level.WallHorizLight = info->WallHorizLight;
@@ -2208,6 +2270,9 @@ void G_SerializeLevel (FArchive &arc, bool hubLoad)
 		<< level.gravity
 		<< level.aircontrol;
 
+	if (SaveVersion >= 230)
+		arc << level.maptime;
+
 	if (arc.IsStoring ())
 	{
 		arc.WriteName (level.skypic1);
@@ -2219,6 +2284,7 @@ void G_SerializeLevel (FArchive &arc, bool hubLoad)
 		strncpy (level.skypic2, arc.ReadName(), 8);
 		sky1texture = TexMan.GetTexture (level.skypic1, FTexture::TEX_Wall, FTextureManager::TEXMAN_Overridable);
 		sky2texture = TexMan.GetTexture (level.skypic2, FTexture::TEX_Wall, FTextureManager::TEXMAN_Overridable);
+		sky1pos = sky2pos = 0;
 		R_InitSkyMap ();
 	}
 

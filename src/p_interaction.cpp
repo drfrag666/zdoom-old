@@ -90,7 +90,7 @@ void P_TouchSpecialThing (AActor *special, AActor *toucher)
 		return;
 
 	//Added by MC: Finished with this destination.
-	if (toucher->player->isbot && special == toucher->player->dest)
+	if (toucher->player != NULL && toucher->player->isbot && special == toucher->player->dest)
 	{
 		toucher->player->prev = toucher->player->dest;
     	toucher->player->dest = NULL;
@@ -299,7 +299,7 @@ void ClientObituary (AActor *self, AActor *inflictor, AActor *attacker)
 					message = inflictor->GetObituary ();
 				}
 			}
-			if (message == NULL)
+			if (message == NULL && attacker->player->ReadyWeapon != NULL)
 			{
 				message = attacker->player->ReadyWeapon->GetClass()->Meta.GetMetaString (AMETA_Obituary);
 				if (message == NULL)
@@ -418,7 +418,7 @@ void AActor::Die (AActor *source, AActor *inflictor)
 		// Don't count any frags at level start, because they're just telefrags
 		// resulting from insufficient deathmatch starts, and it wouldn't be
 		// fair to count them toward a player's score.
-		if (player && level.time)
+		if (player && level.maptime)
 		{
 			source->player->frags[player - players]++;
 			if (player == source->player)	// [RH] Cumulative frag count
@@ -606,6 +606,10 @@ void AActor::Die (AActor *source, AActor *inflictor)
 			// don't die in auto map, switch view prior to dying
 			AM_Stop ();
 		}
+
+		// [GRB] Clear extralight. When you killed yourself with weapon that
+		// called A_Light1/2 before it called A_Light0, extraligh remained.
+		player->extralight = 0;
 	}
 
 	// [RH] If this is the unmorphed version of another monster, destroy this
@@ -630,7 +634,6 @@ void AActor::Die (AActor *source, AActor *inflictor)
 		(!deh.NoAutofreeze && !(flags4 & MF4_NOICEDEATH)) &&
 		(player || (flags3 & MF3_ISMONSTER)))))
 	{ // Ice death
-		flags |= MF_ICECORPSE;
 		if (IDeathState)
 		{
 			SetState (IDeathState);
@@ -640,30 +643,38 @@ void AActor::Die (AActor *source, AActor *inflictor)
 			SetState (&AActor::States[S_GENERICFREEZEDEATH]);
 		}
 	}
-	else if (XDeathState &&
-		health < (gameinfo.gametype == GAME_Doom
-				  ? -GetDefault()->health : -GetDefault()->health/2))
-	{ // Extreme death
-		SetState (XDeathState);
-	}
 	else
-	{ // Normal death
+	{
+		int flags4 = !inflictor ? 0 : inflictor->player && inflictor->player->ReadyWeapon ? 
+			inflictor->player->ReadyWeapon->flags4 : inflictor->flags4;
+
+		int gibhealth = -abs(GetClass()->Meta.GetMetaInt (AMETA_GibHealth));
+		if (gibhealth == 0) gibhealth = (gameinfo.gametype == GAME_Doom ? -GetDefault()->health : -GetDefault()->health/2);
+		
 		DamageType = MOD_UNKNOWN;	// [RH] "Frozen" barrels shouldn't do freezing damage
-		if (DeathState != NULL)		// [RH] DeathState might be NULL, so try others as needed
-		{
-			SetState (DeathState);
+		if (XDeathState && (health<gibhealth || flags4 & MF4_EXTREMEDEATH) && !(flags4 & MF4_NOEXTREMEDEATH))
+		{ // Extreme death
+			SetState (XDeathState);
 		}
-		else if (EDeathState != NULL)
-		{
-			SetState (EDeathState);
-		}
-		else if (BDeathState != NULL)
-		{
-			SetState (BDeathState);
-		}
-		else if (IDeathState != NULL)
-		{
-			SetState (IDeathState);
+		else
+		{ // Normal death
+			DamageType = MOD_UNKNOWN;	// [RH] "Frozen" barrels shouldn't do freezing damage
+			if (DeathState != NULL)		// [RH] DeathState might be NULL, so try others as needed
+			{
+				SetState (DeathState);
+			}
+			else if (EDeathState != NULL)
+			{
+				SetState (EDeathState);
+			}
+			else if (BDeathState != NULL)
+			{
+				SetState (BDeathState);
+			}
+			else if (IDeathState != NULL)
+			{
+				SetState (IDeathState);
+			}
 		}
 	}
 
@@ -801,6 +812,7 @@ void P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage
 	{ // Shouldn't happen
 		return;
 	}
+
 	// Spectral targets only take damage from spectral projectiles.
 	if (target->flags4 & MF4_SPECTRAL && damage < 1000000)
 	{
@@ -1089,12 +1101,19 @@ void P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage
 		target->Die (source, inflictor);
 		return;
 	}
-	if (target->health <= 6 && target->WoundState != NULL)
+	if (target->WoundState != NULL)
 	{
-		target->SetState (target->WoundState);
-		return;
+		int woundhealth = RUNTIME_TYPE(target)->Meta.GetMetaInt (AMETA_WoundHealth);
+		if (!woundhealth)
+			woundhealth = 6;
+
+		if (target->health <= woundhealth)
+		{
+			target->SetState (target->WoundState);
+			return;
+		}
 	}
-	if ((pr_damagemobj() < target->PainChance)
+	if ((pr_damagemobj() < target->PainChance) && target->PainState != NULL
 		 && !(target->flags & MF_SKULLFLY))
 	{
 		if (inflictor && inflictor->IsKindOf (RUNTIME_CLASS(ALightning)))
@@ -1102,7 +1121,10 @@ void P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage
 			if (pr_lightning() < 96)
 			{
 				target->flags |= MF_JUSTHIT; // fight back!
-				target->SetState (target->PainState);
+				if (target->PainState != NULL)
+				{
+					target->SetState (target->PainState);
+				}
 			}
 			else
 			{ // "electrocute" the target
@@ -1116,7 +1138,7 @@ void P_DamageMobj (AActor *target, AActor *inflictor, AActor *source, int damage
 		else
 		{
 			target->flags |= MF_JUSTHIT; // fight back!
-			target->SetState (target->PainState);	
+			target->SetState (target->PainState);
 			if (inflictor && inflictor->IsKindOf (RUNTIME_CLASS(APoisonCloud)))
 			{
 				if ((target->flags3 & MF3_ISMONSTER) && pr_poison() < 128)
@@ -1165,19 +1187,33 @@ bool AActor::OkayToSwitchTarget (AActor *other)
 {
 	if (other == this)
 		return false;		// [RH] Don't hate self (can happen when shooting barrels)
-	if ((other->flags3 & MF3_NOTARGET) &&
-		(other->tid != TIDtoHate || TIDtoHate == 0) &&
-		((other->flags ^ flags) & MF_FRIENDLY) == 0)
-		return false;
-	if (threshold != 0 && !(flags4 & MF4_QUICKTORETALIATE))
-		return false;
-	if (other->flags & flags & MF_FRIENDLY)
-	{ // [RH] Friendlies don't target other friendlies
-		if (!deathmatch || other->FriendPlayer == 0 || FriendPlayer == 0 ||
-			other->FriendPlayer != FriendPlayer)
+
+	if (!(other->flags & MF_SHOOTABLE))
+		return false;		// Don't attack things that can't be hurt
+
+	if ((flags4 & MF4_NOTARGETSWITCH) && target != NULL)
+		return false;		// Don't switch target if not allowed
+
+	if ((master != NULL && other->IsA(master->GetClass())) ||		// don't attack your master (or others of its type)
+		(other->master != NULL && IsA(other->master->GetClass())))	// don't attack your minion (or those of others of your type)
+	{
+		if (!P_IsHostile(this, other) &&						// allow target switch if other is considered hostile
+			(other->tid != TIDtoHate || TIDtoHate == 0) &&		// or has the tid we hate
+			other->TIDtoHate == TIDtoHate)						// or has different hate information
 		{
 			return false;
 		}
+	}
+
+	if ((other->flags3 & MF3_NOTARGET) &&
+		(other->tid != TIDtoHate || TIDtoHate == 0) &&
+		!P_IsHostile (this, other))
+		return false;
+	if (threshold != 0 && !(flags4 & MF4_QUICKTORETALIATE))
+		return false;
+	if (P_IsFriend (this, other))
+	{ // [RH] Friendlies don't target other friendlies
+		return false;
 	}
 	if ((flags & MF_FRIENDLY) && other->player != NULL)
 	{ // [RH] Friendlies don't target their player friends either
@@ -1186,11 +1222,11 @@ bool AActor::OkayToSwitchTarget (AActor *other)
 			return false;
 		}
 	}
-	if (gameinfo.gametype == GAME_Strife)
-		if (!(other->flags & MF_FRIENDLY) && !(flags & MF_FRIENDLY))
-			return false;	// Strife: Non-friendlies don't target other non-friendlies
-	if (infighting < 0 && other->player == NULL)
-		return false;		// [RH] Allow monsters to ignore each other
+	if ((gameinfo.gametype == GAME_Strife || infighting < 0) &&
+		other->player == NULL && !P_IsHostile (this, other))
+	{
+		return false;	// Strife & infighting off: Non-friendlies don't target other non-friendlies
+	}
 	if (TIDtoHate != 0 && TIDtoHate == other->TIDtoHate)
 		return false;		// [RH] Don't target "teammates"
 	if (other->player != NULL && (flags4 & MF4_NOHATEPLAYERS))
@@ -1301,7 +1337,7 @@ void P_PoisonDamage (player_t *player, AActor *source, int damage,
 		target->Die (source, source);
 		return;
 	}
-	if (!(level.time&63) && playPainSound)
+	if (!(level.time&63) && playPainSound && target->PainState != NULL)
 	{
 		target->SetState (target->PainState);
 	}

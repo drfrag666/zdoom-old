@@ -88,4 +88,5 @@ void P_Ticker (void)
 
 	// for par times
 	level.time++;
+	level.maptime++;
 }

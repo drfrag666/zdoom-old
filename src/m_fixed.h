@@ -1,35 +1,16 @@
-// Emacs style mode select	 -*- C++ -*- 
-//-----------------------------------------------------------------------------
+// "Build Engine & Tools" Copyright (c) 1993-1997 Ken Silverman
+// Ken Silverman's official web site: "http://www.advsys.net/ken"
+// See the included license file "BUILDLIC.TXT" for license info.
 //
-// $Id:$
-//
-// Copyright (C) 1993-1996 by id Software, Inc.
-//
-// This source is available for distribution and/or modification
-// only under the terms of the DOOM Source Code License as
-// published by id Software. All rights reserved.
-//
-// The source is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// FITNESS FOR A PARTICULAR PURPOSE. See the DOOM Source Code License
-// for more details.
-//
-// DESCRIPTION:
-//		Fixed point arithmetics, implementation.
-//
-//-----------------------------------------------------------------------------
-
+// This file is based on pragmas.h from Ken Silverman's original Build
+// source code release and contains routines that were originally
+// inline assembly but are not now.
 
 #ifndef __M_FIXED__
 #define __M_FIXED__
 
 #include <stdlib.h>
 #include "doomtype.h"
-
-extern "C" fixed_t FixedMul_ASM				(fixed_t a, fixed_t b);
-extern "C" fixed_t STACK_ARGS FixedDiv_ASM	(fixed_t a, fixed_t b);
-fixed_t FixedMul_C				(fixed_t a, fixed_t b);
-fixed_t FixedDiv_C				(fixed_t a, fixed_t b);
 
 #if defined(__GNUG__)
 #include "gccinlines.h"
@@ -95,5 +76,62 @@ inline SDWORD SafeDivScale32 (SDWORD a, SDWORD b)
 
 #define FixedMul MulScale16
 #define FixedDiv SafeDivScale16
+
+inline void qinterpolatedown16 (SDWORD *out, DWORD count, SDWORD val, SDWORD delta)
+{
+	if (count & 1)
+	{
+		out[0] = val >> 16;
+		val += delta;
+	}
+	count >>= 1;
+	while (count-- != 0)
+	{
+		int temp = val + delta;
+		out[0] = val >> 16;
+		val = temp + delta;
+		out[1] = temp >> 16;
+		out += 2;
+	}
+}
+
+inline void qinterpolatedown16short (short *out, DWORD count, SDWORD val, SDWORD delta)
+{
+	if (count)
+	{
+		if ((size_t)out & 2)
+		{ // align to dword boundary
+			*out++ = (short)(val >> 16);
+			count--;
+			val += delta;
+		}
+		DWORD *o2 = (DWORD *)out;
+		DWORD c2 = count>>1;
+		while (c2-- != 0)
+		{
+			SDWORD temp = val + delta;
+			*o2++ = (temp & 0xffff0000) | ((DWORD)val >> 16);
+			val = temp + delta;
+		}
+		if (count & 1)
+		{
+			*(short *)o2 = (short)(val >> 16);
+		}
+	}
+}
+
+	//returns num/den, dmval = num%den
+inline SDWORD DivMod (SDWORD num, SDWORD den, SDWORD *dmval)
+{
+	*dmval = num % den;
+	return num / den;
+}
+
+	//returns num%den, dmval = num/den
+inline SDWORD ModDiv (SDWORD num, SDWORD den, SDWORD *dmval)
+{
+	*dmval = num / den;
+	return num % den;
+}
 
 #endif

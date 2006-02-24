@@ -65,7 +65,7 @@ FState AReaver::States[] =
 	S_BRIGHT (ROB1, 'N',	5, NULL,				&States[S_REAVER_DEATH+5]),
 	S_BRIGHT (ROB1, 'O',	5, NULL,				&States[S_REAVER_DEATH+6]),
 	S_BRIGHT (ROB1, 'P',	5, NULL,				&States[S_REAVER_DEATH+7]),
-	S_BRIGHT (ROB1, 'Q',	6, A_Explode,			&States[S_REAVER_DEATH+8]),
+	S_BRIGHT (ROB1, 'Q',	6, A_ExplodeAndAlert,	&States[S_REAVER_DEATH+8]),
 	S_NORMAL (ROB1, 'R',   -1, NULL,				NULL),
 
 #define S_REAVER_XDEATH (S_REAVER_DEATH+9)
@@ -74,7 +74,7 @@ FState AReaver::States[] =
 	S_BRIGHT (ROB1, 'N',	5, A_TossGib,			&States[S_REAVER_XDEATH+3]),
 	S_BRIGHT (ROB1, 'O',	5, A_NoBlocking,		&States[S_REAVER_XDEATH+4]),
 	S_BRIGHT (ROB1, 'P',	5, A_TossGib,			&States[S_REAVER_XDEATH+5]),
-	S_BRIGHT (ROB1, 'Q',	6, A_Explode,			&States[S_REAVER_XDEATH+6]),
+	S_BRIGHT (ROB1, 'Q',	6, A_ExplodeAndAlert,	&States[S_REAVER_XDEATH+6]),
 	S_NORMAL (ROB1, 'R',   -1, NULL,				NULL),
 };
 
@@ -88,6 +88,7 @@ IMPLEMENT_ACTOR (AReaver, Strife, 3001, 0)
 	PROP_Flags2 (MF2_MCROSS|MF2_PASSMOBJ|MF2_PUSHWALL|MF2_FLOORCLIP)
 	PROP_Flags4 (MF4_INCOMBAT)
 	PROP_MinMissileChance (150)
+	PROP_MaxDropOffHeight (32)
 
 	PROP_Mass (500)
 	PROP_SpawnState (S_REAVER_STND)

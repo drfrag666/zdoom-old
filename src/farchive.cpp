@@ -337,8 +337,8 @@ void FCompressedFile::Implode ()
 	m_Pos = 0;
 
 	DWORD *lens = (DWORD *)(m_Buffer);
-	lens[0] = BELONG((unsigned int)outlen);
-	lens[1] = BELONG((unsigned int)len);
+	lens[0] = BigLong((unsigned int)outlen);
+	lens[1] = BigLong((unsigned int)len);
 
 	if (outlen == 0)
 		memcpy (m_Buffer + 8, oldbuf, len);
@@ -357,8 +357,8 @@ void FCompressedFile::Explode ()
 	if (m_Buffer)
 	{
 		unsigned int *ints = (unsigned int *)(m_Buffer);
-		cprlen = BELONG(ints[0]);
-		expandsize = BELONG(ints[1]);
+		cprlen = BigLong(ints[0]);
+		expandsize = BigLong(ints[1]);
 		
 		expand = (unsigned char *)Malloc (expandsize);
 		if (cprlen)
@@ -550,7 +550,7 @@ void FPNGChunkFile::Close ()
 			crc = CalcCRC32 ((BYTE *)&m_ChunkID, 4);
 			crc = AddCRC32 (crc, (BYTE *)m_Buffer, m_BufferSize);
 
-			data[0] = BELONG(m_BufferSize);
+			data[0] = BigLong(m_BufferSize);
 			data[1] = m_ChunkID;
 			fwrite (data, 8, 1, m_File);
 			fwrite (m_Buffer, m_BufferSize, 1, m_File);

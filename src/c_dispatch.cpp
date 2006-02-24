@@ -113,7 +113,7 @@ static FConsoleCommand *ScanChainForName (FConsoleCommand *start, const char *na
 
 FConsoleCommand *Commands[FConsoleCommand::HASH_SIZE];
 
-FButtonStatus Button_Mlook, Button_Klook, Button_Use,
+FButtonStatus Button_Mlook, Button_Klook, Button_Use, Button_AltAttack,
 	Button_Attack, Button_Speed, Button_MoveRight, Button_MoveLeft,
 	Button_Strafe, Button_LookDown, Button_LookUp, Button_Back,
 	Button_Forward, Button_Right, Button_Left, Button_MoveDown,
@@ -142,6 +142,7 @@ FActionMap ActionMaps[] =
 	{ 0xb4ca7514, &Button_Right,		"right" },
 	{ 0xb563e265, &Button_LookDown,		"lookdown" },
 	{ 0xb67a0835, &Button_Strafe,		"strafe" },
+	{ 0xc4704c1d, &Button_AltAttack,	"altattack" },
 	{ 0xe2200fc9, &Button_MoveDown,		"movedown" },
 	{ 0xe78739bb, &Button_MoveRight,	"moveright" },
 	{ 0xe7912f86, &Button_Forward,		"forward" },
@@ -533,7 +534,8 @@ void AddCommandString (char *cmd, int keynum)
 					while (*brkpt != '\0' && (*brkpt != '\"' || *(brkpt-1) == '\\'))
 						brkpt++;
 				}
-				brkpt++;
+				if (*brkpt != '\0')
+					brkpt++;
 			}
 			if (*brkpt == ';')
 			{

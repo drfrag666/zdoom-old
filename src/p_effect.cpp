@@ -46,6 +46,7 @@
 #include "r_defs.h"
 #include "r_things.h"
 #include "s_sound.h"
+#include "templates.h"
 
 CVAR (Int, cl_rockettrails, 1, CVAR_ARCHIVE);
 
@@ -380,8 +381,10 @@ void P_DrawSplash2 (int count, fixed_t x, fixed_t y, fixed_t z, angle_t angle, i
 		color1 = grey3;
 		color2 = grey1;
 		break;
-	default:
-		return;
+	default:	// colorized blood
+		color1 = ColorMatcher.Pick(RPART(kind), GPART(kind), BPART(kind));
+		color2 = ColorMatcher.Pick(RPART(kind)>>1, GPART(kind)>>1, BPART(kind)>>1);
+		break;
 	}
 
 	zvel = -128;

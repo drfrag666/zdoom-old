@@ -64,13 +64,13 @@ FState ACrusader::States[] =
 	S_NORMAL (ROB2, 'G',	3, A_Scream,				&States[S_CRUSADER_DEATH+1]),
 	S_NORMAL (ROB2, 'H',	5, A_TossGib,				&States[S_CRUSADER_DEATH+2]),
 	S_BRIGHT (ROB2, 'I',	4, A_TossGib,				&States[S_CRUSADER_DEATH+3]),
-	S_BRIGHT (ROB2, 'J',	4, A_Explode,				&States[S_CRUSADER_DEATH+4]),
+	S_BRIGHT (ROB2, 'J',	4, A_ExplodeAndAlert,		&States[S_CRUSADER_DEATH+4]),
 	S_BRIGHT (ROB2, 'K',	4, A_NoBlocking,			&States[S_CRUSADER_DEATH+5]),
-	S_NORMAL (ROB2, 'L',	4, A_Explode,				&States[S_CRUSADER_DEATH+6]),
+	S_NORMAL (ROB2, 'L',	4, A_ExplodeAndAlert,		&States[S_CRUSADER_DEATH+6]),
 	S_NORMAL (ROB2, 'M',	4, A_TossGib,				&States[S_CRUSADER_DEATH+7]),
 	S_NORMAL (ROB2, 'N',	4, A_TossGib,				&States[S_CRUSADER_DEATH+8]),
-	S_NORMAL (ROB2, 'O',	4, A_Explode,				&States[S_CRUSADER_DEATH+9]),
-	S_NORMAL (ROB2, 'P',   -1, A_CrusaderDeath,					NULL)
+	S_NORMAL (ROB2, 'O',	4, A_ExplodeAndAlert,		&States[S_CRUSADER_DEATH+9]),
+	S_NORMAL (ROB2, 'P',   -1, A_CrusaderDeath,			NULL)
 };
 
 IMPLEMENT_ACTOR (ACrusader, Strife, 3005, 0)
@@ -91,6 +91,7 @@ IMPLEMENT_ACTOR (ACrusader, Strife, 3005, 0)
 	PROP_Flags4 (MF4_MISSILEMORE|MF4_INCOMBAT|MF4_NOICEDEATH)
 	PROP_MinMissileChance (120)
 	PROP_StrifeType (63)
+	PROP_MaxDropOffHeight (32)
 	PROP_SeeSound ("crusader/sight")
 	PROP_PainSound ("crusader/pain")
 	PROP_DeathSound ("crusader/death")
@@ -145,6 +146,7 @@ IMPLEMENT_ACTOR (ACrusaderMissile, Strife, -1, 0)
 	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF|MF_MISSILE)
 	PROP_Flags2 (MF2_NOTELEPORT|MF2_PCROSS|MF2_IMPACT)
 	PROP_Flags4 (MF4_STRIFEDAMAGE)
+	PROP_MaxStepHeight (4)
 	PROP_SeeSound ("crusader/misl")
 	PROP_DeathSound ("crusader/mislx")
 END_DEFAULTS
@@ -240,7 +242,7 @@ class ADeadCrusader : public AActor
 FState ADeadCrusader::States[] =
 {
 	S_NORMAL (ROB2, 'N', 4, A_TossGib,			&States[1]),
-	S_NORMAL (ROB2, 'O', 4, A_Explode,			&States[2]),
+	S_NORMAL (ROB2, 'O', 4, A_ExplodeAndAlert,	&States[2]),
 	S_NORMAL (ROB2, 'P',-1, NULL,				NULL)
 };
 

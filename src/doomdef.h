@@ -260,6 +260,7 @@ enum
 	COMPATF_NOTOSSDROPS		= 1 << 7,	// Spawn dropped items directly on the floor?
 	COMPATF_USEBLOCKING		= 1 << 8,	// Any special line can block a use line
 	COMPATF_NODOORLIGHT		= 1 << 9,	// Don't do the BOOM local door light effect
+	COMPATF_RAVENSCROLL		= 1 << 10,	// Raven's scrollers user their original carrying speed
 };
 
 // phares 3/20/98:

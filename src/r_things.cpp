@@ -138,7 +138,7 @@ static void R_InstallSpriteLump (int lump, unsigned frame, char rot, BOOL flippe
 	}
 
 	if (frame >= MAX_SPRITE_FRAMES || rotation > 16)
-		I_FatalError ("R_InstallSpriteLump: Bad frame characters in lump %i", lump);
+		I_FatalError ("R_InstallSpriteLump: Bad frame characters in lump %s", TexMan[lump]->Name);
 
 	if ((int)frame > maxframe)
 		maxframe = frame;
@@ -1033,7 +1033,8 @@ void R_ProjectSprite (AActor *thing, int fakeside)
 
 	sector_t*			heightsec;			// killough 3/27/98
 
-	if ((thing->renderflags & RF_INVISIBLE) ||
+	if (thing == NULL ||
+		(thing->renderflags & RF_INVISIBLE) ||
 		thing->RenderStyle == STYLE_None ||
 		(thing->RenderStyle >= STYLE_Translucent && thing->alpha <= 0))
 	{
@@ -1333,26 +1334,25 @@ void R_DrawPSprite (pspdef_t* psp, int pspnum, AActor *owner, fixed_t sx, fixed_
 	vissprite_t 		avis;
 
 	// decide which patch to use
-#ifdef RANGECHECK
 	if ( (unsigned)psp->state->sprite.index >= (unsigned)sprites.Size ())
 	{
 		DPrintf ("R_DrawPSprite: invalid sprite number %i\n", psp->state->sprite.index);
 		return;
 	}
-#endif
 	sprdef = &sprites[psp->state->sprite.index];
-#ifdef RANGECHECK
 	if (psp->state->GetFrame() >= sprdef->numframes)
 	{
 		DPrintf ("R_DrawPSprite: invalid sprite frame %i : %i\n", psp->state->sprite.index, psp->state->GetFrame());
 		return;
 	}
-#endif
 	sprframe = &SpriteFrames[sprdef->spriteframes + psp->state->GetFrame()];
 
 	picnum = sprframe->Texture[0];
 	flip = sprframe->Flip & 1;
 	tex = TexMan(picnum);
+
+	if (tex->UseType == FTexture::TEX_Null)
+		return;
 
 	picwidth = tex->GetWidth ();
 

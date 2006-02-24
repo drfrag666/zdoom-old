@@ -245,4 +245,11 @@ private:
 
 extern void R_FreePastViewers ();
 
+extern int stacked_extralight;
+extern float stacked_visibility;
+extern fixed_t stacked_viewx, stacked_viewy, stacked_viewz;
+extern angle_t stacked_angle;
+
+extern void R_CopyStackedViewParameters();
+
 #endif // __R_MAIN_H__

@@ -431,7 +431,7 @@ namespace StringFormat
 			{
 				postprefixzeros = precision - bufflen;
 				if (postprefixzeros < 0) postprefixzeros = 0;
-				flags &= ~F_ZERO;
+//				flags &= ~F_ZERO;
 			}
 		}
 		else if (type == 'c')

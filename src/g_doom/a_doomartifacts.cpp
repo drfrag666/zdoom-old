@@ -58,10 +58,13 @@ public:
 	virtual bool Use (bool pickup)
 	{
 		player_t *player = Owner->player;
-		player->health += deh.SoulsphereHealth;
-		if (player->health > deh.MaxSoulsphere)
-			player->health = deh.MaxSoulsphere;
-		player->mo->health = player->health;
+		if (player->health < deh.MaxSoulsphere)
+		{
+			player->health += deh.SoulsphereHealth;
+			if (player->health > deh.MaxSoulsphere)
+				player->health = deh.MaxSoulsphere;
+			player->mo->health = player->health;
+		}
 		return true;
 	}
 protected:
@@ -141,7 +144,7 @@ class ABerserk : public APowerupGiver
 public:
 	virtual bool Use (bool pickup)
 	{
-		P_GiveBody (Owner, -100);
+		P_GiveBody (Owner, 100);
 		if (Super::Use (pickup))
 		{
 			const TypeInfo *fistType = TypeInfo::FindType ("Fist");

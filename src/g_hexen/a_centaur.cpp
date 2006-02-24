@@ -90,6 +90,7 @@ IMPLEMENT_ACTOR (ACentaur, Hexen, 107, 1)
 	PROP_Mass (120)
 	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_COUNTKILL)
 	PROP_Flags2 (MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_TELESTOMP|MF2_PUSHWALL|MF2_MCROSS)
+	PROP_Flags4 (MF4_SHIELDREFLECT)
 
 	PROP_SpawnState (S_CENTAUR_LOOK1)
 	PROP_SeeState (S_CENTAUR_WALK1)
@@ -113,22 +114,6 @@ void ACentaur::Howl ()
 	{
 		S_SoundID (this, CHAN_BODY, howl, 1, ATTN_NORM);
 	}
-}
-
-bool ACentaur::AdjustReflectionAngle (AActor *thing, angle_t &angle)
-{
-	if (abs (angle-BlockingMobj->angle)>>24 > 45)
-		return true;	// Let missile explode
-
-	if (thing->IsKindOf (RUNTIME_CLASS(AHolySpirit)))
-		return true;
-
-	if (pr_reflect () < 128)
-		angle += ANGLE_45;
-	else
-		angle -= ANGLE_45;
-
-	return false;
 }
 
 // Centaur Leader -----------------------------------------------------------
@@ -346,7 +331,9 @@ void A_CentaurDefend (AActor *actor)
 	A_FaceTarget (actor);
 	if (actor->CheckMeleeRange() && pr_centaurdefend() < 32)
 	{
-		A_UnSetInvulnerable (actor);
+		// This should unset REFLECTIVE as well
+		// (unless you want the Centaur to reflect projectiles forever!)
+		A_UnSetReflectiveInvulnerable (actor);
 		actor->SetState (actor->MeleeState);
 	}
 }

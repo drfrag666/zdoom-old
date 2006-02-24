@@ -271,10 +271,18 @@ BOOL PIT_StompThing (AActor *thing)
 	}
 
 	// [RH] Z-Check
-	if (tmz > thing->z + thing->height)
-		return true;        // overhead
-	if (tmz+tmthing->height < thing->z)
-		return true;        // underneath
+	// But not if not MF2_PASSMOBJ or MF3_DONTOVERLAP are set!
+	// Otherwise those things would get stuck inside each other.
+	if (tmthing->flags2&MF2_PASSMOBJ)
+	{
+		if (!(thing->flags3 & tmthing->flags3 & MF3_DONTOVERLAP))
+		{
+			if (tmz > thing->z + thing->height)
+				return true;        // overhead
+			if (tmz+tmthing->height < thing->z)
+				return true;        // underneath
+		}
+	}
 
 	// monsters don't stomp things except on boss level
 	// [RH] Some Heretic/Hexen monsters can telestomp
@@ -746,7 +754,9 @@ BOOL PIT_CheckLine (line_t *ld)
 		// better than Strife's handling of rails, which lets you jump into rails
 		// from either side. How long until somebody reports this as a bug and I'm
 		// forced to say, "It's not a bug. It's a feature?" Ugh.
-		openbottom == tmthing->Sector->floorplane.ZatPoint (sx, sy))
+		(gameinfo.gametype != GAME_Strife ||
+		 level.flags & LEVEL_HEXENFORMAT ||
+		 openbottom == tmthing->Sector->floorplane.ZatPoint (sx, sy)))
 	{
 		openbottom += 32*FRACUNIT;
 	}
@@ -778,9 +788,67 @@ BOOL PIT_CheckLine (line_t *ld)
 	return true;
 }
 
+//==========================================================================
+//
+// Species is defined as the lowest base class that is a monster
+// with no non-monster class in between
+//
+//==========================================================================
+
+const TypeInfo * P_GetSpecies(AActor * self)
+{
+	const TypeInfo * thistype=self->GetClass();
+
+	if (GetDefaultByType(thistype)->flags3 & MF3_ISMONSTER) while (thistype->ParentType)
+	{
+		if (GetDefaultByType(thistype->ParentType)->flags3 & MF3_ISMONSTER)
+			thistype=thistype->ParentType;
+		else 
+			break;
+	}
+	return thistype;
+}
+
+//==========================================================================
+//
+// Checks whether 2 monsters have to be considered friendly
+//
+//==========================================================================
+
+bool P_IsFriend(AActor * self, AActor * other)
+{
+	if (self->flags & other->flags&MF_FRIENDLY)
+	{
+		return !deathmatch || self->FriendPlayer==other->FriendPlayer || self->FriendPlayer==0 || other->FriendPlayer==0;
+	}
+	return false;
+}
+
+//==========================================================================
+//
+// Checks whether 2 monsters have to be considered hostile under any circumstances
+//
+//==========================================================================
+
+bool P_IsHostile(AActor * self, AActor * other)
+{
+	// Both monsters are non-friendlies so hostilities depend on infighting settings
+	if (!((self->flags | other->flags) & MF_FRIENDLY)) return false;
+
+	// Both monsters are friendly and belong to the same player if applicable.
+	if (self->flags & other->flags&MF_FRIENDLY)
+	{
+		return deathmatch && self->FriendPlayer!=other->FriendPlayer && self->FriendPlayer!=0 && other->FriendPlayer!=0;
+	}
+	return true;
+}
+
+//==========================================================================
 //
 // PIT_CheckThing
 //
+//==========================================================================
+
 static AActor *stepthing;
 
 BOOL PIT_CheckThing (AActor *thing)
@@ -810,7 +878,7 @@ BOOL PIT_CheckThing (AActor *thing)
 	{
 		// [RH] Let monsters walk on actors as well as floors
 		if ((tmthing->flags3 & MF3_ISMONSTER) &&
-			topz >= tmfloorz && topz <= tmthing->z + gameinfo.StepHeight)
+			topz >= tmfloorz && topz <= tmthing->z + tmthing->MaxStepHeight)
 		{
 			// The commented-out if is an attempt to prevent monsters from walking off a
 			// thing further than they would walk off a ledge. I can't think of an easy
@@ -904,29 +972,69 @@ BOOL PIT_CheckThing (AActor *thing)
 
 		// [RH] Extend DeHacked infighting to allow for monsters
 		// to never fight each other
-		if ((infighting < 0 && tmthing->target != NULL && (tmthing->target->flags & MF_SHOOTABLE)) &&
-			!thing->player &&
-			(!tmthing->target || !tmthing->target->player) &&
-			thing != tmthing->target)
+
+		// [Graf Zahl] Why do I have the feeling that this didn't really work anymore now
+		// that ZDoom supports friendly monsters?
+
+		if (tmthing->target != NULL)
 		{
-			return false;
-		}
+			if (thing == tmthing->target)
+			{ // Don't missile self
+				return true;
+			}
 
-		if (thing == tmthing->target)
-		{ // Don't missile self
-			return true;
-		}
+			// players are never subject to infighting settings and are always allowed
+			// to harm / be harmed by anything.
+			if (!thing->player && !tmthing->target->player)
+			{
+				if (infighting < 0)
+				{
+					// -1: Monsters cannot hurt each other, but make exceptions for
+					//     friendliness and hate status.
+					if (tmthing->target->flags & MF_SHOOTABLE)
+					{
+						if (!(thing->flags3 & MF3_ISMONSTER))
+						{
+							return false;	// Question: Should monsters be allowed to shoot barrels in this mode?
+											// The old code does not.
+						}
 
-		if (tmthing->target && (
-			tmthing->target->IsKindOf (RUNTIME_TYPE (thing)) ||
-			thing->IsKindOf (RUNTIME_TYPE (tmthing->target)) ||
-			(thing->TIDtoHate != 0 && thing->TIDtoHate == tmthing->target->TIDtoHate)) )
-			// [RH] Don't hurt monsters that hate the same thing as you do
-		{ // Don't hit same species as originator.
-			// [RH] DeHackEd infighting is here.
-			if ((infighting == 0) && !thing->player)
-			{ // Hit same species as originator => explode, no damage
-				return false;
+						// Monsters that are clearly hostile can always hurt each other
+						if (!P_IsHostile(thing, tmthing->target))
+						{
+							// The same if the shooter hates the target
+							if (thing->tid == 0 || tmthing->target->tid != thing->tid)
+							{
+								return false;
+							}
+						}
+					}
+				}
+				else if (infighting == 0)
+				{
+					//  0: Monsters cannot hurt same species except 
+					//     cases where they are clearly supposed to do that
+					if (P_IsFriend(thing, tmthing->target))
+					{
+						// Friends never harm each other
+						return false;
+					}
+					if (thing->TIDtoHate != 0 && thing->TIDtoHate == tmthing->target->TIDtoHate)
+					{
+						// [RH] Don't hurt monsters that hate the same thing as you do
+						return false;
+					}
+					if (P_GetSpecies(thing) == P_GetSpecies(tmthing->target))
+					{
+						// Don't hurt same species or any relative
+						if (!P_IsHostile(thing, tmthing->target))
+						{
+							// But only if the target isn't one's hostile.
+							return false;
+						}
+					}
+				}
+				// else if (infighting==1) any shot hurts anything - no further tests
 			}
 		}
 		if (!(thing->flags & MF_SHOOTABLE))
@@ -944,9 +1052,10 @@ BOOL PIT_CheckThing (AActor *thing)
 				LastRipped = thing;
 				if (!(thing->flags & MF_NOBLOOD) &&
 					!(thing->flags2 & MF2_REFLECTIVE) &&
+					!(tmthing->flags3 & MF3_BLOODLESSIMPACT) &&
 					!(thing->flags2 & (MF2_INVULNERABLE|MF2_DORMANT)))
 				{ // Ok to spawn blood
-					P_RipperBlood (tmthing);
+					P_RipperBlood (tmthing, thing);
 				}
 				S_Sound (tmthing, CHAN_BODY, "misc/ripslop", 1, ATTN_IDLE);
 				damage = ((pr_checkthing()&3)+2)*tmthing->damage;
@@ -988,7 +1097,7 @@ BOOL PIT_CheckThing (AActor *thing)
 			{
 				P_BloodSplatter (tmthing->x, tmthing->y, tmthing->z, thing);
 			}
-			else if (!(tmthing->flags3 & MF3_BLOODLESSIMPACT))
+			if (!(tmthing->flags3 & MF3_BLOODLESSIMPACT))
 			{
 				P_TraceBleed (damage, thing, tmthing);
 			}
@@ -1013,7 +1122,7 @@ BOOL PIT_CheckThing (AActor *thing)
 		// [RH] The next condition is to compensate for the extra height
 		// that gets added by P_CheckPosition() so that you cannot pick
 		// up things that are above your true height.
-		&& thing->z < tmthing->z + tmthing->height - gameinfo.StepHeight)
+		&& thing->z < tmthing->z + tmthing->height - tmthing->MaxStepHeight)
 	{ // Can be picked up by tmthing
 		P_TouchSpecialThing (thing, tmthing);	// can remove thing
 	}
@@ -1144,7 +1253,7 @@ BOOL P_TestMobjLocation (AActor *mobj)
 		fixed_t z = mobj->z;
 		if (mobj->flags2 & MF2_FLOATBOB)
 		{
-			z -= FloatBobOffsets[(mobj->FloatBobPhase + level.time - 1) & 63];
+			z -= FloatBobOffsets[(mobj->FloatBobPhase + level.maptime - 1) & 63];
 		}
 		if ((z < mobj->floorz) || (z + mobj->height > mobj->ceilingz))
 		{ // Bad Z
@@ -1237,7 +1346,7 @@ BOOL P_CheckPosition (AActor *thing, fixed_t x, fixed_t y)
 	fakedblocker = NULL;
 	if (thing->player)
 	{ // [RH] Fake taller height to catch stepping up into things.
-		thing->height = realheight + gameinfo.StepHeight;
+		thing->height = realheight + thing->MaxStepHeight;
 	}
 	for (bx = xl; bx <= xh; bx++)
 	{
@@ -1258,7 +1367,7 @@ BOOL P_CheckPosition (AActor *thing, fixed_t x, fixed_t y)
 						return false;
 					}
 					else if (!BlockingMobj->player && !(thing->flags & (MF_FLOAT|MF_MISSILE|MF_SKULLFLY)) &&
-						BlockingMobj->z+BlockingMobj->height-thing->z <= gameinfo.StepHeight)
+						BlockingMobj->z+BlockingMobj->height-thing->z <= thing->MaxStepHeight)
 					{
 						if (thingblocker == NULL ||
 							BlockingMobj->z > thingblocker->z)
@@ -1269,7 +1378,7 @@ BOOL P_CheckPosition (AActor *thing, fixed_t x, fixed_t y)
 						BlockingMobj = NULL;
 					}
 					else if (thing->player &&
-						thing->z + thing->height - BlockingMobj->z <= gameinfo.StepHeight)
+						thing->z + thing->height - BlockingMobj->z <= thing->MaxStepHeight)
 					{
 						if (thingblocker)
 						{ // There is something to step up on. Return this thing as
@@ -1430,7 +1539,7 @@ void P_FakeZMovement (AActor *mo)
 	}
 	if (mo->player && mo->flags&MF_NOGRAVITY && (mo->z > mo->floorz))
 	{
-		mo->z += finesine[(FINEANGLES/80*level.time)&FINEMASK]/8;
+		mo->z += finesine[(FINEANGLES/80*level.maptime)&FINEMASK]/8;
 	}
 
 //
@@ -1507,7 +1616,7 @@ BOOL P_TryMove (AActor *thing, fixed_t x, fixed_t y,
 				goto pushline;
 			}
 			else if (BlockingMobj->z+BlockingMobj->height-thing->z 
-				> gameinfo.StepHeight
+				> thing->MaxStepHeight
 				|| (BlockingMobj->Sector->ceilingplane.ZatPoint (x, y)
 				- (BlockingMobj->z+BlockingMobj->height) < thing->height)
 				|| (tmceilingz-(BlockingMobj->z+BlockingMobj->height) 
@@ -1556,7 +1665,7 @@ BOOL P_TryMove (AActor *thing, fixed_t x, fixed_t y,
 				thing->momz = -8*FRACUNIT;
 				goto pushline;
 			}
-			else if (thing->z < tmfloorz && tmfloorz-tmdropoffz > gameinfo.StepHeight)
+			else if (thing->z < tmfloorz && tmfloorz-tmdropoffz > thing->MaxDropOffHeight)
 			{
 				thing->momz = 8*FRACUNIT;
 				goto pushline;
@@ -1565,7 +1674,7 @@ BOOL P_TryMove (AActor *thing, fixed_t x, fixed_t y,
 		}
 		if (!(thing->flags & MF_TELEPORT) && !(thing->flags3 & MF3_FLOORHUGGER))
 		{
-			if (tmfloorz-thing->z > gameinfo.StepHeight)
+			if (tmfloorz-thing->z > thing->MaxStepHeight)
 			{ // too big a step up
 				goto pushline;
 			}
@@ -1597,7 +1706,7 @@ BOOL P_TryMove (AActor *thing, fixed_t x, fixed_t y,
 			{
 				floorz = MAX(thing->z, tmfloorz);
 			}
-			if (floorz - tmdropoffz > gameinfo.StepHeight &&
+			if (floorz - tmdropoffz > thing->MaxDropOffHeight &&
 				!(thing->flags2 & MF2_BLASTED))
 			{ // Can't move over a dropoff unless it's been blasted
 				thing->z = oldz;
@@ -1989,7 +2098,7 @@ BOOL PTR_SlideTraverse (intercept_t* in)
 	if (opentop - slidemo->z < slidemo->height)
 		goto isblocking;				// mobj is too high
 
-	if (openbottom - slidemo->z > gameinfo.StepHeight)
+	if (openbottom - slidemo->z > slidemo->MaxStepHeight)
 	{
 		goto isblocking;				// too big a step up
 	}
@@ -2195,7 +2304,7 @@ bool P_CheckSlopeWalk (AActor *actor, fixed_t &xmove, fixed_t &ymove)
 							const sector_t *sec = node->m_sector;
 							if (sec->floorplane.c >= STEEPSLOPE)
 							{
-								if (sec->floorplane.ZatPoint (destx, desty) >= actor->z - gameinfo.StepHeight)
+								if (sec->floorplane.ZatPoint (destx, desty) >= actor->z - actor->MaxStepHeight)
 								{
 									dopush = false;
 									break;
@@ -2680,12 +2789,12 @@ void P_LineAttack (AActor *t1, angle_t angle, fixed_t distance,
 			{
 				puff = P_SpawnPuff (pufftype, hitx, hity, hitz, angle - ANG180, 2, true);
 			}
-			if ((gameinfo.gametype & (GAME_Doom|GAME_Strife)) &&
+			if ((gameinfo.gametype & (GAME_DoomStrife)) &&
 				!axeBlood &&
 				!(trace.Actor->flags & MF_NOBLOOD) &&
 				!(trace.Actor->flags2 & (MF2_INVULNERABLE|MF2_DORMANT)))
 			{
-				P_SpawnBlood (hitx, hity, hitz, angle - ANG180, damage);
+				P_SpawnBlood (hitx, hity, hitz, angle - ANG180, damage, trace.Actor);
 			}
 
 			if (damage)
@@ -2792,9 +2901,19 @@ void P_TraceBleed (int damage, fixed_t x, fixed_t y, fixed_t z, AActor *actor, a
 		{
 			if (bleedtrace.HitType == TRACE_HitWall)
 			{
+				PalEntry bloodcolor = (PalEntry)actor->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
+				if (bloodcolor != 0)
+				{
+					bloodcolor.r>>=1;	// the full color is too bright for blood decals
+					bloodcolor.g>>=1;
+					bloodcolor.b>>=1;
+					bloodcolor.a=1;
+				}
+
 				AImpactDecal::StaticCreate (bloodType,
 					bleedtrace.X, bleedtrace.Y, bleedtrace.Z,
-					sides + bleedtrace.Line->sidenum[bleedtrace.Side]);
+					sides + bleedtrace.Line->sidenum[bleedtrace.Side],
+					bloodcolor);
 			}
 		}
 	}
@@ -2962,7 +3081,7 @@ void P_RailAttack (AActor *source, int damage, int offset)
 		}
 		else
 		{
-			P_SpawnBlood (x, y, z, source->angle - ANG180, damage);
+			P_SpawnBlood (x, y, z, source->angle - ANG180, damage, RailHits[i].HitActor);
 		}
 		P_DamageMobj (RailHits[i].HitActor, source, source, damage, MOD_RAILGUN);
 		P_TraceBleed (damage, x, y, z, RailHits[i].HitActor, angle, pitch);
@@ -3030,10 +3149,10 @@ BOOL PTR_UseTraverse (intercept_t *in)
 		// Check for puzzle item use
 		if (in->d.thing->special == USE_PUZZLE_ITEM_SPECIAL)
 		{
-			LineSpecials[USE_PUZZLE_ITEM_SPECIAL] (NULL, usething, false,
+			if (LineSpecials[USE_PUZZLE_ITEM_SPECIAL] (NULL, usething, false,
 				in->d.thing->args[0], in->d.thing->args[1], in->d.thing->args[2],
-				in->d.thing->args[3], in->d.thing->args[4]);
-			return true;
+				in->d.thing->args[3], in->d.thing->args[4]))
+				return false;
 		}
 		// Dead things can't talk.
 		if (in->d.thing->health <= 0)
@@ -3066,6 +3185,7 @@ BOOL PTR_UseTraverse (intercept_t *in)
 	if (in->d.line->special == 0 || (GET_SPAC(in->d.line->flags) != SPAC_USETHROUGH &&
 		GET_SPAC(in->d.line->flags) != SPAC_USE))
 	{
+blocked:
 		if (in->d.line->flags & ML_BLOCKEVERYTHING)
 		{
 			openrange = 0;
@@ -3094,7 +3214,8 @@ BOOL PTR_UseTraverse (intercept_t *in)
 		
 	if (P_PointOnLineSide (usething->x, usething->y, in->d.line) == 1)
 		// [RH] continue traversal for two-sided lines
-		return in->d.line->backsector != NULL;		// don't use back side
+		//return in->d.line->backsector != NULL;		// don't use back side
+		goto blocked;	// do a proper check for back sides of triggers!
 		
 	P_ActivateLine (in->d.line, usething, 0, SPAC_USE);
 
@@ -3132,7 +3253,7 @@ BOOL PTR_NoWayTraverse (intercept_t *in)
 		P_LineOpening(ld, trace.x + FixedMul (trace.dx, in->frac),
 			trace.y + FixedMul (trace.dy, in->frac)),			// Find openings
 		openrange <= 0 ||						// No opening
-		openbottom > usething->z+gameinfo.StepHeight ||	// Too high it blocks
+		openbottom > usething->z+usething->MaxStepHeight ||	// Too high it blocks
 		opentop < usething->z+usething->height	// Too low it blocks
 	)
 	);
@@ -3313,6 +3434,15 @@ BOOL PIT_RadiusAttack (AActor *thing)
 	{ // don't damage the source of the explosion
 		return true;
 	}
+
+	// a much needed option: monsters that fire explosive projectiles cannot 
+	// be hurt by projectiles fired by a monster of the same type.
+	// Controlled by the DONTHURTSPECIES flag.
+	if (bombsource && 
+		thing->GetClass() == bombsource->GetClass() && 
+		!thing->player &&
+		bombsource->flags4 & MF4_DONTHURTSPECIES
+		) return true;
 
 	// Barrels always use the original code, since this makes
 	// them far too "active." BossBrains also use the old code
@@ -3699,6 +3829,14 @@ void P_DoCrunch (AActor *thing)
 		!(thing->flags3 & MF3_DONTGIB) &&
 		(thing->health <= 0))
 	{
+		if (thing->CrushState && !(thing->flags & MF_ICECORPSE))
+		{
+			// Clear MF_CORPSE so that this isn't done more than once
+			thing->flags &= ~(MF_CORPSE|MF_SOLID);
+			thing->height = thing->radius = 0;
+			thing->SetState (thing->CrushState);
+			return;
+		}
 		if (!(thing->flags & MF_NOBLOOD))
 		{
 			AActor *gib = Spawn<ARealGibs> (thing->x, thing->y, thing->z);
@@ -3707,6 +3845,9 @@ void P_DoCrunch (AActor *thing)
 			gib->height = 0;
 			gib->radius = 0;
 			S_Sound (thing, CHAN_BODY, "misc/fallingsplat", 1, ATTN_IDLE);
+
+			PalEntry bloodcolor = (PalEntry)thing->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
+			if (bloodcolor!=0) gib->Translation = TRANSLATION(TRANSLATION_Blood, bloodcolor.a);
 		}
 		if (thing->flags & MF_ICECORPSE)
 		{
@@ -3728,6 +3869,14 @@ void P_DoCrunch (AActor *thing)
 
 	// crunch dropped items
 	if (thing->flags & MF_DROPPED)
+    {
+    	// [GrafZahl] Just a quick fix to prevent items in a player's inventory from being crushed
+    	// I still think this should be taken care of by the inventory system, not a special check here.
+		if (!thing->IsKindOf(RUNTIME_CLASS(AInventory)) || !static_cast<AInventory*>(thing)->Owner)
+			thing->Destroy ();
+		return;		// keep checking
+    }
+	if (thing->flags & MF_DROPPED)
 	{
 		thing->Destroy ();
 		return;		// keep checking
@@ -3745,7 +3894,7 @@ void P_DoCrunch (AActor *thing)
 
 	nofit = true;
 
-	if ((crushchange > 0) && !(level.time & 3))
+	if ((crushchange > 0) && !(level.maptime & 3))
 	{
 		P_DamageMobj (thing, NULL, NULL, crushchange, MOD_CRUSH);
 
@@ -3753,6 +3902,8 @@ void P_DoCrunch (AActor *thing)
 		if ((!(thing->flags&MF_NOBLOOD)) &&
 			(!(thing->flags2&(MF2_INVULNERABLE|MF2_DORMANT))))
 		{
+			PalEntry bloodcolor = (PalEntry)thing->GetClass()->Meta.GetMetaInt(AMETA_BloodColor);
+
 			P_TraceBleed (crushchange, thing);
 			if (cl_bloodtype <= 1)
 			{
@@ -3763,6 +3914,7 @@ void P_DoCrunch (AActor *thing)
 
 				mo->momx = pr_crunch.Random2 () << 12;
 				mo->momy = pr_crunch.Random2 () << 12;
+				if (bloodcolor!=0) mo->Translation = TRANSLATION(TRANSLATION_Blood, bloodcolor.a);
 			}
 			if (cl_bloodtype >= 1)
 			{
@@ -3770,7 +3922,7 @@ void P_DoCrunch (AActor *thing)
 
 				an = (M_Random () - 128) << 24;
 				P_DrawSplash2 (32, thing->x, thing->y,
-							   thing->z + thing->height/2, an, 2, 0);
+							   thing->z + thing->height/2, an, 2, bloodcolor);
 			}
 		}
 	}

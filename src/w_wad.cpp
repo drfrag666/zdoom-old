@@ -285,8 +285,8 @@ void FWadCollection::AddFile (const char *filename)
 	if (header.magic == IWAD_ID || header.magic == PWAD_ID)
 	{ // This is a WAD file
 
-		header.wad.NumLumps = LONG(header.wad.NumLumps);
-		header.wad.InfoTableOfs = LONG(header.wad.InfoTableOfs);
+		header.wad.NumLumps = LittleLong(header.wad.NumLumps);
+		header.wad.InfoTableOfs = LittleLong(header.wad.InfoTableOfs);
 		fileinfo = fileinfo2free = new wadlump_t[header.wad.NumLumps];
 		wadinfo->Seek (header.wad.InfoTableOfs, SEEK_SET);
 		wadinfo->Read (fileinfo, header.wad.NumLumps * sizeof(wadlump_t));
@@ -299,8 +299,8 @@ void FWadCollection::AddFile (const char *filename)
 		rfflump_t *lumps, *rff_p;
 		int skipped = 0;
 
-		header.rff.NumLumps = LONG(header.rff.NumLumps);
-		header.rff.DirOfs = LONG(header.rff.DirOfs);
+		header.rff.NumLumps = LittleLong(header.rff.NumLumps);
+		header.rff.DirOfs = LittleLong(header.rff.DirOfs);
 		lumps = new rfflump_t[header.rff.NumLumps];
 		wadinfo->Seek (header.rff.DirOfs, SEEK_SET);
 		wadinfo->Read (lumps, header.rff.NumLumps * sizeof(rfflump_t));
@@ -331,8 +331,8 @@ void FWadCollection::AddFile (const char *filename)
 			}
 			uppercopy (lump_p->name, rff_p->Name);
 			lump_p->wadnum = (WORD)NumWads;
-			lump_p->position = LONG(rff_p->FilePos);
-			lump_p->size = LONG(rff_p->Size);
+			lump_p->position = LittleLong(rff_p->FilePos);
+			lump_p->size = LittleLong(rff_p->Size);
 			lump_p->flags = (rff_p->Flags & 0x10) >> 4;
 			lump_p++;
 		}
@@ -349,7 +349,7 @@ void FWadCollection::AddFile (const char *filename)
 		fileinfo2free = NULL;
 		fileinfo = &singleinfo;
 		singleinfo.FilePos = 0;
-		singleinfo.Size = LONG(wadinfo->GetLength());
+		singleinfo.Size = LittleLong(wadinfo->GetLength());
 		ExtractFileBase (filename, name);
 		strupr (name);
 		strncpy (singleinfo.Name, name, 8);
@@ -367,8 +367,8 @@ void FWadCollection::AddFile (const char *filename)
 			// [RH] Convert name to uppercase during copy
 			uppercopy (lump_p->name, fileinfo->Name);
 			lump_p->wadnum = (WORD)NumWads;
-			lump_p->position = LONG(fileinfo->FilePos);
-			lump_p->size = LONG(fileinfo->Size);
+			lump_p->position = LittleLong(fileinfo->FilePos);
+			lump_p->size = LittleLong(fileinfo->Size);
 			lump_p->namespc = ns_global;
 			lump_p->flags = 0;
 		}

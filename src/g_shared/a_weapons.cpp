@@ -870,6 +870,11 @@ CCMD (weaponsection)
 			strcpy (fullSection, "Heretic");
 			tackOn = fullSection + 7;
 		}
+		else if (gameinfo.gametype == GAME_Strife)
+		{
+			strcpy (fullSection, "Strife");
+			tackOn = fullSection + 6;
+		}
 		else
 		{
 			strcpy (fullSection, "Doom");

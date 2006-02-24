@@ -3,6 +3,7 @@
 #include "i_musicinterns.h"
 #include "i_music.h"
 
+#include "templates.h"
 #include "v_text.h"
 #include "m_menu.h"
 
@@ -26,11 +27,12 @@ CUSTOM_CVAR (Float, snd_midivolume, 0.5f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 		self = 1.f;
 	else
 	{
-		DWORD onechanvol = (DWORD)(self * 65535.f);
+		float realvolume = clamp<float>(self * relative_volume, 0, 1.0f);
+		DWORD onechanvol = clamp<DWORD>((DWORD)(realvolume * 65535.f), 0, 65535);
 		midivolume = (onechanvol << 16) | onechanvol;
 		if (currSong && currSong->IsMIDI ())
 		{
-			currSong->SetVolume (self);
+			currSong->SetVolume (realvolume);
 		}
 	}
 }

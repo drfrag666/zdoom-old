@@ -627,9 +627,10 @@ IMPLEMENT_ACTOR (AKneelingGuy, Strife, 204, 0)
 	PROP_SpawnHealth (51)
 	PROP_PainChance (255)
 	PROP_RadiusFixed (6)
-	PROP_HeightFixed (6)
+	PROP_HeightFixed (17)
 	PROP_MassLong (50000)
-	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD|MF_COUNTKILL)
+	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD)
+	PROP_Flags3 (MF3_ISMONSTER)
 	PROP_Flags4 (MF4_INCOMBAT)
 	PROP_MinMissileChance (150)
 	PROP_StrifeType (37)
@@ -849,17 +850,17 @@ FState AExplosiveBarrel2::States[] =
 {
 	S_NORMAL (BART, 'A', -1, NULL, NULL),
 
-	S_BRIGHT (BART, 'B',  2, A_Scream,		&States[2]),
-	S_BRIGHT (BART, 'C',  2, NULL,			&States[3]),
-	S_BRIGHT (BART, 'D',  2, NULL,			&States[4]),
-	S_BRIGHT (BART, 'E',  2, A_NoBlocking,	&States[5]),
-	S_BRIGHT (BART, 'F',  2, A_Explode,		&States[6]),
-	S_BRIGHT (BART, 'G',  2, NULL,			&States[7]),
-	S_BRIGHT (BART, 'H',  2, NULL,			&States[8]),
-	S_BRIGHT (BART, 'I',  2, NULL,			&States[9]),
-	S_BRIGHT (BART, 'J',  2, NULL,			&States[10]),
-	S_BRIGHT (BART, 'K',  3, NULL,			&States[11]),
-	S_NORMAL (BART, 'L', -1, NULL,			NULL),
+	S_BRIGHT (BART, 'B',  2, A_Scream,				&States[2]),
+	S_BRIGHT (BART, 'C',  2, NULL,					&States[3]),
+	S_BRIGHT (BART, 'D',  2, NULL,					&States[4]),
+	S_BRIGHT (BART, 'E',  2, A_NoBlocking,			&States[5]),
+	S_BRIGHT (BART, 'F',  2, A_ExplodeAndAlert,		&States[6]),
+	S_BRIGHT (BART, 'G',  2, NULL,					&States[7]),
+	S_BRIGHT (BART, 'H',  2, NULL,					&States[8]),
+	S_BRIGHT (BART, 'I',  2, NULL,					&States[9]),
+	S_BRIGHT (BART, 'J',  2, NULL,					&States[10]),
+	S_BRIGHT (BART, 'K',  3, NULL,					&States[11]),
+	S_NORMAL (BART, 'L', -1, NULL,					NULL),
 	
 };
 
@@ -2614,6 +2615,7 @@ void APowerCoupling::Die (AActor *source, AActor *inflictor)
 	S_Sound (CHAN_VOICE, "svox/voc13", 1, ATTN_NORM);
 	players[i].SetLogNumber (13);
 	P_DropItem (this, "BrokenPowerCoupling", -1, 256);
+	Destroy ();
 }
 
 // Alien Bubble Column ------------------------------------------------------
@@ -2882,6 +2884,7 @@ void A_ItBurnsItBurns (AActor *);
 void A_DropFire (AActor *);
 void A_CrispyPlayer (AActor *);
 void A_HandLower (AActor *);
+void A_Yeargh (AActor *);
 
 FState AStrifeHumanoid::States[] =
 {
@@ -2920,7 +2923,7 @@ FState AStrifeHumanoid::States[] =
 	S_BRIGHT (BURN, 'V',700,NULL,				NULL),
 
 #define S_HUMAN_ZAPDEATH (S_HUMAN_BURNDEATH+24)
-	S_NORMAL (DISR, 'A', 5, NULL,				&States[S_HUMAN_ZAPDEATH+1]),
+	S_NORMAL (DISR, 'A', 5, A_Yeargh,			&States[S_HUMAN_ZAPDEATH+1]),
 	S_NORMAL (DISR, 'B', 5, NULL,				&States[S_HUMAN_ZAPDEATH+2]),
 	S_NORMAL (DISR, 'C', 5, NULL,				&States[S_HUMAN_ZAPDEATH+3]),
 	S_NORMAL (DISR, 'D', 5, A_NoBlocking,		&States[S_HUMAN_ZAPDEATH+4]),
@@ -2942,6 +2945,8 @@ FState AStrifeHumanoid::States[] =
 IMPLEMENT_ACTOR (AStrifeHumanoid, Any, -1, 0)
 	PROP_BDeathState (S_HUMAN_BURNDEATH)
 	PROP_EDeathState (S_HUMAN_ZAPDEATH)
+	PROP_MaxStepHeight (16)
+	PROP_MaxDropOffHeight (32)
 END_DEFAULTS
 
 void A_ItBurnsItBurns (AActor *self)
@@ -2990,4 +2995,9 @@ void A_HandLower (AActor *self)
 			P_SetPsprite (self->player, ps_weapon, NULL);
 		}
 	}
+}
+
+void A_Yeargh (AActor *self)
+{
+	S_Sound (self, CHAN_VOICE, "misc/disruptordeath", 1, ATTN_NORM);
 }

@@ -132,14 +132,14 @@ bool ProduceMIDI (const BYTE *musBuf, FILE *outFile)
 	if (*(DWORD *)MUSMagic != musHead->Magic)
 		return false;
 	
-	if (SHORT(musHead->NumChans) > 15)
+	if (LittleShort(musHead->NumChans) > 15)
 		return false;
 	
 	// Prep for conversion
 	fwrite (StaticMIDIhead, 1, sizeof(StaticMIDIhead), outFile);
 
-	musBuf += SHORT(musHead->SongStart);
-	maxmus_p = SHORT(musHead->SongLen);
+	musBuf += LittleShort(musHead->SongStart);
+	maxmus_p = LittleShort(musHead->SongLen);
 	mus_p = 0;
 	
 	memset (lastVel, 64, 16);
@@ -206,7 +206,7 @@ bool ProduceMIDI (const BYTE *musBuf, FILE *outFile)
 		case MUS_SYSEVENT:
 			midStatus |= MIDI_CTRLCHANGE;
 			mid1 = CtrlTranslate[t];
-			mid2 = t == 12 ? SHORT(musHead->NumChans) : 0;
+			mid2 = t == 12 ? LittleShort(musHead->NumChans) : 0;
 			break;
 			
 		case MUS_CTRLCHANGE:

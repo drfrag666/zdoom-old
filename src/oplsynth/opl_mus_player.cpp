@@ -70,7 +70,7 @@ OPLmusicBlock::OPLmusicBlock (FILE *file, int len, int rate, int maxSamples)
 		{ // A clock speed of 0 is bad
 			*(WORD *)(scoredata + 8) = 0xFFFF; 
 		}
-		SamplesPerTick = Scale (rate, SHORT(*(WORD *)(scoredata + 8)), 1193180);
+		SamplesPerTick = Scale (rate, LittleShort(*(WORD *)(scoredata + 8)), 1193180);
 	}
 	// Check for modified IMF format (includes a header)
 	else if (((DWORD *)scoredata)[0] == MAKE_ID('A','D','L','I') &&
@@ -94,7 +94,7 @@ OPLmusicBlock::OPLmusicBlock (FILE *file, int len, int rate, int maxSamples)
 			scoredata = NULL;
 			return;
 		}
-		songlen = LONG(*(DWORD *)score);
+		songlen = LittleLong(*(DWORD *)score);
 		if (songlen != 0 && (songlen +=4) < ScoreLen - (score - scoredata))
 		{
 			ScoreLen = songlen + int(score - scoredata);
@@ -172,7 +172,7 @@ void OPLmusicBlock::Restart ()
 	else if (RawPlayer == RDosPlay)
 	{
 		score = scoredata + 10;
-		SamplesPerTick = Scale (SampleRate, SHORT(*(WORD *)(scoredata + 8)), 1193180);
+		SamplesPerTick = Scale (SampleRate, LittleShort(*(WORD *)(scoredata + 8)), 1193180);
 	}
 	else if (RawPlayer == IMF)
 	{
@@ -372,7 +372,7 @@ int OPLmusicBlock::PlayTick ()
 			case 2:		// Speed change or OPL3 switch
 				if (data == 0)
 				{
-					SamplesPerTick = Scale (SampleRate, SHORT(*(WORD *)(score)), 1193180);
+					SamplesPerTick = Scale (SampleRate, LittleShort(*(WORD *)(score)), 1193180);
 					score += 2;
 				}
 				break;
@@ -398,7 +398,7 @@ int OPLmusicBlock::PlayTick ()
 		{
 			reg = score[0];
 			data = score[1];
-			delay = SHORT(((WORD *)score)[1]);
+			delay = LittleShort(((WORD *)score)[1]);
 			score += 4;
 			io->OPLwriteReg (0, reg, data);
 		}
@@ -554,7 +554,7 @@ int DiskWriterIO::OPLinit (const char *filename)
 	if (RawFormat)
 	{
 		fwrite ("RAWADATA", 1, 8, File);
-		WORD clock = SHORT(17045/2);
+		WORD clock = LittleShort(17045/2);
 		fwrite (&clock, 2, 1, File);
 		numchips = 1;
 	}

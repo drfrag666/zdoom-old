@@ -78,8 +78,9 @@ IMPLEMENT_ACTOR (ABeggar, Strife, 0, 0)
 	PROP_SpeedFixed (3)
 	PROP_RadiusFixed (20)
 	PROP_HeightFixed (56)
-	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_JUSTHIT|MF_COUNTKILL)
+	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_JUSTHIT)
 	PROP_Flags2 (MF2_FLOORCLIP|MF2_PASSMOBJ|MF2_PUSHWALL|MF2_MCROSS)
+	PROP_Flags3 (MF3_ISMONSTER)
 	PROP_Flags4 (MF4_NOSPLASHALERT)
 	PROP_MinMissileChance (150)
 	PROP_Tag ("Beggar")
@@ -100,6 +101,7 @@ IMPLEMENT_STATELESS_ACTOR (ABeggar1, Strife, 141, 0)
 	PROP_StrifeType (38)
 	PROP_StrifeTeaserType (37)
 	PROP_StrifeTeaserType2 (38)
+	PROP_Tag ("Beggar")
 END_DEFAULTS
 
 // Beggar 2 -----------------------------------------------------------------
@@ -113,6 +115,7 @@ IMPLEMENT_STATELESS_ACTOR (ABeggar2, Strife, 155, 0)
 	PROP_StrifeType (39)
 	PROP_StrifeTeaserType (38)
 	PROP_StrifeTeaserType2 (39)
+	PROP_Tag ("Beggar")
 END_DEFAULTS
 
 // Beggar 3 -----------------------------------------------------------------
@@ -126,6 +129,7 @@ IMPLEMENT_STATELESS_ACTOR (ABeggar3, Strife, 156, 0)
 	PROP_StrifeType (40)
 	PROP_StrifeTeaserType (39)
 	PROP_StrifeTeaserType2 (40)
+	PROP_Tag ("Beggar")
 END_DEFAULTS
 
 // Beggar 4 -----------------------------------------------------------------
@@ -139,6 +143,7 @@ IMPLEMENT_STATELESS_ACTOR (ABeggar4, Strife, 157, 0)
 	PROP_StrifeType (41)
 	PROP_StrifeTeaserType (40)
 	PROP_StrifeTeaserType2 (41)
+	PROP_Tag ("Beggar")
 END_DEFAULTS
 
 // Beggar 5 -----------------------------------------------------------------
@@ -152,4 +157,5 @@ IMPLEMENT_STATELESS_ACTOR (ABeggar5, Strife, 158, 0)
 	PROP_StrifeType (42)
 	PROP_StrifeTeaserType (41)
 	PROP_StrifeTeaserType2 (42)
+	PROP_Tag ("Beggar")
 END_DEFAULTS

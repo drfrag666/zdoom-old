@@ -178,6 +178,7 @@ protected:
 	void DoEffect ();
 	void EndEffect ();
 	void PositionAccuracy ();
+	void Travelled ();
 };
 
 class player_s;

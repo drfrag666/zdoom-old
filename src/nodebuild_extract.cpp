@@ -62,6 +62,7 @@ void FNodeBuilder::Extract (node_t *&outNodes, int &nodeCount,
 
 	subCount = Subsectors.Size();
 	outSubs = new subsector_t[subCount];
+	memset(outSubs,0,subCount * sizeof(subsector_t));
 
 	nodeCount = Nodes.Size ();
 	outNodes = new node_t[nodeCount];

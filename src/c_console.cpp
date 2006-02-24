@@ -60,6 +60,7 @@
 #include "s_sndseq.h"
 #include "doomstat.h"
 #include "d_gui.h"
+#include "v_video.h"
 
 #include "gi.h"
 
@@ -112,6 +113,7 @@ static unsigned int TickerAt, TickerMax;
 static const char *TickerLabel;
 
 static bool TickerVisible;
+static bool ConsoleDrawing;
 
 struct History
 {
@@ -133,7 +135,11 @@ static int HistSize;
 
 CVAR (Float, con_notifytime, 3.f, CVAR_ARCHIVE)
 CVAR (Bool, con_centernotify, false, CVAR_ARCHIVE)
-CVAR (Bool, con_scaletext, false, CVAR_ARCHIVE)		// Scale notify text at high resolutions?
+CUSTOM_CVAR (Int, con_scaletext, 0, CVAR_ARCHIVE)		// Scale notify text at high resolutions?
+{
+	if (self < 0) self = 0;
+	if (self > 2) self = 2;
+}
 
 // Command to run when Ctrl-D is pressed at start of line
 CVAR (String, con_ctrl_d, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
@@ -156,6 +162,8 @@ int PrintColors[PRINTLEVELS+2] = { CR_RED, CR_GOLD, CR_GRAY, CR_GREEN, CR_GREEN,
 static void setmsgcolor (int index, int color);
 
 FILE *Logfile = NULL;
+
+void C_AddNotifyString (int printlevel, const char *source);
 
 
 FIntCVar msglevel ("msg", 0, CVAR_ARCHIVE);
@@ -197,7 +205,7 @@ CUSTOM_CVAR (Int, msgmidcolor2, 4, CVAR_ARCHIVE)
 
 static void maybedrawnow (bool tick, bool force)
 {
-	if (screen->IsLocked ())
+	if (ConsoleDrawing || screen->IsLocked ())
 	{
 		return;
 	}
@@ -217,6 +225,49 @@ static void maybedrawnow (bool tick, bool force)
 			lastprinttime = nowtime;
 		}
 	}
+}
+
+struct TextQueue
+{
+	TextQueue (bool notify, int printlevel, const char *text)
+		: Next(NULL), bNotify(notify), PrintLevel(printlevel), Text(text)
+	{
+	}
+	TextQueue *Next;
+	bool bNotify;
+	int PrintLevel;
+	string Text;
+};
+
+TextQueue *EnqueuedText, **EnqueuedTextTail = &EnqueuedText;
+
+void EnqueueConsoleText (bool notify, int printlevel, const char *text)
+{
+	TextQueue *queued = new TextQueue (notify, printlevel, text);
+	*EnqueuedTextTail = queued;
+	EnqueuedTextTail = &queued->Next;
+}
+
+void DequeueConsoleText ()
+{
+	TextQueue *queued = EnqueuedText;
+
+	while (queued != NULL)
+	{
+		TextQueue *next = queued->Next;
+		if (queued->bNotify)
+		{
+			C_AddNotifyString (queued->PrintLevel, queued->Text.GetChars());
+		}
+		else
+		{
+			AddToConsole (queued->PrintLevel, queued->Text.GetChars());
+		}
+		delete queued;
+		queued = next;
+	}
+	EnqueuedText = NULL;
+	EnqueuedTextTail = &EnqueuedText;
 }
 
 void C_InitConsole (int width, int height, BOOL ingame)
@@ -285,7 +336,9 @@ void C_InitConsole (int width, int height, BOOL ingame)
 		// Note: Don't use new here, because we attach a handler to new in
 		// i_main.cpp that calls I_FatalError if the allocation fails,
 		// but we can gracefully handle such a condition here by just
-		// clearing the console buffer.
+		// clearing the console buffer. (OTOH, what are the chances that
+		// any other memory allocations would succeed if we can't get
+		// these mallocs here?)
 
 		char *fmtBuff = (char *)malloc (CONSOLESIZE);
 		char **fmtLines = (char **)malloc (CONSOLELINES*sizeof(char*)*4);
@@ -390,7 +443,13 @@ void C_AddNotifyString (int printlevel, const char *source)
 		gamestate == GS_DEMOSCREEN)
 		return;
 
-	width = con_scaletext ? DisplayWidth / CleanXfac : DisplayWidth;
+	if (ConsoleDrawing)
+	{
+		EnqueueConsoleText (true, printlevel, source);
+		return;
+	}
+
+	width = con_scaletext > 1 ? DisplayWidth/2 : con_scaletext == 1 ? DisplayWidth / CleanXfac : DisplayWidth;
 
 	if (addtype == APPENDLINE && NotifyStrings[NUMNOTIFIES-1].printlevel == printlevel
 		&& (work = (char *)malloc (strlen ((char *)NotifyStrings[NUMNOTIFIES-1].text)
@@ -488,6 +547,12 @@ void AddToConsole (int printlevel, const char *text)
 	int size, len;
 	int x;
 	int maxwidth;
+
+	if (ConsoleDrawing)
+	{
+		EnqueueConsoleText (false, printlevel, text);
+		return;
+	}
 
 	len = (int)strlen (text);
 	size = len + 3;
@@ -776,7 +841,7 @@ static void C_DrawNotifyText ()
 	int i, line, lineadv, color, j, skip;
 	bool canskip;
 	
-	if (gamestate == GS_FULLCONSOLE || gamestate == GS_DEMOSCREEN || menuactive != MENU_Off)
+	if (gamestate == GS_FULLCONSOLE || gamestate == GS_DEMOSCREEN/* || menuactive != MENU_Off*/)
 		return;
 
 	line = NotifyTop;
@@ -784,7 +849,7 @@ static void C_DrawNotifyText ()
 	canskip = true;
 
 	lineadv = SmallFont->GetHeight ();
-	if (con_scaletext)
+	if (con_scaletext == 1)
 	{
 		lineadv *= CleanYfac;
 	}
@@ -818,7 +883,7 @@ static void C_DrawNotifyText ()
 			else
 				color = PrintColors[NotifyStrings[i].printlevel];
 
-			if (con_scaletext)
+			if (con_scaletext == 1)
 			{
 				if (!center)
 					screen->DrawText (color, 0, line, (char *)NotifyStrings[i].text,
@@ -829,7 +894,7 @@ static void C_DrawNotifyText ()
 						line, (char *)NotifyStrings[i].text, DTA_CleanNoMove, true,
 						DTA_Alpha, alpha, TAG_DONE);
 			}
-			else
+			else if (con_scaletext == 0)
 			{
 				if (!center)
 					screen->DrawText (color, 0, line, (char *)NotifyStrings[i].text,
@@ -838,6 +903,23 @@ static void C_DrawNotifyText ()
 					screen->DrawText (color, (SCREENWIDTH -
 						SmallFont->StringWidth (NotifyStrings[i].text))/2,
 						line, (char *)NotifyStrings[i].text,
+						DTA_Alpha, alpha, TAG_DONE);
+			}
+			else
+			{
+				if (!center)
+					screen->DrawText (color, 0, line, (char *)NotifyStrings[i].text,
+						DTA_VirtualWidth, screen->GetWidth() / 2, 
+						DTA_VirtualHeight, screen->GetHeight() / 2,
+						DTA_KeepRatio, true,
+						DTA_Alpha, alpha, TAG_DONE);
+				else
+					screen->DrawText (color, (screen->GetWidth() / 2 -
+						SmallFont->StringWidth (NotifyStrings[i].text))/2,
+						line, (char *)NotifyStrings[i].text,
+						DTA_VirtualWidth, screen->GetWidth() / 2, 
+						DTA_VirtualHeight, screen->GetHeight() / 2,
+						DTA_KeepRatio, true,
 						DTA_Alpha, alpha, TAG_DONE);
 			}
 			line += lineadv;
@@ -981,6 +1063,8 @@ void C_DrawConsole ()
 
 		screen->SetFont (ConFont);
 
+		ConsoleDrawing = true;
+
 		for (i = RowAdjust; i; i--)
 		{
 			if (pos == TopLine)
@@ -1004,6 +1088,10 @@ void C_DrawConsole ()
 			}
 			lines--;
 		} while (pos != TopLine && lines > 0);
+
+		ConsoleDrawing = false;
+		DequeueConsoleText ();
+
 		if (ConBottom >= 20)
 		{
 			if (gamestate == GS_STARTUP)
@@ -1012,15 +1100,21 @@ void C_DrawConsole ()
 			}
 			else
 			{
+				// Make a copy of the command line, in case an input event is handled
+				// while we draw the console and it changes.
 				CmdLine[2+CmdLine[0]] = 0;
+				string command((char *)&CmdLine[2+CmdLine[259]]);
+				int cursorpos = CmdLine[1] - CmdLine[259];
+
 				screen->DrawChar (CR_ORANGE, left, bottomline, '\x1c', TAG_DONE);
 				screen->DrawText (CR_ORANGE, left + ConFont->GetCharWidth(0x1c), bottomline,
-					(char *)&CmdLine[2+CmdLine[259]], TAG_DONE);
-			}
-			if (cursoron)
-			{
-				screen->DrawChar (CR_YELLOW, left + ConFont->GetCharWidth(0x1c) + (CmdLine[1] - CmdLine[259])* ConFont->GetCharWidth(0xb),
-					bottomline, '\xb', TAG_DONE);
+					command.GetChars(), TAG_DONE);
+
+				if (cursoron)
+				{
+					screen->DrawChar (CR_YELLOW, left + ConFont->GetCharWidth(0x1c) + cursorpos * ConFont->GetCharWidth(0xb),
+						bottomline, '\xb', TAG_DONE);
+				}
 			}
 			if (RowAdjust && ConBottom >= ConFont->GetHeight()*7/2)
 			{

@@ -142,8 +142,8 @@ bool M_CreatePNG (FILE *file, const DCanvas *canvas, const PalEntry *palette)
 	sig[0] = MAKE_ID(137,'P','N','G');
 	sig[1] = MAKE_ID(13,10,26,10);
 
-	ihdr->Width = BELONG (canvas->GetWidth ());
-	ihdr->Height = BELONG (canvas->GetHeight ());
+	ihdr->Width = BigLong (canvas->GetWidth ());
+	ihdr->Height = BigLong (canvas->GetHeight ());
 	ihdr->BitDepth = 8;
 	ihdr->ColorType = 3;
 	ihdr->Compression = 0;
@@ -152,7 +152,7 @@ bool M_CreatePNG (FILE *file, const DCanvas *canvas, const PalEntry *palette)
 	MakeChunk (ihdr, MAKE_ID('I','H','D','R'), 2*4+5);
 
 	// Assume a display exponent of 2.2 (100000/2.2 ~= 45454.5)
-	*gama = BELONG (int (45454.5f * (png_gamma == 0.f ? Gamma : png_gamma)));
+	*gama = BigLong (int (45454.5f * (png_gamma == 0.f ? Gamma : png_gamma)));
 	MakeChunk (gama, MAKE_ID('g','A','M','A'), 4);
 
 	StuffPalette (palette, plte);
@@ -210,7 +210,7 @@ bool M_FinishPNG (FILE *file)
 
 bool M_AppendPNGChunk (FILE *file, DWORD chunkID, const BYTE *chunkData, DWORD len)
 {
-	DWORD head[2] = { BELONG((unsigned int)len), chunkID };
+	DWORD head[2] = { BigLong((unsigned int)len), chunkID };
 	DWORD crc;
 
 	if (fwrite (head, 1, 8, file) == 8 &&
@@ -221,7 +221,7 @@ bool M_AppendPNGChunk (FILE *file, DWORD chunkID, const BYTE *chunkData, DWORD l
 		{
 			crc = AddCRC32 (crc, chunkData, len);
 		}
-		crc = BELONG((unsigned int)crc);
+		crc = BigLong((unsigned int)crc);
 		return fwrite (&crc, 1, 4, file) == 4;
 	}
 	return false;
@@ -242,7 +242,7 @@ bool M_AppendPNGText (FILE *file, const char *keyword, const char *text)
 	int keylen = MIN ((int)strlen (keyword), 79);
 	DWORD crc;
 
-	head.len = BELONG(len + keylen + 1);
+	head.len = BigLong(len + keylen + 1);
 	head.id = MAKE_ID('t','E','X','t');
 	memset (&head.key, 0, sizeof(head.key));
 	strncpy (head.key, keyword, keylen);
@@ -256,7 +256,7 @@ bool M_AppendPNGText (FILE *file, const char *keyword, const char *text)
 		{
 			crc = AddCRC32 (crc, (BYTE *)text, len);
 		}
-		crc = BELONG((unsigned int)crc);
+		crc = BigLong((unsigned int)crc);
 		return fwrite (&crc, 1, 4, file) == 4;
 	}
 	return false;
@@ -391,7 +391,7 @@ PNGHandle *M_VerifyPNG (FILE *file)
 	filer = png->File;
 	chunk.ID = data[1];
 	chunk.Offset = 16;
-	chunk.Size = BELONG((unsigned int)data[0]);
+	chunk.Size = BigLong((unsigned int)data[0]);
 	png->Chunks.Push (chunk);
 	filer->Seek (16, SEEK_SET);
 
@@ -418,7 +418,7 @@ PNGHandle *M_VerifyPNG (FILE *file)
 		}
 		chunk.ID = data[1];
 		chunk.Offset = ftell (file);
-		chunk.Size = BELONG((unsigned int)data[0]);
+		chunk.Size = BigLong((unsigned int)data[0]);
 		png->Chunks.Push (chunk);
 
 		// If this is a text chunk, also record its contents.
@@ -496,8 +496,8 @@ DCanvas *M_CreateCanvasFromPNG (PNGHandle *png)
 		return NULL;
 	}
 
-	width = BELONG((int)imageHeader.Width);
-	height = BELONG((int)imageHeader.Height);
+	width = BigLong((int)imageHeader.Width);
+	height = BigLong((int)imageHeader.Height);
 	canvas = new DSimpleCanvas (width, height);
 	if (canvas == NULL)
 	{
@@ -603,7 +603,7 @@ bool M_ReadIDAT (FileReader *file, BYTE *buffer, int width, int height, int pitc
 				}
 				else
 				{
-					chunklen = BELONG((unsigned int)x[1]);
+					chunklen = BigLong((unsigned int)x[1]);
 				}
 			}
 		}
@@ -637,9 +637,9 @@ bool M_ReadIDAT (FileReader *file, BYTE *buffer, int width, int height, int pitc
 static inline void MakeChunk (void *where, DWORD type, size_t len)
 {
 	BYTE *const data = (BYTE *)where;
-	*(DWORD *)(data - 8) = BELONG ((unsigned int)len);
+	*(DWORD *)(data - 8) = BigLong ((unsigned int)len);
 	*(DWORD *)(data - 4) = type;
-	*(DWORD *)(data + len) = BELONG ((unsigned int)CalcCRC32 (data-4, (unsigned int)(len+4)));
+	*(DWORD *)(data + len) = BigLong ((unsigned int)CalcCRC32 (data-4, (unsigned int)(len+4)));
 }
 
 //==========================================================================
@@ -781,10 +781,10 @@ static bool WriteIDAT (FILE *file, const BYTE *data, int len)
 {
 	DWORD foo[2], crc;
 
-	foo[0] = BELONG (len);
+	foo[0] = BigLong (len);
 	foo[1] = MAKE_ID('I','D','A','T');
 	crc = CalcCRC32 ((BYTE *)&foo[1], 4);
-	crc = BELONG ((unsigned int)AddCRC32 (crc, data, len));
+	crc = BigLong ((unsigned int)AddCRC32 (crc, data, len));
 
 	if (fwrite (foo, 1, 8, file) != 8 ||
 		fwrite (data, 1, len, file) != (size_t)len ||

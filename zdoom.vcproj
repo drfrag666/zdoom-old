@@ -3,6 +3,7 @@
 	ProjectType="Visual C++"
 	Version="7.10"
 	Name=" zdoom"
+	RootNamespace=" zdoom"
 	SccProjectName=""
 	SccAuxPath=""
 	SccLocalPath=""
@@ -58,7 +59,7 @@
 				SuppressStartupBanner="TRUE"
 				IgnoreDefaultLibraryNames=""
 				GenerateDebugInformation="TRUE"
-				ProgramDatabaseFile=".\Release\zdoom.pdb"
+				ProgramDatabaseFile="..\zdoom.pdb"
 				StripPrivateSymbols=""
 				GenerateMapFile="TRUE"
 				MapFileName=".\Release/zdoom.map"
@@ -843,21 +844,6 @@
 			</File>
 			<File
 				RelativePath=".\src\m_cheat.cpp">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						AdditionalOptions="&quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot; "/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Debug|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						AdditionalOptions="&quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot; "/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath=".\src\m_fixed.cpp">
 				<FileConfiguration
 					Name="Release|Win32">
 					<Tool
@@ -1785,6 +1771,9 @@
 				</File>
 				<File
 					RelativePath=".\src\thingdef.cpp">
+				</File>
+				<File
+					RelativePath=".\src\thingdef_codeptr.cpp">
 				</File>
 			</Filter>
 		</Filter>
@@ -2727,6 +2716,12 @@
 						Name="VCCLCompilerTool"
 						AdditionalOptions="&quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot;  &quot;  /I /fmod/api/inc&quot; "/>
 				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\src\g_shared\a_weaponpiece.cpp">
+			</File>
+			<File
+				RelativePath=".\src\g_shared\a_weaponpiece.h">
 			</File>
 			<File
 				RelativePath=".\src\g_shared\a_weapons.cpp">

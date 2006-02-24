@@ -55,6 +55,7 @@ extern	int		ST_Y;
 //	and the total size == width*height*depth/8.,
 //
 
+extern byte decorate_translations[];
 
 byte*			viewimage;
 extern "C" {
@@ -1243,6 +1244,9 @@ void R_InitTranslationTables ()
 	translationtables[TRANSLATION_PlayerCorpses] =
 		translationtables[TRANSLATION_LevelScripted] + MAX_ACS_TRANSLATIONS*256;
 
+	translationtables[TRANSLATION_Decorate] = decorate_translations;
+	translationtables[TRANSLATION_Blood] = decorate_translations + MAX_DECORATE_TRANSLATIONS*256;
+
 	// [RH] Each player now gets their own translation table. These are set
 	//		up during netgame arbitration and as-needed rather than in here.
 
@@ -1281,18 +1285,6 @@ void R_InitTranslationTables ()
 	}
 	else if (gameinfo.gametype == GAME_Strife)
 	{
-#if 0
-		for (i = 0x80; i < 0x90; i++)
-		{
-			translationtables[TRANSLATION_Standard][i      ] = 0x40 + (i&0xf); // red
-			translationtables[TRANSLATION_Standard][i+1*256] = 0xAC + (i&0xf); // rust
-			translationtables[TRANSLATION_Standard][i+2*256] = 0x10 + (i&0xf); // gray
-			translationtables[TRANSLATION_Standard][i+3*256] = 0x2C + (i&0xf); // dark green
-			translationtables[TRANSLATION_Standard][i+4*256] = 0x50 + (i&0xf); // gold
-			translationtables[TRANSLATION_Standard][i+5*256] = 0x60 + (i&0xf); // bright green
-			translationtables[TRANSLATION_Standard][i+6*256] = 0x90 + (i&0xf); // blue
-		}
-#else
 		for (i = 0x20; i <= 0x3F; ++i)
 		{
 			translationtables[TRANSLATION_Standard][i      ] = i - 0x20;
@@ -1341,7 +1333,6 @@ void R_InitTranslationTables ()
 		{
 			translationtables[TRANSLATION_Standard][i      ] = i - 6;
 		}
-#endif
 	}
 
 	// Create the ice translation table, based on Hexen's. Alas, the standard

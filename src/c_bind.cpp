@@ -41,6 +41,7 @@
 #include "hu_stuff.h"
 #include "gi.h"
 #include "configfile.h"
+#include "i_system.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -140,6 +141,7 @@ static const FBinding DefHexenBindings[] =
 
 static const FBinding DefStrifeBindings[] =
 {
+	{ "a", "+jump" },
 	{ "w", "showpop 1" },
 	{ "backspace", "invdrop" },
 	{ "z", "showpop 3" },
@@ -164,7 +166,7 @@ const char *KeyNames[NUM_KEYS] =
 	"o",		"p",		"[",		"]",		"enter",	"ctrl",		"a",		"s",		//18
 	"d",		"f",		"g",		"h",		"j",		"k",		"l",		";",		//20
 	"'",		"`",		"shift",	"\\",		"z",		"x",		"c",		"v",		//28
-	"b",		"n",		"m",		",",		".",		"/",		NULL,		"kp*",		//30
+	"b",		"n",		"m",		",",		".",		"/",		"rshift",	"kp*",		//30
 	"alt",		"space",	"capslock",	"f1",		"f2",		"f3",		"f4",		"f5",		//38
 	"f6",		"f7",		"f8",		"f9",		"f10",		"numlock",	"scroll",	"kp7",		//40
 	"kp8",		"kp9",		"kp-",		"kp4",		"kp5",		"kp6",		"kp+",		"kp1",		//48
@@ -177,11 +179,11 @@ const char *KeyNames[NUM_KEYS] =
 	NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		//80
 	NULL,		NULL,		NULL,		NULL,		NULL,		"kp=",		NULL,		NULL,		//88
 	"circumflex","@",		":",		"_",		"kanji",	"stop",		"ax",		"unlabeled",//90
-	NULL,		"prevtrack",NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		//98
+	NULL,		"prevtrack",NULL,		NULL,		"kp-enter",	"rctrl",	NULL,		NULL,		//98
 	"mute",		"calculator","play",	NULL,		"stop",		NULL,		NULL,		NULL,		//A0
 	NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		"voldown",	NULL,		//A8
 	"volup",	NULL,		"webhome",	"kp,",		NULL,		"kp/",		NULL,		"sysrq",	//B0
-	NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		//B8
+	"ralt",		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		//B8
 	NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		NULL,		"home",		//C0
 	"uparrow",	"pgup",		NULL,		"leftarrow",NULL,		"rightarrow",NULL,		"end",		//C8
 	"downarrow","pgdn",		"ins",		"del",		NULL,		NULL,		NULL,		NULL,		//D0
@@ -528,7 +530,8 @@ BOOL C_DoKey (event_t *ev)
 	dclickmask = 1 << (ev->data1 & 7);
 	dclick = false;
 
-	if (DClickTime[ev->data1] > level.time && ev->type == EV_KeyDown)
+	// This used level.time which didn't work outside a level.
+	if (DClickTime[ev->data1] > I_MSTime() && ev->type == EV_KeyDown)
 	{
 		// Key pressed for a double click
 		binding = DoubleBindings[ev->data1];
@@ -540,7 +543,7 @@ BOOL C_DoKey (event_t *ev)
 		if (ev->type == EV_KeyDown)
 		{ // Key pressed for a normal press
 			binding = Bindings[ev->data1];
-			DClickTime[ev->data1] = level.time + 20;
+			DClickTime[ev->data1] = I_MSTime() + 571;
 		}
 		else if (DClicked[dclickspot] & dclickmask)
 		{ // Key released from a double click

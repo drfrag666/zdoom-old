@@ -121,6 +121,10 @@ struct MusPlayingInfo
 	bool  loop;
 };
 
+// EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
+
+float S_GetMusicVolume (const char *music);
+
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
 
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
@@ -1382,7 +1386,7 @@ bool S_ChangeMusic (const char *musicname, int order, bool looping, bool force)
 	if (strnicmp (musicname, ",CD,", 4) == 0)
 	{
 		int track = strtoul (musicname+4, NULL, 0);
-		char *more = strchr (musicname+4, ',');
+		const char *more = strchr (musicname+4, ',');
 		unsigned int id = 0;
 
 		if (more != NULL)
@@ -1435,7 +1439,7 @@ bool S_ChangeMusic (const char *musicname, int order, bool looping, bool force)
 	if (mus_playing.handle != 0)
 	{ // play it
 		mus_playing.name = copystring (musicname);
-		I_PlaySong (mus_playing.handle, looping);
+		I_PlaySong (mus_playing.handle, looping, S_GetMusicVolume (musicname));
 		mus_playing.baseorder =
 			(I_SetSongPosition (mus_playing.handle, order) ? order : 0);
 		return true;

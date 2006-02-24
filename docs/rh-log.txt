@@ -1,3 +1,248 @@
+February 18, 2006
+- Various fixes for compilation with GCC/Linux.
+- Various fixes from Graf Zahl: Wrong blood color with P_BloodSplatter2() and
+  P_RipperBlood(). Wrong MF3_BLOODLESSIMPACT check in PIT_CheckThing().
+  P_BloodSplatter() used R_PointToAngle(). A_CPosRefire() did not check for
+  hitting a friend. A_CentaurDefend() did not clear the reflective flag.
+  DHUDMessage::ResetText() did not check for con_scaletext==2. Wrong Raven
+  scroller speeds for COMPATF_RAVENSCROLL off. P_Init() should call
+  P_InitKeyMessages(). Missing decorate decal code from decallib.cpp. New
+  FFontChar1 code only made it into 2.1.0 and not 2.0.x. Missing copy
+  constructor for FMusicVolume.
+- Fixed: ACustomInventory::TryPickup() failed to call the superclass
+  implementation of the function.
+- Fixed: Friendly pain elementals killed by a player shot friendly lost souls
+  that attacked the player. Now those lost souls aren't friendly.
+
+February 6, 2006
+- Fixed: Except for A_Explode512, all of Strife's A_Explode functions also call
+  P_RecursiveSound.
+- SpectralLightningSpot's RenderStyle is now STYLE_Translucent. It isn't really
+  part of the lightning itself, so it should probably not be additive.
+- Fixed: Macil2 and the Oracle are invulnerable to the first stage Sigil, and
+  the first Macil should be completely unkillable.
+- Fixed: The FlameThrowerParts' spawn state was unset, and it used a generic
+  pickup message.
+- Fixed: Strife step heights vary depending on the type of actor: If it bleeds
+  it can go up 16 unit steps, if it's a missile it can go up 4 unit steps, and
+  everything else can go up 24 unit steps. And everything can stand over a 32
+  unit dropoff. MaxStepHeight and MaxDropOffHeight are now actor properties.
+- Fixed: Strife floating monsters are not blocked by monster blocking lines, so
+  they all need to have MF3_NOBLOCKMONST set.
+- Fixed: APowerCoupling::Die() should destroy the unbroken coupling.
+- Fixed: AActor::TakeSpecialDamage() should allow damage if the actor has
+  no death state at all. (Taken from GZDoom)
+- Fixed: Killing something that drops an alarm with the second-stage mauler
+  would not show the alarm text if it was directly hit by the main torpedo.
+  Added a third argument to P_SpawnSubMissile() that indicates what the
+  new missile's "target" should be, so if the missile dies right away, it
+  has the correct target information.
+- Fixed: Added Graf Zahl's fix for manually closing animated doors with
+  something inside them.
+- Fixed: The A key should be bound to +jump by default in Strife.
+- Fixed: F_BunnyScroll() should fill the widescreen border with black, not
+  the FinaleFlat.
+- Fixed: Strife linetype 52 can be used to advance to the next map by setting
+  its tag to 0. It should also be flagged repeatable.
+- Fixed: A_Look2() is supposed to randomly choose self->SpawnState + 3 if
+  MF4_STANDSTILL is unset, not + 4.
+- A_AcolyteDie() now resets the acolyte's RenderStyle to turn off any shadow
+  effects they may have.
+
+January 24, 2006 -- First changes of 2006! 1.5 months later! :(
+- Added a new level.maptime variable that keeps track of the time you've been
+  on a single level and is unaffected by hubs.
+- Fixed: ASoulsphere::Use() could reduce your health.
+- Fixed: cht_Suicide() did not clear the MF2_INVULNERABLE flag.
+- Increased the sidedef limit to 2^32-1.
+- Fixed: Stacked sectors inside a skybox would be drawn from the player's
+  origin instead of the skybox's origin, which would easily lead to infinite
+  recursion because the engine would try to render the skybox again instead
+  of the other side of the stack. In order to avoid any other infinite
+  recursion problems, the maximum number of skybox visplanes per scene has now
+  been capped at 100.
+- Changed the inventory flag IF_CHEATNOTWEAPON to the weapon flag
+  WIF_CHEATNOTWEAPON.
+
+December 11, 2005
+- Started integrating changes from 96x into 2.0.99.
+
+December 10, 2005
+- Fixed: GetFinaleText() did not null-terminate the string it retrieved.
+- Fixed: When changing levels, sky1pos and sky2pos were not reset to 0.
+- Removed the check for 26,26 at offset 33 in SPC files because somebody found
+  a file that had them as 0,0 instead, and some players played it fine.
+- Fixed: Before resorting to "Person", the dialogue code should use the actor's
+  tag name as a default name.
+- Increased the Entity's alpha value to 50% to make it more visible.
+- Fixed: F_StartSlideshow() needs to reset any blending.
+- When a Macil speech ends, the level's original music is now restored.
+- Fixed: The music for Strife's slideshows is D_DARK and not D_SLIDE. Go figure.
+
+December 4, 2005
+- Removed the ancient and unused Fixed(Mul|Div)_(ASM|C) functions.
+- Discovered the GCC outputs nice code for MulScale and friends, so I removed
+  the assembly for those routines in gccinlines.h. Alas, the same cannot be said
+  of DivScale's variants.
+- Removed the assembly code for BigShort and BigLong and replaced it with
+  compiler intrinsics provided by VC++.
+
+December 1, 2005
+- Backported miscellaneous sc_man.cpp fixes from 2.1.0.
+- Fixed: P_BobWeapon() checked flags instead of WeaponFlags for WIF_DONTBOB.
+- R_ProjectSprite() now checks for NULL things passed to it.
+- Fixed: The game crashed if a slope thing of type 9500 or 9501 was placed
+  directly on its target line. Now you get a warning in the console instead.
+- Returned Berserk's behavior to giving you 100 health instead of 100% health.
+- Changed: When no screenshot_dir is specified, the game now tries to save
+  screenshots to the program directory instead of the current directory. If
+  you really want screenshots to be saved to the current directory, you can
+  do so by setting screenshot_dir to "."
+- Fixed: StringFormat::VWorker cleared the zero flag for numbers. (I know I
+  tested this, so I'm not sure when it went wrong.)
+- Fixed: The game did not check if actors had pain states before putting them
+  in their pain states.
+- Fixed: The shazam cheat could not deactivate the Tome of Power, nor did it
+  display any text informing you of its action.
+- Added additional decals from Graf Zahl's DECALDEF.
+- Updated the obituaries in english-us.txt for Heretic to reflect the published
+  names of various Heretic monsters.
+- Fixed: There is no reason why the Heretic and Hexen status bars should clamp
+  the displayed health to a maximum of 100.
+- Fixed: P_PlayerInSpecialSector() duplicated the damage done by
+  P_PlayerOnSpecialFlat().
+- Fixed: The actor serializer was off by one when checking the number of
+  conversation nodes in a script.
+- Fixed: In Strife dialogues, yes texts are printed even when it jumps
+  immediately to another dialogue node. I think this is bad design, and the
+  yes text should be part of the normal dialogue, but the person in the
+  east room of MAP27 abuses this, so I need to support it too. This also means
+  the notify text is no longer hidden when the menu is up. (Maybe they
+  mistakenly made it jump, and you were really supposed to try talking to him
+  again when he tells you the master doesn't like visitors.)
+- Fixed: Anybody in Strife who does not have their name provided in their
+  dialogue script should use the default name "Person".
+- Fixed: P_RecursiveSound() did not consider closed split doors as closed.
+- Fixed: MummyFX1 and Whirlwind should have the MF2_SEEKERMISSILE flag set.
+- Fixed: A_VileChase() did not clear the MF3_CRASHED flag.
+- Fixed: P_SpawnPlayer() should always attach the StatusBar if the
+  consoleplayer is spawning.
+- Fixed: HateTarget did not take damage due to its lack of a death state.
+- Fixed: CheckInventory(), TakeInventory(), and GiveInventory need NULL type
+  checks.
+- Fixed: SC_GetString() did not understand escaped quote characters in strings.
+- Fixed: There were synchronization issues while drawing the console. Calls to
+  DrawTexture() can trigger input events to be processed, which can cause the
+  contents of the console to change WHILE THE CONSOLE IS BEING DRAWN. So now
+  any changes that would alter the contents of the console text buffer are
+  deferred until after the buffer is drawn, and a copy of the command line is
+  drawn instead of the real command line.
+
+November 22, 2005
+- Fixed: Dssswtchx and dspistol are obviously wrong choices for Strife menu
+  sounds. I don't think it uses anything for those sounds, but I picked analogs
+  for them anyway.
+- Fixed: Merchants ignored attacks from "silent" weapons.
+- Fixed: Strife humans did not play their "yeargh!" sound for their zap deaths.
+- Added a new Travelled() method for inventory items. This is called each time
+  an item travels to a new map and gives it a chance to perform any needed
+  reinitialization. Specficially, PowerTargeter needs it to set the player's
+  psprites again.
+- Fixed: Dropping coins should do so in increments of 50 if you have enough, not
+  increments of 1.
+- Added IF_UNDROPPABLE to HealthTraining and GunTraining. Because HealthTraining
+  also gives GunTraining when picked up, you could cheat by dropping the
+  HealthTraining item and picking it up to get as many GunTraining upgrades as
+  you wanted. GunTraining doesn't really need to be undroppable; the flag is just
+  there for it for the sake of symmetry.
+- Fixed: It looks like just about everything in Strife should have MF2_FLOORCLIP
+  set. Strife probably applied floorclip to everything without MF_NOGRAVITY set.
+- Fixed: The perfectly vertical missile movement fix was backwards with regards
+  to damage values.
+- Fixed: AddCommandString() scanned past terminating '\0's in unclosed
+  strings while searching for semicolons that break commands. Thus, if the
+  previous command added had a semicolon in just the right place, it could
+  try to add it again.
+- Fixed: The fly cheat did not check to make sure you had a body.
+
+November 18, 2005
+- Fixed: You could create a chain reaction where merchants would continually
+  enter their pain state because there was a delay between the time when they
+  alerted and the time they alerted others.
+- Fixed: If the Inquisitor died while flying, it would continue to play the
+  flying sound.
+- Fixed: The LEGO cheat didn't check if the Sigil was successfully added and
+  would set the player to the NULL weapon if it wasn't (which happens with
+  the shareware).
+- Fixed: Macil was alerted by water splashing.
+- Reworded some of the compatibility options menu items so they fit on
+  the screen when playing Strife.
+- Fixed: The Oracle's Death checked the wrong quest item to determine if
+  you had already killed Macil.
+
+November 17, 2005
+- Fixed: Various Strife actors had MF_COUNTKILL that didn't need it:
+  Beggar, KneelingGuy, Macil1, RatBuddy, and AcolyteToBe.
+- Fixed: PowerMask and PowerShadow both need the IF_HUBPOWER flag.
+- Fixed: The Strife quest log should be initialized with the text "Find
+  help".
+
+November 14, 2005
+- Fixed: ClientObituary() crashed if the killing player didn't have a
+  weapon.
+- Fixed: The Touch functions assumed the toucher was a valid player and
+  crashed if it wasn't.
+- Fixed: APlayerPawn::Die() assumed the actor was always associated with
+  a player and crashed if it wasn't and you had weapon dropping turned on.
+- Fixed: There were two pfile variables defined in R_InitTextures().
+
+November 13, 2005
+- Fixed: The user-configurable BOOM startup strings were always printed,
+  even if they were empty.
+
+November 8, 2005
+- Fixed: APowerStrength::GetBlend()'s equation did not match Doom's.
+- Fixed: If you have weapon sprites in a wad and try to use a frame from
+  that sprite that does not exist, the game accesses might crash. Fixing
+  this involves two things: Make the range checks in R_DrawPSprite()
+  unconditional, so they exist in both debug and release builds. Also add
+  a check for the Null texture to catch "holes" in the available frames.
+- Fixed: Setmodeneeded is always true before starting a game, because it
+  only gets cleared when the StatusBar is around. The most obvious
+  manifestation of this problem is that you cannot move left and right
+  in the video modes menu before starting a game.
+- Fixed: The "give all" cheat did not give a backpack, and the non-console
+  equivalents always gave you a backpack, even if you weren't playing Doom.
+- Fixed: The "give armor" cheat gave you armor with a SavePercent of .5 in
+  Heretic. This would be correct for the others games, but not for Heretic,
+  where .5 is what the lesser armor provides.
+
+November 7, 2005
+- New: Games saved for different PWADs but the same IWAD now show up in
+  orange on the save/load menu.
+- Fixed: R_RenderViewToCanvas() did nothing if viewactive was false. Thus,
+  savegame screenshots would be garbage if you saved while looking at the
+  automap.
+- To avoid potential conflicts with the Windows headers, the LONG and SHORT
+  routines were renamed to LittleLong and LittleShort. BELONG and BESHORT
+  were also renamed to BigLong and BigShort to match.
+- Fixed: S_ChangeMusic() had a cast from 'const char *' to 'char *' that was
+  missed by VC++ 7.1 and GCC, but not the latest VC++ 2005 beta.
+- Fixed: Although bit 27 of the actor's flag is now used for something
+  different than in Doom, it's okay to specify it by number in a Dehacked
+  patch, because it's used to set the color translation. When the translation
+  is set, it will be 0'ed then.
+- Fixed: FActorInfo::ApplyDefaults() should initialize datastr to NULL.
+- Fixed: TArray::Delete's parameter should be unsigned.
+- Fixed: The fix for rotating polyobjects broke polyobject doors.
+- Fixed: Using the IDBEHOLDS cheat did not give you full health.
+- Backported the fix for scrolling Heretic/Hexen/Strife specials from 2.1.0.
+- Increased KneelingGuy's height to 17 so that you cannot step on top of the
+  projector without jumping.
+- Added a confirmation screen for the menu choices that reset your options.
+- Added a new automap menu underneath the display options menu. Moved all the
+  automap options into it and added a few new ones.
+
 November 2, 2005
 - Fixed: WIF_NOAUTOFIRE did not actually do anything.
 - Added zloba's save/load console commands.

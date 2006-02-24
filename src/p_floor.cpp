@@ -355,8 +355,6 @@ manual_floor:
 		floor->m_ResetCount = 0;				// [RH]
 		floor->m_OrgDist = sec->floorplane.d;	// [RH]
 
-		floor->StartFloorSound ();
-
 		switch (floortype)
 		{
 		case DFloor::floorLowerToHighest:
@@ -518,10 +516,27 @@ manual_floor:
 		// Do not interpolate instant movement floors.
 		// Note for ZDoomGL: Check to make sure that you update the sector
 		// after the floor moves, because it hasn't actually moved yet.
-		if (floor->m_Speed >= abs(sec->floorplane.d - floor->m_FloorDestDist))
+		bool silent = false;
+
+		if ((floor->m_Direction>0 && floor->m_FloorDestDist>sec->floorplane.d) ||	// moving up but going down
+			(floor->m_Direction<0 && floor->m_FloorDestDist<sec->floorplane.d) ||	// moving down but going up
+			(floor->m_Speed >= abs(sec->floorplane.d - floor->m_FloorDestDist)))	// moving in one step
 		{
 			stopinterpolation (INTERP_SectorFloor, sec);
+			// [Graf Zahl]
+			// Don't make sounds for instant movement hacks but make an exception for
+			// switches that activate their own back side. 
+			// I'll leave the decision about this to somebody else. In many maps 
+			// it helps but there are some where this omits sounds that should be there.
+			#ifdef SILENT_INSTANT_FLOORS
+			if (floortype != DFloor::floorRaiseInstant && floortype != DFloor::floorLowerInstant) 
+			{
+				if (!line || GET_SPAC(line->flags) != SPAC_USE || line->backsector!=sec)
+					silent = true;
+			}
+			#endif
 		}
+		if (!silent) floor->StartFloorSound ();
 
 		if (change & 3)
 		{
