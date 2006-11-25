@@ -1,3 +1,9 @@
+November 24, 2006
+- Fixed: When P_SpawnPlayer() calls DObject::PointerSubstitution() to
+  redirect player pointers, it affects the bodyque too. That meant that in
+  multiplayer games, once the bodyque filled up, anybody was in danger of
+  being rudely destroyed the next time somebody respawned.
+
 November 22, 2006
 - Fixed: DIRECT3DCREATE9FUNC needs WINAPI added to its prototype so that it
   works properly in release build, which defaults to __fastcall.
