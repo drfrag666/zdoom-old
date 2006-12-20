@@ -1,3 +1,7 @@
+December 19, 2006
+- Fixed: D3DFB::Reset() also needs to restore the texture border color,
+  otherwise it gets reset to black and unused. 
+
 November 30, 2006
 - Removed all the "fast" and unused code from FColorMatcher. Today's
   computers are fast enough that the difference isn't even noticeable
