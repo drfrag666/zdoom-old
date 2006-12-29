@@ -1,3 +1,6 @@
+December 28, 2006
+- Fixed: The VC++ project was not set up to redefine RM using del in
+
 December 19, 2006
 - Fixed: D3DFB::Reset() also needs to restore the texture border color,
   otherwise it gets reset to black and unused. 

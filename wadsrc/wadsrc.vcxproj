@@ -66,9 +66,9 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>Debug\</OutDir>
     <IntDir>Debug\</IntDir>
-    <NMakeBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp NOLOGO=/nologo andcopy</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad NOLOGO=/nologo XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp nrebuild</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>del wadmake zdoom.pk3</NMakeCleanCommandLine>
+    <NMakeBuildCommandLine>nmake /nologo RM=&quot;del /f /q&quot; SLASH=\ andcopy</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake /nologo RM=&quot;del /f /q&quot; SLASH=\ nrebuild</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>nmake /nologo RM=&quot;del /f /q&quot; SLASH=\ clean</NMakeCleanCommandLine>
     <NMakeOutput>zdoom.pk3</NMakeOutput>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -82,9 +82,9 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <OutDir>Release\</OutDir>
     <IntDir>Release\</IntDir>
-    <NMakeBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp NOLOGO=/nologo</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad NOLOGO=/nologo XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp nrebuild</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>del wadmake zdoom.pk3</NMakeCleanCommandLine>
+    <NMakeBuildCommandLine>nmake /nologo RM=&quot;del /f /q&quot; SLASH=\ andcopy</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake /nologo RM=&quot;del /f /q&quot; SLASH=\ nrebuild</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>nmake /nologo RM=&quot;del /f /q&quot; SLASH=\ clean</NMakeCleanCommandLine>
     <NMakeOutput>zdoom.pk3</NMakeOutput>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
