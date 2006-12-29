@@ -131,7 +131,7 @@ value_t OnOff[2] = {
 
 menu_t  *CurrentMenu;
 int		CurrentItem;
-static char	   *OldMessage;
+static const char	*OldMessage;
 static itemtype OldType;
 
 int flagsvar;
@@ -147,7 +147,7 @@ enum
  * Confirm Menu - Used by safemore
  *
  *=======================================*/
-static void ActivateConfirm (char *text, void (*func)());
+static void ActivateConfirm (const char *text, void (*func)());
 static void ConfirmIsAGo ();
 
 static menuitem_t ConfirmItems[] = {
@@ -676,7 +676,7 @@ menu_t MapColorsMenu =
  * Color Picker Sub-menu
  *
  *=======================================*/
-static void StartColorPickerMenu (char *colorname, FColorCVar *cvar);
+static void StartColorPickerMenu (const char *colorname, FColorCVar *cvar);
 static void ColorPickerReset ();
 static int CurrColorIndex;
 static int SelColorIndex;
@@ -1153,24 +1153,7 @@ static menu_t AdvSoundMenu =
 	AdvSoundItems,
 };
 
-void M_FreeValues (value_t **values, int num)
-{
-	int i;
-
-	if (*values)
-	{
-		for (i = 0; i < num; i++)
-		{
-			if ((*values)[i].name)
-				free ((*values)[i].name);
-		}
-
-		free (*values);
-		*values = NULL;
-	}
-}
-
-static void ActivateConfirm (char *text, void (*func)())
+static void ActivateConfirm (const char *text, void (*func)())
 {
 	ConfirmItems[0].label = text;
 	ConfirmItems[0].e.mfunc = func;
@@ -1638,7 +1621,7 @@ void M_OptDrawer ()
 			case bitflag:
 			{
 				value_t *value;
-				char *str;
+				const char *str;
 
 				if (item->b.min)
 					value = NoYes;
@@ -2463,7 +2446,7 @@ static void ActivateColorChoice ()
 	ColorPickerItems[0].a.colorcvar->SetGenericRep (val, CVAR_Int);
 }
 
-static void StartColorPickerMenu (char *colorname, FColorCVar *cvar)
+static void StartColorPickerMenu (const char *colorname, FColorCVar *cvar)
 {
 	ColorPickerMenu.PreDraw = ColorPickerDrawer;
 	ColorPickerMenu.EscapeHandler = ActivateColorChoice;
@@ -2691,7 +2674,8 @@ CCMD (menu_mididevice)
 
 static void MakeSoundChanges (void)
 {
-	AddCommandString ("snd_reset");
+	static char snd_reset[] = "snd_reset";
+	AddCommandString (snd_reset);
 }
 
 static void VideoOptions (void)
@@ -2838,7 +2822,7 @@ static void SetModesMenu (int w, int h, int bits)
 	if (testingmode <= 1)
 	{
 		if (ModesItems[VM_ENTERLINE].label != VMEnterText)
-			free (ModesItems[VM_ENTERLINE].label);
+			free (const_cast<char *>(ModesItems[VM_ENTERLINE].label));
 		ModesItems[VM_ENTERLINE].label = VMEnterText;
 		ModesItems[VM_TESTLINE].label = VMTestText;
 	}
