@@ -1,3 +1,6 @@
+January 7, 2007 (Changes by Graf Zahl)
+- Fixed: Sorting of files in Zips was broken.
+
 December 28, 2006
 - Fixed: The SDL input code must convert the event.data1 to uppercase.
 - Added more resolution options when playing windowed under SDL.
