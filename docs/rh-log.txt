@@ -1,3 +1,9 @@
+January 22, 2007
+- Changed the vertheight and rounding-error-checking code in
+  DCanvas::DrawTexture() to calculate off the actual bottom of the image
+  instead of the height, improving precision. Now the scaled status bar is
+  flush with the bottom of the screen at 1280x1024, for instance.
+
 January 18, 2007
 - Added D3DCREATE_FPU_PRESERVE to the IDirect3D9::CreateDevice() call.
   Normally Direct3D sets the FPU to single precision. We don't want that,
