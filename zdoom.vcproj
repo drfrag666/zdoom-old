@@ -4801,7 +4801,7 @@
 					<Tool
 						Name="VCCustomBuildTool"
 						Description="Assembling $(InputPath)..."
-						CommandLine="nasmw -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						CommandLine="nasmw -g -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
 						Outputs="$(IntDir)/$(InputName).obj"
 					/>
 				</FileConfiguration>
@@ -4845,7 +4845,7 @@
 					<Tool
 						Name="VCCustomBuildTool"
 						Description="Assembling $(InputPath)..."
-						CommandLine="nasmw -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						CommandLine="nasmw -g -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
 						Outputs="$(IntDir)/$(InputName).obj"
 					/>
 				</FileConfiguration>
@@ -4889,7 +4889,7 @@
 					<Tool
 						Name="VCCustomBuildTool"
 						Description="Assembling $(InputPath)..."
-						CommandLine="nasmw -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						CommandLine="nasmw -g -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
 						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
@@ -4933,7 +4933,7 @@
 					<Tool
 						Name="VCCustomBuildTool"
 						Description="Assembling $(InputPath)..."
-						CommandLine="nasmw -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						CommandLine="nasmw -g -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
 						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
@@ -4977,7 +4977,7 @@
 					<Tool
 						Name="VCCustomBuildTool"
 						Description="Assembling $(InputPath)..."
-						CommandLine="nasmw -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						CommandLine="nasmw -g -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
 						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
@@ -5399,7 +5399,7 @@
 					<Tool
 						Name="VCCustomBuildTool"
 						Description="Assembling $(InputPath)..."
-						CommandLine="nasmw -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
+						CommandLine="nasmw -g -o &quot;$(IntDir)\$(InputName).obj&quot; -d OBJ_FORMAT_win32 -f win32 &quot;$(InputPath)&quot;&#x0D;&#x0A;"
 						Outputs="$(IntDir)\$(InputName).obj"
 					/>
 				</FileConfiguration>
