@@ -230,6 +230,7 @@ public:
 	void Blank ();
 	bool PaintToWindow ();
 	void SetVSync (bool vsync);
+	void SetBlendingRect (int x1, int y1, int x2, int y2);
 	HRESULT GetHR ();
 
 private:
@@ -241,6 +242,7 @@ private:
 	void DoOffByOneCheck();
 	void UploadPalette();
 	void FillPresentParameters (D3DPRESENT_PARAMETERS *pp, bool fullscreen, bool vsync);
+	bool UploadVertices();
 	bool Reset();
 
 	BYTE GammaTable[256];
@@ -258,6 +260,8 @@ private:
 	int FBWidth, FBHeight;
 	int OffByOneAt;
 	bool VSync;
+	RECT BlendingRect;
+	bool UseBlendingRect;
 
 	IDirect3DDevice9 *D3DDevice;
 	IDirect3DVertexBuffer9 *VertexBuffer;
