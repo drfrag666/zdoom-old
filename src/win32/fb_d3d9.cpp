@@ -199,6 +199,7 @@ D3DFB::D3DFB (int width, int height, bool fullscreen)
 	BlendingRect.right = FBWidth;
 	BlendingRect.bottom = FBHeight;
 	UseBlendingRect = false;
+	PixelDoubling = 0;
 
 	Gamma = 1.0;
 	memset (FlashConstants, 0, sizeof(FlashConstants));
@@ -230,6 +231,7 @@ D3DFB::D3DFB (int width, int height, bool fullscreen)
 			if (mode->width == Width && mode->height == Height)
 			{
 				TrueHeight = mode->realheight;
+				PixelDoubling = mode->doubling;
 				break;
 			}
 		}
@@ -273,8 +275,8 @@ void D3DFB::FillPresentParameters (D3DPRESENT_PARAMETERS *pp, bool fullscreen, b
 	memset (pp, 0, sizeof(*pp));
 	pp->Windowed = !fullscreen;
 	pp->SwapEffect = D3DSWAPEFFECT_DISCARD;
-	pp->BackBufferWidth = Width;
-	pp->BackBufferHeight = TrueHeight;
+	pp->BackBufferWidth = Width << PixelDoubling;
+	pp->BackBufferHeight = TrueHeight << PixelDoubling;
 	pp->BackBufferFormat = fullscreen ? D3DFMT_X8R8G8B8 : D3DFMT_UNKNOWN;
 	pp->hDeviceWindow = Window;
 	pp->PresentationInterval = vsync ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
@@ -638,8 +640,8 @@ bool D3DFB::CreateVertexes ()
 bool D3DFB::UploadVertices()
 {
 	float top = (TrueHeight - Height) * 0.5f - 0.5f;
-	float right = float(Width) - 0.5f;
-	float bot = float(Height) + top;
+	float right = float(Width << PixelDoubling) - 0.5f;
+	float bot = float(Height << PixelDoubling) + top;
 	float texright = float(Width) / float(FBWidth);
 	float texbot = float(Height) / float(FBHeight);
 	void *pverts;
@@ -670,10 +672,10 @@ bool D3DFB::UploadVertices()
 	// flash. These include the corners of the view area so I can be
 	// sure the texture interpolation is consistant. (Well, actually,
 	// since it's a 1-to-1 pixel mapping, it shouldn't matter.)
-	float mxl = float(BlendingRect.left) - 0.5f;
-	float mxr = float(BlendingRect.right) - 0.5f;
-	float myt = float(BlendingRect.top) + top;
-	float myb = float(BlendingRect.bottom) + top;
+	float mxl = float((BlendingRect.left)<< PixelDoubling) - 0.5f;
+	float mxr = float((BlendingRect.right)<< PixelDoubling) - 0.5f;
+	float myt = float((BlendingRect.top)<< PixelDoubling) + top;
+	float myb = float((BlendingRect.bottom)<< PixelDoubling) + top;
 	float tmxl = float(BlendingRect.left) / float(Width) * texright;
 	float tmxr = float(BlendingRect.right) / float(Width) * texright;
 	float tmyt = float(BlendingRect.top) / float(Height) * texbot;
