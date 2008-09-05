@@ -249,6 +249,7 @@ void Win32Video::InitDDraw ()
 		AddMode (320, 200, 8, 200, 0);
 		AddMode (320, 240, 8, 240, 0);
 	}
+	AddLowResModes ();
 	AddLetterboxModes ();
 }
 
@@ -344,7 +345,7 @@ void Win32Video::AddLowResModes()
 	{
 		nextmode = mode->next;
 		if (mode->realheight == mode->height &&
-			mode->doubling == 0&&
+			mode->doubling == 0 &&
 			mode->height >= 200*2 &&
 			mode->height <= 480*2 &&
 			mode->width >= 320*2 &&
@@ -357,7 +358,7 @@ void Win32Video::AddLowResModes()
 	{
 		nextmode = mode->next;
 		if (mode->realheight == mode->height &&
-			mode->doubling == 0&&
+			mode->doubling == 0 &&
 			mode->height >= 200*4 &&
 			mode->height <= 480*4 &&
 			mode->width >= 320*4 &&

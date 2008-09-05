@@ -101,6 +101,7 @@ class Win32Video : public IVideo
 	void AddD3DModes (D3DFORMAT format);
 	void AddLowResModes ();
 	void AddLetterboxModes ();
+	void ScaleModes (int doubling);
 
 	friend class DDrawFB;
 	friend class D3DFB;
@@ -185,13 +186,13 @@ private:
 	LPDIRECTDRAWSURFACE LockingSurf;
 	LPDIRECTDRAWCLIPPER Clipper;
 	HPALETTE GDIPalette;
-	BYTE *ClipRegion;
 	DWORD ClipSize;
 	PalEntry Flash;
 	int FlashAmount;
 	int BufferCount;
 	int BufferPitch;
 	int TrueHeight;
+	int PixelDoubling;
 	float Gamma;
 
 	bool NeedGammaUpdate;
