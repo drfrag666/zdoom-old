@@ -3,7 +3,7 @@
 ** This file contains the tails of lists stored in special data segments
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -46,8 +46,11 @@ void *CRegTail = 0;
 #pragma data_seg(".greg$z")
 void *GRegTail = 0;
 
-#pragma data_seg(".sreg$z")
-void *SRegTail = 0;
+#pragma data_seg(".mreg$z")
+void *MRegTail = 0;
+
+#pragma data_seg(".yreg$z")
+void *YRegTail = 0;
 
 #pragma data_seg()
 
@@ -55,25 +58,15 @@ void *SRegTail = 0;
 
 #elif defined(__GNUC__)
 
-#ifndef _WIN32
-void *ARegTail __attribute__((section("areg"))) = 0;
-void *CRegTail __attribute__((section("creg"))) = 0;
-void *GRegTail __attribute__((section("greg"))) = 0;
-void *SRegTail __attribute__((section("sreg"))) = 0;
+#include "doomtype.h"
+
+void *ARegTail __attribute__((section(SECTION_AREG))) = 0;
+void *CRegTail __attribute__((section(SECTION_CREG))) = 0;
+void *GRegTail __attribute__((section(SECTION_GREG))) = 0;
+void *MRegTail __attribute__((section(SECTION_MREG))) = 0;
+void *YRegTail __attribute__((section(SECTION_YREG))) = 0;
+
 #else
-
-// I can't find any way to specify the order to link files with
-// Dev C++, so when compiling with GCC under WIN32, I inspect
-// the executable instead of letting the linker do all the work for
-// me.
-
-void **ARegTail;
-void **CRegTail;
-void **GRegTail;
-void **SRegTail;
-#endif
-
-#elif
 
 #error Please fix autozend.cpp for your compiler
 

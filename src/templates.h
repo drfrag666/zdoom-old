@@ -3,7 +3,7 @@
 ** Some useful template functions
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -150,6 +150,10 @@ IndexType BinarySearchFlexible (IndexType max, const KeyType key, IndexType noIn
 // Returns the minimum of a and b.
 //==========================================================================
 
+#ifdef MIN
+#undef MIN
+#endif
+
 template<class T>
 inline
 const T MIN (const T a, const T b)
@@ -163,6 +167,10 @@ const T MIN (const T a, const T b)
 //
 // Returns the maximum of a and b.
 //==========================================================================
+
+#ifdef MAX
+#undef MAX
+#endif
 
 template<class T>
 inline
@@ -187,14 +195,14 @@ T clamp (const T in, const T min, const T max)
 
 //==========================================================================
 //
-// swap
+// swapvalues
 //
 // Swaps the values of a and b.
 //==========================================================================
 
 template<class T>
 inline
-void swap (T &a, T &b)
+void swapvalues (T &a, T &b)
 {
 	T temp = a; a = b; b = temp;
 }

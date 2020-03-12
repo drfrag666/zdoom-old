@@ -3,7 +3,7 @@
 ** Somewhat OS-independant interface to the screen, mouse, keyboard, and stick
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2001 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,7 +32,9 @@
 **
 */
 
-#include <SDL/SDL.h>
+#include <SDL.h>
+#include <signal.h>
+#include <time.h>
 
 #include "hardware.h"
 #include "i_video.h"
@@ -42,6 +44,10 @@
 #include "c_dispatch.h"
 #include "sdlvideo.h"
 #include "v_text.h"
+#include "doomstat.h"
+#include "m_argv.h"
+#include "r_renderer.h"
+#include "r_swrenderer.h"
 
 EXTERN_CVAR (Bool, ticker)
 EXTERN_CVAR (Bool, fullscreen)
@@ -49,38 +55,53 @@ EXTERN_CVAR (Float, vid_winscale)
 
 IVideo *Video;
 
-void STACK_ARGS I_ShutdownHardware ()
+void I_ShutdownGraphics ()
 {
 	if (screen)
-		delete screen, screen = NULL;
+	{
+		DFrameBuffer *s = screen;
+		screen = NULL;
+		s->ObjectFlags |= OF_YesReallyDelete;
+		delete s;
+	}
 	if (Video)
 		delete Video, Video = NULL;
 }
 
-void I_InitHardware ()
+void I_InitGraphics ()
 {
 	UCVarValue val;
 
-	val.Bool = !!Args.CheckParm ("-devparm");
+	val.Bool = !!Args->CheckParm ("-devparm");
 	ticker.SetGenericRepDefault (val, CVAR_Bool);
 
 	Video = new SDLVideo (0);
 	if (Video == NULL)
 		I_FatalError ("Failed to initialize display");
 
-	atterm (I_ShutdownHardware);
+	atterm (I_ShutdownGraphics);
 
 	Video->SetWindowedScale (vid_winscale);
 }
 
+static void I_DeleteRenderer()
+{
+	if (Renderer != NULL) delete Renderer;
+}
+
+void I_CreateRenderer()
+{
+	if (Renderer == NULL)
+	{
+		Renderer = new FSoftwareRenderer;
+		atterm(I_DeleteRenderer);
+	}
+}
+
+
 /** Remaining code is common to Win32 and Linux **/
 
 // VIDEO WRAPPERS ---------------------------------------------------------
-
-EDisplayType I_DisplayType ()
-{
-	return Video->GetDisplayType ();
-}
 
 DFrameBuffer *I_SetMode (int &width, int &height, DFrameBuffer *old)
 {
@@ -112,8 +133,7 @@ bool I_CheckResolution (int width, int height, int bits)
 {
 	int twidth, theight;
 
-	Video->FullscreenChanged (screen ? screen->IsFullscreen() : fullscreen);
-	Video->StartModeIterator (bits);
+	Video->StartModeIterator (bits, screen ? screen->IsFullscreen() : fullscreen);
 	while (Video->NextMode (&twidth, &theight, NULL))
 	{
 		if (width == twidth && height == theight)
@@ -129,10 +149,9 @@ void I_ClosestResolution (int *width, int *height, int bits)
 	int iteration;
 	DWORD closest = 4294967295u;
 
-	Video->FullscreenChanged (screen ? screen->IsFullscreen() : fullscreen);
 	for (iteration = 0; iteration < 2; iteration++)
 	{
-		Video->StartModeIterator (bits);
+		Video->StartModeIterator (bits, screen ? screen->IsFullscreen() : fullscreen);
 		while (Video->NextMode (&twidth, &theight, NULL))
 		{
 			if (twidth == *width && theight == *height)
@@ -158,34 +177,107 @@ void I_ClosestResolution (int *width, int *height, int bits)
 			return;
 		}
 	}
-}	
-
-void I_StartModeIterator (int bits)
-{
-	Video->StartModeIterator (bits);
 }
 
-bool I_NextMode (int *width, int *height, bool *letterbox)
+//==========================================================================
+//
+// SetFPSLimit
+//
+// Initializes an event timer to fire at a rate of <limit>/sec. The video
+// update will wait for this timer to trigger before updating.
+//
+// Pass 0 as the limit for unlimited.
+// Pass a negative value for the limit to use the value of vid_maxfps.
+//
+//==========================================================================
+
+EXTERN_CVAR(Int, vid_maxfps);
+EXTERN_CVAR(Bool, cl_capfps);
+
+#ifndef __APPLE__
+Semaphore FPSLimitSemaphore;
+
+static void FPSLimitNotify(sigval val)
 {
-	return Video->NextMode (width, height, letterbox);
+	SEMAPHORE_SIGNAL(FPSLimitSemaphore)
 }
 
-DCanvas *I_NewStaticCanvas (int width, int height)
+void I_SetFPSLimit(int limit)
 {
-	return new DSimpleCanvas (width, height);
+	static sigevent FPSLimitEvent;
+	static timer_t FPSLimitTimer;
+	static bool FPSLimitTimerEnabled = false;
+	static bool EventSetup = false;
+	if(!EventSetup)
+	{
+		EventSetup = true;
+		FPSLimitEvent.sigev_notify = SIGEV_THREAD;
+		FPSLimitEvent.sigev_signo = 0;
+		FPSLimitEvent.sigev_value.sival_int = 0;
+		FPSLimitEvent.sigev_notify_function = FPSLimitNotify;
+		FPSLimitEvent.sigev_notify_attributes = NULL;
+
+		SEMAPHORE_INIT(FPSLimitSemaphore, 0, 0)
+	}
+
+	if (limit < 0)
+	{
+		limit = vid_maxfps;
+	}
+	// Kill any leftover timer.
+	if (FPSLimitTimerEnabled)
+	{
+		timer_delete(FPSLimitTimer);
+		FPSLimitTimerEnabled = false;
+	}
+	if (limit == 0)
+	{ // no limit
+		DPrintf("FPS timer disabled\n");
+	}
+	else
+	{
+		FPSLimitTimerEnabled = true;
+		if(timer_create(CLOCK_REALTIME, &FPSLimitEvent, &FPSLimitTimer) == -1)
+			Printf("Failed to create FPS limitter event\n");
+		itimerspec period = { {0, 0}, {0, 0} };
+		period.it_value.tv_nsec = period.it_interval.tv_nsec = 1000000000 / limit;
+		if(timer_settime(FPSLimitTimer, 0, &period, NULL) == -1)
+			Printf("Failed to set FPS limitter timer\n");
+		DPrintf("FPS timer set to %u ms\n", (unsigned int) period.it_interval.tv_nsec / 1000000);
+	}
+}
+#else
+// So Apple doesn't support POSIX timers and I can't find a good substitute short of
+// having Objective-C Cocoa events or something like that.
+void I_SetFPSLimit(int limit)
+{
+}
+#endif
+
+CUSTOM_CVAR (Int, vid_maxfps, 200, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (vid_maxfps < TICRATE && vid_maxfps != 0)
+	{
+		vid_maxfps = TICRATE;
+	}
+	else if (vid_maxfps > 1000)
+	{
+		vid_maxfps = 1000;
+	}
+	else if (cl_capfps == 0)
+	{
+		I_SetFPSLimit(vid_maxfps);
+	}
 }
 
 extern int NewWidth, NewHeight, NewBits, DisplayBits;
 
-CUSTOM_CVAR (Bool, fullscreen, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CUSTOM_CVAR (Bool, fullscreen, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 {
-	if (Video->FullscreenChanged (self))
-	{
-		NewWidth = screen->GetWidth();
-		NewHeight = screen->GetHeight();
-		NewBits = DisplayBits;
-		setmodeneeded = true;
-	}
+	NewWidth = screen->GetWidth();
+	NewHeight = screen->GetHeight();
+	NewBits = DisplayBits;
+	setmodeneeded = true;
 }
 
 CUSTOM_CVAR (Float, vid_winscale, 1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
@@ -210,9 +302,13 @@ CCMD (vid_listmodes)
 	int width, height, bits;
 	bool letterbox;
 
+	if (Video == NULL)
+	{
+		return;
+	}
 	for (bits = 1; bits <= 32; bits++)
 	{
-		Video->StartModeIterator (bits);
+		Video->StartModeIterator (bits, screen->IsFullscreen());
 		while (Video->NextMode (&width, &height, &letterbox))
 		{
 			bool thisMode = (width == DisplayWidth && height == DisplayHeight && bits == DisplayBits);

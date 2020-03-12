@@ -26,6 +26,11 @@
 #define __P_SPEC__
 
 #include "dsectoreffect.h"
+#include "doomdata.h"
+#include "r_state.h"
+
+class FScanner;
+struct level_info_t;
 
 //jff 2/23/98 identify the special classes that can share sectors
 
@@ -41,6 +46,7 @@ typedef enum
 class DScroller : public DThinker
 {
 	DECLARE_CLASS (DScroller, DThinker)
+	HAS_OBJECT_POINTERS
 public:
 	enum EScrollType
 	{
@@ -50,10 +56,17 @@ public:
 		sc_carry,
 		sc_carry_ceiling,	// killough 4/11/98: carry objects hanging on ceilings
 	};
+	enum EScrollPos
+	{
+		scw_top=1,
+		scw_mid=2,
+		scw_bottom=4,
+		scw_all=7,
+	};
 	
-	DScroller (EScrollType type, fixed_t dx, fixed_t dy, int control, int affectee, int accel);
-	DScroller (fixed_t dx, fixed_t dy, const line_t *l, int control, int accel);
-	~DScroller ();
+	DScroller (EScrollType type, fixed_t dx, fixed_t dy, int control, int affectee, int accel, int scrollpos = scw_all);
+	DScroller (fixed_t dx, fixed_t dy, const line_t *l, int control, int accel, int scrollpos = scw_all);
+	void Destroy();
 
 	void Serialize (FArchive &arc);
 	void Tick ();
@@ -63,6 +76,7 @@ public:
 	void SetRate (fixed_t dx, fixed_t dy) { m_dx = dx; m_dy = dy; }
 	bool IsType (EScrollType type) const { return type == m_Type; }
 	int GetAffectee () const { return m_Affectee; }
+	int GetScrollParts() const { return m_Parts; }
 
 protected:
 	EScrollType m_Type;		// Type of scroll effect
@@ -72,6 +86,8 @@ protected:
 	fixed_t m_LastHeight;	// Last known height of control sector
 	fixed_t m_vdx, m_vdy;	// Accumulated velocity if accelerative
 	int m_Accel;			// Whether it's accelerative
+	int m_Parts;			// Which parts of a sidedef are being scrolled?
+	TObjPtr<DInterpolation> m_Interpolations[3];
 
 private:
 	DScroller ();
@@ -79,15 +95,7 @@ private:
 
 // Factor to scale scrolling effect into mobj-carrying properties = 3/32.
 // (This is so scrolling floors and objects on them can move at same speed.)
-enum { CARRYFACTOR = ((fixed_t)(FRACUNIT*.09375)) };
-
-inline FArchive &operator<< (FArchive &arc, DScroller::EScrollType &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DScroller::EScrollType)val;
-	return arc;
-}
+enum { CARRYFACTOR = (3*FRACUNIT >> 5) };
 
 // phares 3/20/98: added new model of Pushers for push/pull effects
 
@@ -107,13 +115,7 @@ public:
 	DPusher ();
 	DPusher (EPusher type, line_t *l, int magnitude, int angle, AActor *source, int affectee);
 	void Serialize (FArchive &arc);
-	int CheckForSectorMatch (EPusher type, int tag)
-	{
-		if (m_Type == type && sectors[m_Affectee].tag == tag)
-			return m_Affectee;
-		else
-			return -1;
-	}
+	int CheckForSectorMatch (EPusher type, int tag);
 	void ChangeValues (int magnitude, int angle)
 	{
 		angle_t ang = ((angle_t)(angle<<24)) >> ANGLETOFINESHIFT;
@@ -126,7 +128,7 @@ public:
 
 protected:
 	EPusher m_Type;
-	AActor *m_Source;		// Point source if point pusher
+	TObjPtr<AActor> m_Source;// Point source if point pusher
 	int m_Xmag;				// X Strength
 	int m_Ymag;				// Y Strength
 	int m_Magnitude;		// Vector strength for point pusher
@@ -135,29 +137,25 @@ protected:
 	int m_Y;				// Y of point source if point pusher
 	int m_Affectee;			// Number of affected sector
 
-	friend BOOL PIT_PushThing (AActor *thing);
+	friend bool PIT_PushThing (AActor *thing);
 };
 
-inline FArchive &operator<< (FArchive &arc, DPusher::EPusher &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DPusher::EPusher)val;
-	return arc;
-}
+bool PIT_PushThing (AActor *thing);
 
 // Define values for map objects
 #define MO_TELEPORTMAN			14
+
+// Flags for P_SectorDamage
+#define DAMAGE_PLAYERS				1
+#define DAMAGE_NONPLAYERS			2
+#define DAMAGE_IN_AIR				4
+#define DAMAGE_SUBCLASSES_PROTECT	8
 
 
 // [RH] If a deathmatch game, checks to see if noexit is enabled.
 //		If so, it kills the player and returns false. Otherwise,
 //		it returns true, and the player is allowed to live.
-bool	CheckIfExitIsGood (AActor *self);
-
-// at game start
-void	P_InitPicAnims (void);
-void	P_AddSimpleAnim (int picnum, int animcount, int animtype, int animspeed);
+bool	CheckIfExitIsGood (AActor *self, level_info_t *info);
 
 // at map load
 void	P_SpawnSpecials (void);
@@ -166,13 +164,15 @@ void	P_SpawnSpecials (void);
 void	P_UpdateSpecials (void);
 
 // when needed
-BOOL	P_ActivateLine (line_t *ld, AActor *mo, int side, int activationType);
-BOOL	P_TestActivateLine (line_t *ld, AActor *mo, int side, int activationType);
+bool	P_ActivateLine (line_t *ld, AActor *mo, int side, int activationType);
+bool	P_TestActivateLine (line_t *ld, AActor *mo, int side, int activationType);
 
-void	P_PlayerInSpecialSector (player_t *player);
+void 	P_PlayerInSpecialSector (player_t *player, sector_t * sector=NULL);
 void	P_PlayerOnSpecialFlat (player_t *player, int floorType);
-
+void	P_SectorDamage(int tag, int amount, FName type, const PClass *protectClass, int flags);
 void	P_SetSectorFriction (int tag, int amount, bool alterFlag);
+
+void P_GiveSecret(AActor *actor, bool printmessage, bool playsound);
 
 //
 // getSide()
@@ -182,7 +182,7 @@ void	P_SetSectorFriction (int tag, int amount, bool alterFlag);
 //
 inline side_t *getSide (int currentSector, int line, int side)
 {
-	return &sides[ (sectors[currentSector].lines[line])->sidenum[side] ];
+	return (sectors[currentSector].lines[line])->sidedef[side];
 }
 
 //
@@ -193,7 +193,7 @@ inline side_t *getSide (int currentSector, int line, int side)
 //
 inline sector_t *getSector (int currentSector, int line, int side)
 {
-	return sides[ (sectors[currentSector].lines[line])->sidenum[side] ].sector;
+	return (sectors[currentSector].lines[line])->sidedef[side]->sector;
 }
 
 
@@ -350,8 +350,8 @@ public:
 	void		Serialize (FArchive &arc);
 	void		Tick ();
 protected:
-	byte		m_BaseLevel;
-	byte		m_Phase;
+	BYTE		m_BaseLevel;
+	BYTE		m_Phase;
 private:
 	DPhased ();
 	DPhased (sector_t *sector, int baselevel);
@@ -384,10 +384,8 @@ void	EV_StartLightFading (int tag, int value, int tics);
 
 #define BUTTONTIME TICRATE		// 1 second, in ticks. 
 
-bool	P_ChangeSwitchTexture (side_t *side, int useAgain, byte special, bool *quest=NULL);
-
-void	P_InitSwitchList ();
-void	P_ProcessSwitchDef ();
+bool	P_ChangeSwitchTexture (side_t *side, int useAgain, BYTE special, bool *quest=NULL);
+bool	P_CheckSwitchRange(AActor *user, line_t *line, int sideno);
 
 //
 // P_PLATS
@@ -418,6 +416,7 @@ public:
 		platToggle,
 		platDownToNearestFloor,
 		platDownToLowestCeiling,
+		platRaiseAndStayLockout,
 	};
 
 	void Serialize (FArchive &arc);
@@ -435,7 +434,7 @@ protected:
 	int 		m_Count;
 	EPlatState	m_Status;
 	EPlatState	m_OldStatus;
-	BOOL 		m_Crush;
+	int			m_Crush;
 	int 		m_Tag;
 	EPlatType	m_Type;
 
@@ -452,20 +451,10 @@ private:
 	friend void P_ActivateInStasis (int tag);
 };
 
-inline FArchive &operator<< (FArchive &arc, DPlat::EPlatType &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DPlat::EPlatType)val;
-	return arc;
-}
-inline FArchive &operator<< (FArchive &arc, DPlat::EPlatState &state)
-{
-	BYTE val = (BYTE)state;
-	arc << val;
-	state = (DPlat::EPlatState)val;
-	return arc;
-}
+bool EV_DoPlat (int tag, line_t *line, DPlat::EPlatType type,
+				int height, int speed, int delay, int lip, int change);
+void EV_StopPlat (int tag);
+void P_ActivateInStasis (int tag);
 
 //
 // [RH]
@@ -475,6 +464,7 @@ inline FArchive &operator<< (FArchive &arc, DPlat::EPlatState &state)
 class DPillar : public DMover
 {
 	DECLARE_CLASS (DPillar, DMover)
+	HAS_OBJECT_POINTERS
 public:
 	enum EPillar
 	{
@@ -484,10 +474,11 @@ public:
 	};
 
 	DPillar (sector_t *sector, EPillar type, fixed_t speed, fixed_t height,
-			 fixed_t height2, int crush);
+			 fixed_t height2, int crush, bool hexencrush);
 
 	void Serialize (FArchive &arc);
 	void Tick ();
+	void Destroy();
 
 protected:
 	EPillar		m_Type;
@@ -496,21 +487,16 @@ protected:
 	fixed_t		m_FloorTarget;
 	fixed_t		m_CeilingTarget;
 	int			m_Crush;
+	bool		m_Hexencrush;
+	TObjPtr<DInterpolation> m_Interp_Ceiling;
+	TObjPtr<DInterpolation> m_Interp_Floor;
 
 private:
 	DPillar ();
 };
 
-inline FArchive &operator<< (FArchive &arc, DPillar::EPillar &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DPillar::EPillar)val;
-	return arc;
-}
-
 bool EV_DoPillar (DPillar::EPillar type, int tag, fixed_t speed, fixed_t height,
-				  fixed_t height2, int crush);
+				  fixed_t height2, int crush, bool hexencrush);
 
 //
 // P_DOORS
@@ -551,11 +537,11 @@ protected:
 
 	int			m_LightTag;
 
-	void DoorSound (bool raise) const;
+	void DoorSound (bool raise, class DSeqNode *curseq=NULL) const;
 
 	friend bool	EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 						   int tag, int speed, int delay, int lock,
-						   int lightTag);
+						   int lightTag, bool boomgen);
 	friend void P_SpawnDoorCloseIn30 (sector_t *sec);
 	friend void P_SpawnDoorRaiseIn5Mins (sector_t *sec);
 private:
@@ -563,33 +549,18 @@ private:
 
 };
 
-inline FArchive &operator<< (FArchive &arc, DDoor::EVlDoor &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DDoor::EVlDoor)val;
-	return arc;
-}
-
-struct FDoorAnimation
-{
-	int BaseTexture;
-	int *TextureFrames;
-	int NumTextureFrames;
-	char *OpenSound;
-	char *CloseSound;
-};
-
-extern TArray<FDoorAnimation> DoorAnimations;
-
-void P_ParseAnimatedDoor ();
+bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
+				int tag, int speed, int delay, int lock,
+				int lightTag, bool boomgen = false);
+void P_SpawnDoorCloseIn30 (sector_t *sec);
+void P_SpawnDoorRaiseIn5Mins (sector_t *sec);
 
 class DAnimatedDoor : public DMovingCeiling
 {
 	DECLARE_CLASS (DAnimatedDoor, DMovingCeiling)
 public:
 	DAnimatedDoor (sector_t *sector);
-	DAnimatedDoor (sector_t *sector, line_t *line, int speed, int delay);
+	DAnimatedDoor (sector_t *sec, line_t *line, int speed, int delay, FDoorAnimation *anim);
 
 	void Serialize (FArchive &arc);
 	void Tick ();
@@ -598,7 +569,7 @@ public:
 protected:
 	line_t *m_Line1, *m_Line2;
 	int m_Frame;
-	int m_WhichDoorIndex;
+	FDoorAnimation *m_DoorAnim;
 	int m_Timer;
 	fixed_t m_BotDist;
 	int m_Status;
@@ -611,11 +582,14 @@ protected:
 	};
 	int m_Speed;
 	int m_Delay;
+	bool m_SetBlocking1, m_SetBlocking2;
 
 	friend bool EV_SlidingDoor (line_t *line, AActor *thing, int tag, int speed, int delay);
 private:
 	DAnimatedDoor ();
 };
+
+bool EV_SlidingDoor (line_t *line, AActor *thing, int tag, int speed, int delay);
 
 //
 // P_CEILNG
@@ -635,7 +609,9 @@ public:
 		ceilLowerInstant,
 		ceilRaiseInstant,
 		ceilCrushAndRaise,
+		ceilCrushAndRaiseDist,
 		ceilLowerAndCrush,
+		ceilLowerAndCrushDist,
 		ceilCrushRaiseAndStay,
 		ceilRaiseToNearest,
 		ceilLowerToLowest,
@@ -662,6 +638,10 @@ public:
 	void Serialize (FArchive &arc);
 	void Tick ();
 
+	static DCeiling *Create(sector_t *sec, DCeiling::ECeiling type, line_t *line, int tag,
+						fixed_t speed, fixed_t speed2, fixed_t height,
+						int crush, int silent, int change, bool hexencrush);
+
 protected:
 	ECeiling	m_Type;
 	fixed_t 	m_BottomHeight;
@@ -670,11 +650,12 @@ protected:
 	fixed_t		m_Speed1;		// [RH] dnspeed of crushers
 	fixed_t		m_Speed2;		// [RH] upspeed of crushers
 	int 		m_Crush;
+	bool		m_Hexencrush;
 	int			m_Silent;
 	int 		m_Direction;	// 1 = up, 0 = waiting, -1 = down
 
 	// [RH] Need these for BOOM-ish transferring ceilings
-	int			m_Texture;
+	FTextureID	m_Texture;
 	int			m_NewSpecial;
 
 	// ID
@@ -686,20 +667,16 @@ protected:
 private:
 	DCeiling ();
 
-	friend bool EV_DoCeiling (DCeiling::ECeiling type, line_t *line,
-		int tag, fixed_t speed, fixed_t speed2, fixed_t height,
-		int crush, int silent, int change);
 	friend bool EV_CeilingCrushStop (int tag);
 	friend void P_ActivateInStasisCeiling (int tag);
 };
 
-inline FArchive &operator<< (FArchive &arc, DCeiling::ECeiling &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DCeiling::ECeiling)val;
-	return arc;
-}
+bool EV_DoCeiling (DCeiling::ECeiling type, line_t *line,
+	int tag, fixed_t speed, fixed_t speed2, fixed_t height,
+	int crush, int silent, int change, bool hexencrush);
+bool EV_CeilingCrushStop (int tag);
+void P_ActivateInStasisCeiling (int tag);
+
 
 
 //
@@ -720,6 +697,7 @@ public:
 		floorRaiseToHighest,
 		floorRaiseToNearest,
 		floorRaiseAndCrush,
+		floorRaiseAndCrushDoom,
 		floorCrushStop,
 		floorLowerInstant,
 		floorRaiseInstant,
@@ -763,9 +741,10 @@ public:
 protected:
 	EFloor	 	m_Type;
 	int 		m_Crush;
+	bool		m_Hexencrush;
 	int 		m_Direction;
-	short 		m_NewSpecial;
-	short		m_Texture;
+	int 		m_NewSpecial;
+	FTextureID	m_Texture;
 	fixed_t 	m_FloorDestDist;
 	fixed_t 	m_Speed;
 
@@ -784,24 +763,25 @@ protected:
 		fixed_t stairsize, fixed_t speed, int delay, int reset, int igntxt,
 		int usespecials);
 	friend bool EV_DoFloor (DFloor::EFloor floortype, line_t *line, int tag,
-		fixed_t speed, fixed_t height, int crush, int change);
+		fixed_t speed, fixed_t height, int crush, int change, bool hexencrush, bool hereticlower=false);
 	friend bool EV_FloorCrushStop (int tag);
-	friend bool EV_DoDonut (int tag, fixed_t pillarspeed, fixed_t slimespeed);
+	friend bool EV_DoDonut (int tag, line_t *line, fixed_t pillarspeed, fixed_t slimespeed);
 private:
 	DFloor ();
 };
 
-inline FArchive &operator<< (FArchive &arc, DFloor::EFloor &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DFloor::EFloor)val;
-	return arc;
-}
+bool EV_BuildStairs (int tag, DFloor::EStair type, line_t *line,
+	fixed_t stairsize, fixed_t speed, int delay, int reset, int igntxt,
+	int usespecials);
+bool EV_DoFloor (DFloor::EFloor floortype, line_t *line, int tag,
+	fixed_t speed, fixed_t height, int crush, int change, bool hexencrush, bool hereticlower);
+bool EV_FloorCrushStop (int tag);
+bool EV_DoDonut (int tag, line_t *line, fixed_t pillarspeed, fixed_t slimespeed);
 
 class DElevator : public DMover
 {
 	DECLARE_CLASS (DElevator, DMover)
+	HAS_OBJECT_POINTERS
 public:
 	enum EElevator
 	{
@@ -815,6 +795,7 @@ public:
 
 	DElevator (sector_t *sec);
 
+	void Destroy();
 	void Serialize (FArchive &arc);
 	void Tick ();
 
@@ -824,6 +805,8 @@ protected:
 	fixed_t		m_FloorDestDist;
 	fixed_t		m_CeilingDestDist;
 	fixed_t		m_Speed;
+	TObjPtr<DInterpolation> m_Interp_Ceiling;
+	TObjPtr<DInterpolation> m_Interp_Floor;
 
 	void StartFloorSound ();
 
@@ -833,17 +816,13 @@ private:
 	DElevator ();
 };
 
-inline FArchive &operator<< (FArchive &arc, DElevator::EElevator &type)
-{
-	BYTE val = (BYTE)type;
-	arc << val;
-	type = (DElevator::EElevator)val;
-	return arc;
-}
+bool EV_DoElevator (line_t *line, DElevator::EElevator type, fixed_t speed,
+	fixed_t height, int tag);
 
 class DWaggleBase : public DMover
 {
 	DECLARE_CLASS (DWaggleBase, DMover)
+	HAS_OBJECT_POINTERS
 public:
 	DWaggleBase (sector_t *sec);
 
@@ -858,13 +837,18 @@ protected:
 	fixed_t m_ScaleDelta;
 	int m_Ticker;
 	int m_State;
+	TObjPtr<DInterpolation> m_Interpolation;
 
-	friend bool EV_StartWaggle (int tag, int height, int speed,
+	friend bool EV_StartWaggle (int tag, line_t *line, int height, int speed,
 		int offset, int timer, bool ceiling);
 
 	void DoWaggle (bool ceiling);
+	void Destroy();
 	DWaggleBase ();
 };
+
+bool EV_StartWaggle (int tag, line_t *line, int height, int speed,
+	int offset, int timer, bool ceiling);
 
 class DFloorWaggle : public DWaggleBase
 {
@@ -900,10 +884,9 @@ bool EV_DoChange (line_t *line, EChange changetype, int tag);
 //
 // P_TELEPT
 //
-bool P_Teleport (AActor *thing, fixed_t x, fixed_t y, fixed_t z, angle_t angle, bool useFog, bool sourceFog, bool keepOrientation);
-bool EV_Teleport (int tid, int tag, line_t *line, int side, AActor *thing, bool fog, bool sourceFog, bool keepOrientation);
-bool EV_SilentLineTeleport (line_t *line, int side, AActor *thing, int id,
-							BOOL reverse);
+bool P_Teleport (AActor *thing, fixed_t x, fixed_t y, fixed_t z, angle_t angle, bool useFog, bool sourceFog, bool keepOrientation, bool haltVelocity = true, bool keepHeight = false);
+bool EV_Teleport (int tid, int tag, line_t *line, int side, AActor *thing, bool fog, bool sourceFog, bool keepOrientation, bool haltVelocity = true, bool keepHeight = false);
+bool EV_SilentLineTeleport (line_t *line, int side, AActor *thing, int id, INTBOOL reverse);
 bool EV_TeleportOther (int other_tid, int dest_tid, bool fog);
 bool EV_TeleportGroup (int group_tid, AActor *victim, int source_tid, int dest_tid, bool moveSource, bool fog);
 bool EV_TeleportSector (int tag, int source_tid, int dest_tid, bool fog, int group_tid);
@@ -913,8 +896,12 @@ bool EV_TeleportSector (int tag, int source_tid, int dest_tid, bool fog, int gro
 // [RH] ACS (see also p_acs.h)
 //
 
-int  P_StartScript (AActor *who, line_t *where, int script, char *map, bool backSide,
-					int arg0, int arg1, int arg2, int always, bool wantResultCode, bool net=false);
+#define ACS_BACKSIDE		1
+#define ACS_ALWAYS			2
+#define ACS_WANTRESULT		4
+#define ACS_NET				8
+
+int  P_StartScript (AActor *who, line_t *where, int script, const char *map, const int *args, int argcount, int flags);
 void P_SuspendScript (int script, char *map);
 void P_TerminateScript (int script, char *map);
 void P_DoDeferedScripts (void);
@@ -922,6 +909,6 @@ void P_DoDeferedScripts (void);
 //
 // [RH] p_quake.c
 //
-bool P_StartQuake (int tid, int intensity, int duration, int damrad, int tremrad);
+bool P_StartQuake (AActor *activator, int tid, int intensity, int duration, int damrad, int tremrad, FSoundID quakesfx);
 
 #endif

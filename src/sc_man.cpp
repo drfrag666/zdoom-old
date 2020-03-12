@@ -20,20 +20,11 @@
 #include "w_wad.h"
 #include "cmdlib.h"
 #include "m_misc.h"
+#include "templates.h"
+#include "doomstat.h"
+#include "v_text.h"
 
 // MACROS ------------------------------------------------------------------
-
-#define MAX_STRING_SIZE 4096
-#define ASCII_COMMENT (';')
-#define CPP_COMMENT ('/')
-#define C_COMMENT ('*')
-#define ASCII_QUOTE ('"')
-#define LUMP_SCRIPT 1
-#define FILE_ZONE_SCRIPT 2
-
-#define NORMAL_STOPCHARS			"{}|="
-#define CMODE_STOPCHARS				"`~!@#$%^&*(){}[]/=\?+|;:<>,."
-#define CMODE_STOPCHARS_NODECIMAL	"`~!@#$%^&*(){}[]/=\?+|;:<>,"
 
 // TYPES -------------------------------------------------------------------
 
@@ -43,436 +34,579 @@
 
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
 
-static void SC_PrepareScript (void);
-static void CheckOpen (void);
-
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
-char *sc_String;
-int sc_StringLen;
-int sc_Number;
-float sc_Float;
-int sc_Line;
-BOOL sc_End;
-BOOL sc_Crossed;
-BOOL sc_FileScripts = false;
-char *sc_ScriptsDir = "";
-
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
-
-static char ScriptName[128];
-static char *ScriptBuffer;
-static char *ScriptPtr;
-static char *ScriptEndPtr;
-static char StringBuffer[MAX_STRING_SIZE];
-static bool ScriptOpen = false;
-static int ScriptSize;
-static bool AlreadyGot = false;
-static bool FreeScript = false;
-static char *SavedScriptPtr;
-static int SavedScriptLine;
-static bool CMode;
 
 // CODE --------------------------------------------------------------------
 
 //==========================================================================
 //
-// SC_Open
+// FScanner Constructor
 //
 //==========================================================================
 
-void SC_Open (const char *name)
+FScanner::FScanner()
 {
-	SC_OpenLumpNum (Wads.GetNumForName (name), name);
+	ScriptOpen = false;
 }
 
 //==========================================================================
 //
-// SC_OpenFile
-//
-// Loads a script (from a file). Uses the new/delete memory allocator for
-// memory allocation and de-allocation.
+// FScanner Destructor
 //
 //==========================================================================
 
-void SC_OpenFile (const char *name)
+FScanner::~FScanner()
 {
-	SC_Close ();
-	ScriptSize = M_ReadFile (name, (byte **)&ScriptBuffer);
-	ExtractFileBase (name, ScriptName);
-	FreeScript = true;
-	SC_PrepareScript ();
+	// Humm... Nothing to do in here.
 }
 
 //==========================================================================
 //
-// SC_OpenMem
-//
-// Prepares a script that is already in memory for parsing. The caller is
-// responsible for freeing it, if needed.
+// FScanner Copy Constructor
 //
 //==========================================================================
 
-void SC_OpenMem (const char *name, char *buffer, int size)
+FScanner::FScanner(const FScanner &other)
 {
-	SC_Close ();
-	ScriptSize = size;
-	ScriptBuffer = buffer;
-	strcpy (ScriptName, name);
-	FreeScript = false;
-	SC_PrepareScript ();
+	ScriptOpen = false;
+	*this = other;
 }
 
 //==========================================================================
 //
-// SC_OpenLumpNum
-//
-// Loads a script (from the WAD files).
+// FScanner OpenLumpNum Constructor
 //
 //==========================================================================
 
-void SC_OpenLumpNum (int lump, const char *name)
+FScanner::FScanner(int lumpnum)
 {
-	SC_Close ();
-	ScriptSize = Wads.LumpLength (lump);
-	ScriptBuffer = new char[ScriptSize];
-	Wads.ReadLump (lump, ScriptBuffer);
-	strcpy (ScriptName, name);
-	FreeScript = true;
-	SC_PrepareScript ();
+	ScriptOpen = false;
+	OpenLumpNum(lumpnum);
 }
 
 //==========================================================================
 //
-// SC_PrepareScript
+// FScanner :: operator =
+//
+//==========================================================================
+
+FScanner &FScanner::operator=(const FScanner &other)
+{
+	if (this == &other)
+	{
+		return *this;
+	}
+	if (!other.ScriptOpen)
+	{
+		Close();
+		return *this;
+	}
+
+	// Copy protected members
+	ScriptOpen = true;
+	ScriptName = other.ScriptName;
+	ScriptBuffer = other.ScriptBuffer;
+	ScriptPtr = other.ScriptPtr;
+	ScriptEndPtr = other.ScriptEndPtr;
+	AlreadyGot = other.AlreadyGot;
+	AlreadyGotLine = other.AlreadyGotLine;
+	LastGotToken = other.LastGotToken;
+	LastGotPtr = other.LastGotPtr;
+	LastGotLine = other.LastGotLine;
+	CMode = other.CMode;
+	Escape = other.Escape;
+
+	// Copy public members
+	if (other.String == other.StringBuffer)
+	{
+		memcpy(StringBuffer, other.StringBuffer, sizeof(StringBuffer));
+		BigStringBuffer = "";
+		String = StringBuffer;
+	}
+	else
+	{
+		// Past practice means the string buffer must be writeable, which
+		// removes some of the benefit from using an FString to store
+		// the big string buffer.
+		BigStringBuffer = other.BigStringBuffer;
+		String = BigStringBuffer.LockBuffer();
+	}
+	StringLen = other.StringLen;
+	TokenType = other.TokenType;
+	Number = other.Number;
+	Float = other.Float;
+	Name = other.Name;
+	Line = other.Line;
+	End = other.End;
+	Crossed = other.Crossed;
+
+	return *this;
+}
+
+//==========================================================================
+//
+// FScanner :: Open
+//
+//==========================================================================
+
+void FScanner::Open (const char *name)
+{
+	int lump = Wads.CheckNumForFullName(name, true);
+	if (lump == -1)
+	{
+		I_Error("Could not find script lump '%s'\n", name);
+	}
+	OpenLumpNum(lump);
+}
+
+//==========================================================================
+//
+// FScanner :: OpenFile
+//
+// Loads a script from a file. Uses new/delete for memory allocation.
+//
+//==========================================================================
+
+void FScanner::OpenFile (const char *name)
+{
+	BYTE *filebuf;
+	int filesize;
+
+	Close ();
+	filesize = M_ReadFile (name, &filebuf);
+	ScriptBuffer = FString((const char *)filebuf, filesize);
+	delete[] filebuf;
+	ScriptName = name;	// This is used for error messages so the full file name is preferable
+	LumpNum = -1;
+	PrepareScript ();
+}
+
+//==========================================================================
+//
+// FScanner :: OpenMem
+//
+// Prepares a script that is already in memory for parsing. The memory is
+// copied, so you can do whatever you want with it after opening it.
+//
+//==========================================================================
+
+void FScanner::OpenMem (const char *name, const char *buffer, int size)
+{
+	Close ();
+	ScriptBuffer = FString(buffer, size);
+	ScriptName = name;
+	LumpNum = -1;
+	PrepareScript ();
+}
+
+//==========================================================================
+//
+// FScanner :: OpenLumpNum
+//
+// Loads a script from the lump directory
+//
+//==========================================================================
+
+void FScanner :: OpenLumpNum (int lump)
+{
+	Close ();
+	{
+		FMemLump mem = Wads.ReadLump(lump);
+		ScriptBuffer = mem.GetString();
+	}
+	ScriptName = Wads.GetLumpFullPath(lump);
+	LumpNum = lump;
+	PrepareScript ();
+}
+
+//==========================================================================
+//
+// FScanner :: PrepareScript
 //
 // Prepares a script for parsing.
 //
 //==========================================================================
 
-static void SC_PrepareScript (void)
+void FScanner::PrepareScript ()
 {
-	ScriptPtr = ScriptBuffer;
-	ScriptEndPtr = ScriptPtr + ScriptSize;
-	sc_Line = 1;
-	sc_End = false;
-	ScriptOpen = true;
-	sc_String = StringBuffer;
-	AlreadyGot = false;
-	SavedScriptPtr = NULL;
-	CMode = false;
-}
-
-//==========================================================================
-//
-// SC_Close
-//
-//==========================================================================
-
-void SC_Close (void)
-{
-	if (ScriptOpen)
+	// The scanner requires the file to end with a '\n', so add one if
+	// it doesn't already.
+	if (ScriptBuffer.Len() == 0 || ScriptBuffer[ScriptBuffer.Len() - 1] != '\n')
 	{
-		if (ScriptBuffer)
+		// If the last character in the buffer is a null character, change
+		// it to a newline. Otherwise, append a newline to the end.
+		if (ScriptBuffer.Len() > 0 && ScriptBuffer[ScriptBuffer.Len() - 1] == '\0')
 		{
-			if (FreeScript)
-			{
-				delete[] ScriptBuffer;
-			}
+			ScriptBuffer.LockBuffer()[ScriptBuffer.Len() - 1] = '\n';
+			ScriptBuffer.UnlockBuffer();
 		}
-		ScriptBuffer = NULL;
-		ScriptOpen = false;
+		else
+		{
+			ScriptBuffer += '\n';
+		}
 	}
+
+	ScriptPtr = &ScriptBuffer[0];
+	ScriptEndPtr = &ScriptBuffer[ScriptBuffer.Len()];
+	Line = 1;
+	End = false;
+	ScriptOpen = true;
+	String = StringBuffer;
+	AlreadyGot = false;
+	LastGotToken = false;
+	LastGotPtr = NULL;
+	LastGotLine = 1;
+	CMode = false;
+	Escape = true;
+	StringBuffer[0] = '\0';
+	BigStringBuffer = "";
 }
 
 //==========================================================================
 //
-// SC_SavePos
+// FScanner :: Close
+//
+//==========================================================================
+
+void FScanner::Close ()
+{
+	ScriptOpen = false;
+	ScriptBuffer = "";
+	BigStringBuffer = "";
+	StringBuffer[0] = '\0';
+	String = StringBuffer;
+}
+
+//==========================================================================
+//
+// FScanner :: SavePos
 //
 // Saves the current script location for restoration later
 //
 //==========================================================================
 
-void SC_SavePos (void)
+const FScanner::SavedPos FScanner::SavePos ()
 {
+	SavedPos pos;
+
 	CheckOpen ();
-	if (sc_End)
+	if (End)
 	{
-		SavedScriptPtr = NULL;
+		pos.SavedScriptPtr = NULL;
 	}
 	else
 	{
-		SavedScriptPtr = ScriptPtr;
-		SavedScriptLine = sc_Line;
+		pos.SavedScriptPtr = ScriptPtr;
 	}
+	pos.SavedScriptLine = Line;
+	return pos;
 }
 
 //==========================================================================
 //
-// SC_RestorePos
+// FScanner :: RestorePos
 //
 // Restores the previously saved script location
 //
 //==========================================================================
 
-void SC_RestorePos (void)
+void FScanner::RestorePos (const FScanner::SavedPos &pos)
 {
-	if (SavedScriptPtr)
+	if (pos.SavedScriptPtr)
 	{
-		ScriptPtr = SavedScriptPtr;
-		sc_Line = SavedScriptLine;
-		sc_End = false;
-		AlreadyGot = false;
+		ScriptPtr = pos.SavedScriptPtr;
+		Line = pos.SavedScriptLine;
+		End = false;
 	}
+	else
+	{
+		End = true;
+	}
+	AlreadyGot = false;
+	LastGotToken = false;
+	Crossed = false;
 }
 
 //==========================================================================
 //
-// SC_SetCMode
+// FScanner :: isText
+//
+// Checks if this is a text file.
+//
+//==========================================================================
+
+bool FScanner::isText()
+{
+	for(unsigned int i=0;i<ScriptBuffer.Len();i++)
+	{
+		int c = ScriptBuffer[i];
+		if (c < ' ' && c != '\n' && c != '\r' && c != '\t') return false;
+	}
+	return true;
+}
+
+//==========================================================================
+//
+// FScanner :: SetCMode
 //
 // Enables/disables C mode. In C mode, more characters are considered to
 // be whole words than in non-C mode.
 //
 //==========================================================================
 
-void SC_SetCMode (bool cmode)
+void FScanner::SetCMode (bool cmode)
 {
 	CMode = cmode;
 }
 
 //==========================================================================
 //
-// SC_GetString
+// FScanner :: SetEscape
+//
+// Turns the escape sequence \" in strings on or off. If it's off, that
+// means you can't include quotation marks inside strings.
 //
 //==========================================================================
 
-BOOL SC_GetString (void)
+void FScanner::SetEscape (bool esc)
 {
-	char *text;
-	BOOL foundToken;
+	Escape = esc;
+}
+
+//==========================================================================
+//
+// FScanner::ScanString
+//
+// Set tokens true if you want TokenType to be set.
+//
+//==========================================================================
+
+bool FScanner::ScanString (bool tokens)
+{
+	const char *marker, *tok;
+	bool return_val;
 
 	CheckOpen();
 	if (AlreadyGot)
 	{
 		AlreadyGot = false;
-		return true;
-	}
-	foundToken = false;
-	sc_Crossed = false;
-	if (ScriptPtr >= ScriptEndPtr)
-	{
-		sc_End = true;
-		return false;
-	}
-	while (foundToken == false)
-	{
-		while (ScriptPtr < ScriptEndPtr && *ScriptPtr <= ' ')
-		{
-			if (*ScriptPtr++ == '\n')
-			{
-				sc_Line++;
-				sc_Crossed = true;
-			}
-		}
-		if (ScriptPtr >= ScriptEndPtr)
-		{
-			sc_End = true;
-			return false;
-		}
-		if ((CMode || *ScriptPtr != ASCII_COMMENT) &&
-			!(ScriptPtr[0] == CPP_COMMENT && ScriptPtr < ScriptEndPtr - 1 &&
-			  (ScriptPtr[1] == CPP_COMMENT || ScriptPtr[1] == C_COMMENT)))
-		{ // Found a token
-			foundToken = true;
-		}
-		else
-		{ // Skip comment
-			if (ScriptPtr[0] == CPP_COMMENT && ScriptPtr[1] == C_COMMENT)
-			{	// C comment
-				while (ScriptPtr[0] != C_COMMENT || ScriptPtr[1] != CPP_COMMENT)
-				{
-					if (ScriptPtr[0] == '\n')
-					{
-						sc_Line++;
-						sc_Crossed = true;
-					}
-					ScriptPtr++;
-					if (ScriptPtr >= ScriptEndPtr - 1)
-					{
-						sc_End = true;
-						return false;
-					}
-				}
-				ScriptPtr += 2;
-			}
-			else
-			{	// C++ comment
-				while (*ScriptPtr++ != '\n')
-				{
-					if (ScriptPtr >= ScriptEndPtr)
-					{
-						sc_End = true;
-						return false;
-					}
-				}
-				sc_Line++;
-				sc_Crossed = true;
-			}
-		}
-	}
-	text = sc_String;
-	if (*ScriptPtr == ASCII_QUOTE)
-	{ // Quoted string
-		ScriptPtr++;
-		while (*ScriptPtr != ASCII_QUOTE || *(ScriptPtr - 1) == '\\')
-		{
-			*text++ = *ScriptPtr++;
-			if (ScriptPtr == ScriptEndPtr
-				|| text == &sc_String[MAX_STRING_SIZE-1])
-			{
-				break;
-			}
-		}
-		ScriptPtr++;
-	}
-	else
-	{ // Normal string
-		static const char *stopchars;
-
-		if (CMode)
-		{
-			stopchars = CMODE_STOPCHARS;
-
-			// '-' can be its own token, or it can be part of a negative number
-			if (*ScriptPtr == '-')
-			{
-				*text++ = '-';
-				ScriptPtr++;
-				if (ScriptPtr < ScriptEndPtr && *ScriptPtr >= '0' && *ScriptPtr <= '9')
-				{
-					stopchars = CMODE_STOPCHARS_NODECIMAL;
-					goto grabtoken;
-				}
-				goto gottoken;
-			}
-			else if (*ScriptPtr >= '0' && *ScriptPtr <= '9')
-			{
-				stopchars = CMODE_STOPCHARS_NODECIMAL;
-			}
-			else if (*ScriptPtr == '.' && ScriptPtr[1] >= '0' && ScriptPtr[1] <= '9')
-			{
-				stopchars = CMODE_STOPCHARS_NODECIMAL;
-			}
-		}
-		else
-		{
-			stopchars = NORMAL_STOPCHARS;
-		}
-		if (strchr (stopchars, *ScriptPtr))
-		{
-			*text++ = *ScriptPtr++;
-		}
-		else
-		{
-grabtoken:
-			while ((*ScriptPtr > ' ') && (strchr (stopchars, *ScriptPtr) == NULL)
-				&& (CMode || *ScriptPtr != ASCII_COMMENT)
-				&& !(ScriptPtr[0] == CPP_COMMENT && (ScriptPtr < ScriptEndPtr - 1) &&
-					 (ScriptPtr[1] == CPP_COMMENT || ScriptPtr[1] == C_COMMENT)))
-			{
-				*text++ = *ScriptPtr++;
-				if (ScriptPtr == ScriptEndPtr
-					|| text == &sc_String[MAX_STRING_SIZE-1])
-				{
-					break;
-				}
-			}
-		}
-	}
-gottoken:
-	*text = 0;
-	sc_StringLen = text - sc_String;
-	return true;
-}
-
-//==========================================================================
-//
-// SC_MustGetString
-//
-//==========================================================================
-
-void SC_MustGetString (void)
-{
-	if (SC_GetString () == false)
-	{
-		SC_ScriptError ("Missing string (unexpected end of file).");
-	}
-}
-
-//==========================================================================
-//
-// SC_MustGetStringName
-//
-//==========================================================================
-
-void SC_MustGetStringName (const char *name)
-{
-	SC_MustGetString ();
-	if (SC_Compare (name) == false)
-	{
-		SC_ScriptError ("Expected '%s', got '%s'.", name, sc_String);
-	}
-}
-
-//==========================================================================
-//
-// SC_CheckString
-//
-// Checks if the next token matches the specified string. Returns true if
-// it does. If it doesn't, it ungets it and returns false.
-//==========================================================================
-
-bool SC_CheckString (const char *name)
-{
-	if (SC_GetString ())
-	{
-		if (SC_Compare (name))
+		if (!tokens || LastGotToken)
 		{
 			return true;
 		}
-		SC_UnGet ();
+		ScriptPtr = LastGotPtr;
+		Line = LastGotLine;
+	}
+
+	Crossed = false;
+	if (ScriptPtr >= ScriptEndPtr)
+	{
+		End = true;
+		return false;
+	}
+
+	LastGotPtr = ScriptPtr;
+	LastGotLine = Line;
+
+	// In case the generated scanner does not use marker, avoid compiler warnings.
+	marker;
+#include "sc_man_scanner.h"
+	LastGotToken = tokens;
+	return return_val;
+}
+
+//==========================================================================
+//
+// FScanner :: GetString
+//
+//==========================================================================
+
+bool FScanner::GetString ()
+{
+	return ScanString (false);
+}
+
+//==========================================================================
+//
+// FScanner :: MustGetString
+//
+//==========================================================================
+
+void FScanner::MustGetString (void)
+{
+	if (FScanner::GetString() == false)
+	{
+		ScriptError ("Missing string (unexpected end of file).");
+	}
+}
+
+//==========================================================================
+//
+// FScanner :: MustGetStringName
+//
+//==========================================================================
+
+void FScanner::MustGetStringName (const char *name)
+{
+	MustGetString ();
+	if (Compare (name) == false)
+	{
+		ScriptError ("Expected '%s', got '%s'.", name, String);
+	}
+}
+
+//==========================================================================
+//
+// FScanner :: CheckString
+//
+// Checks if the next token matches the specified string. Returns true if
+// it does. If it doesn't, it ungets it and returns false.
+//
+//==========================================================================
+
+bool FScanner::CheckString (const char *name)
+{
+	if (GetString ())
+	{
+		if (Compare (name))
+		{
+			return true;
+		}
+		UnGet ();
 	}
 	return false;
 }
 
 //==========================================================================
 //
-// SC_GetNumber
+// FScanner :: GetToken
+//
+// Sets sc_Float, sc_Number, and sc_Name based on sc_TokenType.
 //
 //==========================================================================
 
-BOOL SC_GetNumber (void)
+bool FScanner::GetToken ()
+{
+	if (ScanString (true))
+	{
+		if (TokenType == TK_NameConst)
+		{
+			Name = FName(String);
+		}
+		else if (TokenType == TK_IntConst)
+		{
+			char *stopper;
+			Number = strtol(String, &stopper, 0);
+			Float = Number;
+		}
+		else if (TokenType == TK_FloatConst)
+		{
+			char *stopper;
+			Float = strtod(String, &stopper);
+		}
+		else if (TokenType == TK_StringConst)
+		{
+			StringLen = strbin(String);
+		}
+		return true;
+	}
+	return false;
+}
+
+//==========================================================================
+//
+// FScanner :: MustGetAnyToken
+//
+//==========================================================================
+
+void FScanner::MustGetAnyToken (void)
+{
+	if (GetToken () == false)
+	{
+		ScriptError ("Missing token (unexpected end of file).");
+	}
+}
+
+//==========================================================================
+//
+// FScanner :: TokenMustBe
+//
+//==========================================================================
+
+void FScanner::TokenMustBe (int token)
+{
+	if (TokenType != token)
+	{
+		FString tok1 = TokenName(token);
+		FString tok2 = TokenName(TokenType, String);
+		ScriptError ("Expected %s but got %s instead.", tok1.GetChars(), tok2.GetChars());
+	}
+}
+
+//==========================================================================
+//
+// FScanner :: MustGetToken
+//
+//==========================================================================
+
+void FScanner::MustGetToken (int token)
+{
+	MustGetAnyToken ();
+	TokenMustBe(token);
+}
+
+//==========================================================================
+//
+// FScanner :: CheckToken
+//
+// Checks if the next token matches the specified token. Returns true if
+// it does. If it doesn't, it ungets it and returns false.
+//
+//==========================================================================
+
+bool FScanner::CheckToken (int token)
+{
+	if (GetToken ())
+	{
+		if (TokenType == token)
+		{
+			return true;
+		}
+		UnGet ();
+	}
+	return false;
+}
+
+//==========================================================================
+//
+// FScanner :: GetNumber
+//
+//==========================================================================
+
+bool FScanner::GetNumber ()
 {
 	char *stopper;
 
-	CheckOpen ();
-	if (SC_GetString())
+	CheckOpen();
+	if (GetString())
 	{
-		if (strcmp (sc_String, "MAXINT") == 0)
+		if (strcmp (String, "MAXINT") == 0)
 		{
-			sc_Number = INT_MAX;
+			Number = INT_MAX;
 		}
 		else
 		{
-			sc_Number = strtol (sc_String, &stopper, 0);
+			Number = strtol (String, &stopper, 0);
 			if (*stopper != 0)
 			{
-				SC_ScriptError ("SC_GetNumber: Bad numeric constant \"%s\".", sc_String);
+				ScriptError ("SC_GetNumber: Bad numeric constant \"%s\".", String);
 			}
 		}
-		sc_Float = (float)sc_Number;
+		Float = Number;
 		return true;
 	}
 	else
@@ -483,47 +617,52 @@ BOOL SC_GetNumber (void)
 
 //==========================================================================
 //
-// SC_MustGetNumber
+// FScanner :: MustGetNumber
 //
 //==========================================================================
 
-void SC_MustGetNumber (void)
+void FScanner::MustGetNumber ()
 {
-	if (SC_GetNumber() == false)
+	if (GetNumber() == false)
 	{
-		SC_ScriptError ("Missing integer (unexpected end of file).");
+		ScriptError ("Missing integer (unexpected end of file).");
 	}
 }
 
 //==========================================================================
 //
-// SC_CheckNumber
-// similar to SC_GetNumber but ungets the token if it isn't a number 
+// FScanner :: CheckNumber
+//
+// similar to GetNumber but ungets the token if it isn't a number 
 // and does not print an error
 //
 //==========================================================================
 
-BOOL SC_CheckNumber (void)
+bool FScanner::CheckNumber ()
 {
 	char *stopper;
 
-	//CheckOpen ();
-	if (SC_GetString())
+	if (GetString())
 	{
-		if (strcmp (sc_String, "MAXINT") == 0)
+		if (String[0] == 0)
 		{
-			sc_Number = INT_MAX;
+			UnGet();
+			return false;
+		}
+		else if (strcmp (String, "MAXINT") == 0)
+		{
+			Number = INT_MAX;
 		}
 		else
 		{
-			sc_Number = strtol (sc_String, &stopper, 0);
+			Number = strtol (String, &stopper, 0);
 			if (*stopper != 0)
 			{
-				SC_UnGet();
+				UnGet();
 				return false;
 			}
 		}
-		sc_Float = (float)sc_Number;
+		Float = Number;
 		return true;
 	}
 	else
@@ -534,24 +673,58 @@ BOOL SC_CheckNumber (void)
 
 //==========================================================================
 //
-// SC_GetFloat
+// FScanner :: CheckFloat
+//
+// [GRB] Same as SC_CheckNumber, only for floats
 //
 //==========================================================================
 
-BOOL SC_GetFloat (void)
+bool FScanner::CheckFloat ()
+{
+	char *stopper;
+
+	if (GetString())
+	{
+		if (String[0] == 0)
+		{
+			UnGet();
+			return false;
+		}
+	
+		Float = strtod (String, &stopper);
+		if (*stopper != 0)
+		{
+			UnGet();
+			return false;
+		}
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+
+//==========================================================================
+//
+// FScanner :: GetFloat
+//
+//==========================================================================
+
+bool FScanner::GetFloat ()
 {
 	char *stopper;
 
 	CheckOpen ();
-	if (SC_GetString())
+	if (GetString())
 	{
-		sc_Float = (float)strtod (sc_String, &stopper);
+		Float = strtod (String, &stopper);
 		if (*stopper != 0)
 		{
-			I_Error ("SC_GetFloat: Bad numeric constant \"%s\".\n"
-				"Script %s, Line %d\n", sc_String, ScriptName, sc_Line);
+			ScriptError ("SC_GetFloat: Bad numeric constant \"%s\".", String);
 		}
-		sc_Number = (int)sc_Float;
+		Number = (int)Float;
 		return true;
 	}
 	else
@@ -562,131 +735,154 @@ BOOL SC_GetFloat (void)
 
 //==========================================================================
 //
-// SC_MustGetFloat
+// FScanner :: MustGetFloat
 //
 //==========================================================================
 
-void SC_MustGetFloat (void)
+void FScanner::MustGetFloat ()
 {
-	if (SC_GetFloat() == false)
+	if (GetFloat() == false)
 	{
-		SC_ScriptError ("Missing floating-point number (unexpected end of file).");
+		ScriptError ("Missing floating-point number (unexpected end of file).");
 	}
 }
 
 //==========================================================================
 //
-// SC_UnGet
+// FScanner :: UnGet
 //
-// Assumes there is a valid string in sc_String.
+// Assumes there is a valid string in String.
 //
 //==========================================================================
 
-void SC_UnGet (void)
+void FScanner::UnGet ()
 {
 	AlreadyGot = true;
+	AlreadyGotLine = LastGotLine;	// in case of an error we want the line of the last token.
 }
 
 //==========================================================================
 //
-// SC_Check
+// FScanner :: MatchString
 //
-// Returns true if another token is on the current line.
-//
-//==========================================================================
-
-/*
-BOOL SC_Check(void)
-{
-	char *text;
-
-	CheckOpen();
-	text = ScriptPtr;
-	if(text >= ScriptEndPtr)
-	{
-		return false;
-	}
-	while(*text <= 32)
-	{
-		if(*text == '\n')
-		{
-			return false;
-		}
-		text++;
-		if(text == ScriptEndPtr)
-		{
-			return false;
-		}
-	}
-	if(*text == ASCII_COMMENT)
-	{
-		return false;
-	}
-	return true;
-}
-*/
-
-//==========================================================================
-//
-// SC_MatchString
-//
-// Returns the index of the first match to sc_String from the passed
+// Returns the index of the first match to String from the passed
 // array of strings, or -1 if not found.
 //
 //==========================================================================
 
-int SC_MatchString (const char **strings)
+int FScanner::MatchString (const char * const *strings, size_t stride)
 {
 	int i;
 
+	assert(stride % sizeof(const char*) == 0);
+
+	stride /= sizeof(const char*);
+
 	for (i = 0; *strings != NULL; i++)
 	{
-		if (SC_Compare (*strings++))
+		if (Compare (*strings))
 		{
 			return i;
 		}
+		strings += stride;
 	}
 	return -1;
 }
 
 //==========================================================================
 //
-// SC_MustMatchString
+// FScanner :: MustMatchString
 //
 //==========================================================================
 
-int SC_MustMatchString (const char **strings)
+int FScanner::MustMatchString (const char * const *strings, size_t stride)
 {
 	int i;
 
-	i = SC_MatchString (strings);
+	i = MatchString (strings, stride);
 	if (i == -1)
 	{
-		SC_ScriptError (NULL);
+		ScriptError (NULL);
 	}
 	return i;
 }
 
 //==========================================================================
 //
-// SC_Compare
+// FScanner :: Compare
 //
 //==========================================================================
 
-BOOL SC_Compare (const char *text)
+bool FScanner::Compare (const char *text)
 {
-	return (stricmp (text, sc_String) == 0);
+	return (stricmp (text, String) == 0);
 }
 
 //==========================================================================
 //
-// SC_ScriptError
+// FScanner :: TokenName
+//
+// Returns the name of a token.
 //
 //==========================================================================
 
-void STACK_ARGS SC_ScriptError (const char *message, ...)
+FString FScanner::TokenName (int token, const char *string)
 {
-	string composed;
+	static const char *const names[] =
+	{
+#define xx(sym,str)		str,
+#include "sc_man_tokens.h"
+	};
+
+	FString work;
+
+	if (token > ' ' && token < 256)
+	{
+		work = '\'';
+		work += token;
+		work += '\'';
+	}
+	else if (token >= TK_Identifier && token < TK_LastToken)
+	{
+		work = names[token - TK_Identifier];
+		if (string != NULL && token >= TK_Identifier && token <= TK_FloatConst)
+		{
+			work += ' ';
+			char quote = (token == TK_StringConst) ? '"' : '\'';
+			work += quote;
+			work += string;
+			work += quote;
+		}
+	}
+	else
+	{
+		FString work;
+		work.Format ("Unknown(%d)", token);
+		return work;
+	}
+	return work;
+}
+
+//==========================================================================
+//
+// FScanner::ScriptError
+//
+//==========================================================================
+
+int FScanner::GetMessageLine()
+{
+	return AlreadyGot? AlreadyGotLine : Line;
+}
+
+//==========================================================================
+//
+// FScanner::ScriptError
+//
+//==========================================================================
+
+void STACK_ARGS FScanner::ScriptError (const char *message, ...)
+{
+	FString composed;
 
 	if (message == NULL)
 	{
@@ -700,20 +896,145 @@ void STACK_ARGS SC_ScriptError (const char *message, ...)
 		va_end (arglist);
 	}
 
-	I_Error ("Script error, \"%s\" line %d:\n%s\n", ScriptName,
-		sc_Line, composed.GetChars());
+	I_Error ("Script error, \"%s\" line %d:\n%s\n", ScriptName.GetChars(),
+		AlreadyGot? AlreadyGotLine : Line, composed.GetChars());
 }
 
 //==========================================================================
 //
-// CheckOpen
+// FScanner::ScriptMessage
 //
 //==========================================================================
 
-static void CheckOpen(void)
+void STACK_ARGS FScanner::ScriptMessage (const char *message, ...)
+{
+	FString composed;
+
+	if (message == NULL)
+	{
+		composed = "Bad syntax.";
+	}
+	else
+	{
+		va_list arglist;
+		va_start (arglist, message);
+		composed.VFormat (message, arglist);
+		va_end (arglist);
+	}
+
+	Printf (TEXTCOLOR_RED"Script error, \"%s\" line %d:\n"TEXTCOLOR_RED"%s\n", ScriptName.GetChars(),
+		AlreadyGot? AlreadyGotLine : Line, composed.GetChars());
+}
+
+//==========================================================================
+//
+// FScanner :: CheckOpen
+//
+//==========================================================================
+
+void FScanner::CheckOpen()
 {
 	if (ScriptOpen == false)
 	{
 		I_FatalError ("SC_ call before SC_Open().");
 	}
 }
+
+//==========================================================================
+//
+// a class that remembers a parser position
+//
+//==========================================================================
+int FScriptPosition::ErrorCounter;
+
+FScriptPosition::FScriptPosition(const FScriptPosition &other)
+{
+	FileName = other.FileName;
+	ScriptLine = other.ScriptLine;
+}
+
+FScriptPosition::FScriptPosition(FString fname, int line)
+{
+	FileName = fname;
+	ScriptLine = line;
+}
+
+FScriptPosition::FScriptPosition(FScanner &sc)
+{
+	FileName = sc.ScriptName;
+	ScriptLine = sc.GetMessageLine();
+}
+
+FScriptPosition &FScriptPosition::operator=(const FScriptPosition &other)
+{
+	FileName = other.FileName;
+	ScriptLine = other.ScriptLine;
+	return *this;
+}
+
+//==========================================================================
+//
+// FScriptPosition::Message
+//
+//==========================================================================
+
+void STACK_ARGS FScriptPosition::Message (int severity, const char *message, ...) const
+{
+	FString composed;
+
+	if ((severity == MSG_DEBUG || severity == MSG_DEBUGLOG) && !developer) return;
+
+	if (message == NULL)
+	{
+		composed = "Bad syntax.";
+	}
+	else
+	{
+		va_list arglist;
+		va_start (arglist, message);
+		composed.VFormat (message, arglist);
+		va_end (arglist);
+	}
+	const char *type = "";
+	const char *color;
+	int level = PRINT_HIGH;
+
+	switch (severity)
+	{
+	default:
+		return;
+
+	case MSG_WARNING:
+		type = "warning";
+		color = TEXTCOLOR_YELLOW;
+		break;
+
+	case MSG_ERROR:
+		ErrorCounter++;
+		type = "error";
+		color = TEXTCOLOR_RED;
+		break;
+
+	case MSG_MESSAGE:
+	case MSG_DEBUG:
+		type = "message";
+		color = TEXTCOLOR_GREEN;
+		break;
+
+	case MSG_DEBUGLOG:
+	case MSG_LOG:
+		type = "message";
+		level = PRINT_LOG;
+		color = "";
+		break;
+
+	case MSG_FATAL:
+		I_Error ("Script error, \"%s\" line %d:\n%s\n",
+			FileName.GetChars(), ScriptLine, composed.GetChars());
+		return;
+	}
+	Printf (level, "%sScript %s, \"%s\" line %d:\n%s%s\n",
+		color, type, FileName.GetChars(), ScriptLine, color, composed.GetChars());
+}
+
+

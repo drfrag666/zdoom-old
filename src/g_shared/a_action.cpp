@@ -1,5 +1,6 @@
 #include "actor.h"
-#include "info.h"
+#include "thingdef/thingdef.h"
+#include "p_conversation.h"
 #include "p_lnspec.h"
 #include "a_action.h"
 #include "m_random.h"
@@ -10,59 +11,103 @@
 #include "p_enemy.h"
 #include "statnums.h"
 #include "templates.h"
+#include "farchive.h"
+#include "r_data/r_translate.h"
 
 static FRandom pr_freezedeath ("FreezeDeath");
 static FRandom pr_icesettics ("IceSetTics");
 static FRandom pr_freeze ("FreezeDeathChunks");
 
-/***************************** IceChunk ************************************/
 
-class AIceChunk : public AActor
+// SwitchableDecoration: Activate and Deactivate change state ---------------
+
+class ASwitchableDecoration : public AActor
 {
-	DECLARE_ACTOR (AIceChunk, AActor)
+	DECLARE_CLASS (ASwitchableDecoration, AActor)
+public:
+	void Activate (AActor *activator);
+	void Deactivate (AActor *activator);
 };
 
-FState AIceChunk::States[] =
+IMPLEMENT_CLASS (ASwitchableDecoration)
+
+void ASwitchableDecoration::Activate (AActor *activator)
 {
-	S_NORMAL (ICEC, 'A',   10, NULL 					, &States[1]),
-	S_NORMAL (ICEC, 'B',   10, A_IceSetTics 			, &States[2]),
-	S_NORMAL (ICEC, 'C',   10, A_IceSetTics 			, &States[3]),
-	S_NORMAL (ICEC, 'D',   10, A_IceSetTics 			, NULL),
+	SetState (FindState(NAME_Active));
+}
+
+void ASwitchableDecoration::Deactivate (AActor *activator)
+{
+	SetState (FindState(NAME_Inactive));
+}
+
+// SwitchingDecoration: Only Activate changes state -------------------------
+
+class ASwitchingDecoration : public ASwitchableDecoration
+{
+	DECLARE_CLASS (ASwitchingDecoration, ASwitchableDecoration)
+public:
+	void Deactivate (AActor *activator) {}
 };
 
-IMPLEMENT_ACTOR (AIceChunk, Any, -1, 0)
-	PROP_RadiusFixed (3)
-	PROP_HeightFixed (4)
-	PROP_Flags (MF_DROPOFF)
-	PROP_Flags2 (MF2_LOGRAV|MF2_CANNOTPUSH|MF2_FLOORCLIP)
+IMPLEMENT_CLASS (ASwitchingDecoration)
 
-	PROP_SpawnState (0)
-END_DEFAULTS
+//----------------------------------------------------------------------------
+//
+// PROC A_NoBlocking
+//
+//----------------------------------------------------------------------------
 
-/***************************************************************************/
-
-// A chunk of ice that is also a player -------------------------------------
-
-class AIceChunkHead : public APlayerChunk
+void A_Unblock(AActor *self, bool drop)
 {
-	DECLARE_ACTOR (AIceChunkHead, APlayerChunk)
-};
+	// [RH] Andy Baker's stealth monsters
+	if (self->flags & MF_STEALTH)
+	{
+		self->alpha = OPAQUE;
+		self->visdir = 0;
+	}
 
-FState AIceChunkHead::States[] =
+	self->flags &= ~MF_SOLID;
+
+	// If the actor has a conversation that sets an item to drop, drop that.
+	if (self->Conversation != NULL && self->Conversation->DropType != NULL)
+	{
+		P_DropItem (self, self->Conversation->DropType, -1, 256);
+		self->Conversation = NULL;
+		return;
+	}
+
+	self->Conversation = NULL;
+
+	// If the actor has attached metadata for items to drop, drop those.
+	if (drop && !self->IsKindOf (RUNTIME_CLASS (APlayerPawn)))	// [GRB]
+	{
+		FDropItem *di = self->GetDropItems();
+
+		if (di != NULL)
+		{
+			while (di != NULL)
+			{
+				if (di->Name != NAME_None)
+				{
+					const PClass *ti = PClass::FindClass(di->Name);
+					if (ti) P_DropItem (self, ti, di->amount, di->probability);
+				}
+				di = di->Next;
+			}
+		}
+	}
+}
+
+DEFINE_ACTION_FUNCTION(AActor, A_NoBlocking)
 {
-	S_NORMAL (PLAY, 'A',	0, NULL						, &States[1]),
-	S_NORMAL (ICEC, 'A',   10, A_IceCheckHeadDone		, &States[1])
-};
+	A_Unblock(self, true);
+}
 
-IMPLEMENT_ACTOR (AIceChunkHead, Any, -1, 0)
-	PROP_RadiusFixed (3)
-	PROP_HeightFixed (4)
-	PROP_DamageType (MOD_ICE)
-	PROP_Flags (MF_DROPOFF)
-	PROP_Flags2 (MF2_LOGRAV|MF2_CANNOTPUSH)
-
-	PROP_SpawnState (0)
-END_DEFAULTS
+DEFINE_ACTION_FUNCTION(AActor, A_Fall)
+{
+	A_Unblock(self, true);
+}
 
 //==========================================================================
 //
@@ -70,10 +115,10 @@ END_DEFAULTS
 //
 //==========================================================================
 
-void A_SetFloorClip (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_SetFloorClip)
 {
-	actor->flags2 |= MF2_FLOORCLIP;
-	actor->AdjustFloorClip ();
+	self->flags2 |= MF2_FLOORCLIP;
+	self->AdjustFloorClip ();
 }
 
 //==========================================================================
@@ -82,10 +127,10 @@ void A_SetFloorClip (AActor *actor)
 //
 //==========================================================================
 
-void A_UnSetFloorClip (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_UnSetFloorClip)
 {
-	actor->flags2 &= ~MF2_FLOORCLIP;
-	actor->floorclip = 0;
+	self->flags2 &= ~MF2_FLOORCLIP;
+	self->floorclip = 0;
 }
 
 //==========================================================================
@@ -94,9 +139,9 @@ void A_UnSetFloorClip (AActor *actor)
 //
 //==========================================================================
 
-void A_HideThing (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_HideThing)
 {
-	actor->renderflags |= RF_INVISIBLE;
+	self->renderflags |= RF_INVISIBLE;
 }
 
 //==========================================================================
@@ -105,9 +150,9 @@ void A_HideThing (AActor *actor)
 //
 //==========================================================================
 
-void A_UnHideThing (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_UnHideThing)
 {
-	actor->renderflags &= ~RF_INVISIBLE;
+	self->renderflags &= ~RF_INVISIBLE;
 }
 
 //============================================================================
@@ -116,28 +161,53 @@ void A_UnHideThing (AActor *actor)
 //
 //============================================================================
 
-void A_FreezeDeath (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_FreezeDeath)
 {
 	int t = pr_freezedeath();
-	actor->tics = 75+t+pr_freezedeath();
-	actor->flags |= MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD|MF_ICECORPSE;
-	actor->flags2 |= MF2_PUSHABLE|MF2_TELESTOMP|MF2_PASSMOBJ|MF2_SLIDE;
-	actor->flags3 |= MF3_CRASHED;
-	actor->height = actor->GetDefault()->height;
-	S_Sound (actor, CHAN_BODY, "misc/freeze", 1, ATTN_NORM);
-
-	if (actor->player)
+	self->tics = 75+t+pr_freezedeath();
+	self->flags |= MF_SOLID|MF_SHOOTABLE|MF_NOBLOOD|MF_ICECORPSE;
+	self->flags2 |= MF2_PUSHABLE|MF2_TELESTOMP|MF2_PASSMOBJ|MF2_SLIDE;
+	self->flags3 |= MF3_CRASHED;
+	self->height = self->GetDefault()->height;
+	// Remove fuzz effects from frozen actors.
+	if (self->RenderStyle.BlendOp >= STYLEOP_Fuzz && self->RenderStyle.BlendOp <= STYLEOP_FuzzOrRevSub)
 	{
-		actor->player->damagecount = 0;
-		actor->player->poisoncount = 0;
-		actor->player->bonuscount = 0;
+		self->RenderStyle = STYLE_Normal;
 	}
-	else if (actor->flags3&MF3_ISMONSTER && actor->special)
+
+	S_Sound (self, CHAN_BODY, "misc/freeze", 1, ATTN_NORM);
+
+	// [RH] Andy Baker's stealth monsters
+	if (self->flags & MF_STEALTH)
+	{
+		self->alpha = OPAQUE;
+		self->visdir = 0;
+	}
+
+	if (self->player)
+	{
+		self->player->damagecount = 0;
+		self->player->poisoncount = 0;
+		self->player->bonuscount = 0;
+	}
+	else if (self->flags3 & MF3_ISMONSTER && self->special)
 	{ // Initiate monster death actions
-		LineSpecials [actor->special] (NULL, actor, false, actor->args[0],
-			actor->args[1], actor->args[2], actor->args[3], actor->args[4]);
-		actor->special = 0;
+		P_ExecuteSpecial(self->special, NULL, self, false, self->args[0],
+			self->args[1], self->args[2], self->args[3], self->args[4]);
+		self->special = 0;
 	}
+}
+
+//==========================================================================
+//
+// A_GenericFreezeDeath
+//
+//==========================================================================
+
+DEFINE_ACTION_FUNCTION(AActor, A_GenericFreezeDeath)
+{
+	self->Translation = TRANSLATION(TRANSLATION_Standard, 7);
+	CALL_ACTION(A_FreezeDeath, self);
 }
 
 //============================================================================
@@ -146,33 +216,19 @@ void A_FreezeDeath (AActor *actor)
 //
 //============================================================================
 
-void A_IceSetTics (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_IceSetTics)
 {
 	int floor;
 
-	actor->tics = 70+(pr_icesettics()&63);
-	floor = P_GetThingFloorType (actor);
-	if (Terrains[floor].DamageMOD == MOD_FIRE)
+	self->tics = 70+(pr_icesettics()&63);
+	floor = P_GetThingFloorType (self);
+	if (Terrains[floor].DamageMOD == NAME_Fire)
 	{
-		actor->tics >>= 2;
+		self->tics >>= 2;
 	}
-	else if (Terrains[floor].DamageMOD == MOD_ICE)
+	else if (Terrains[floor].DamageMOD == NAME_Ice)
 	{
-		actor->tics <<= 1;
-	}
-}
-
-//============================================================================
-//
-// A_IceCheckHeadDone
-//
-//============================================================================
-
-void A_IceCheckHeadDone (AActor *actor)
-{
-	if (actor->player == NULL)
-	{
-		actor->Destroy ();
+		self->tics <<= 1;
 	}
 }
 
@@ -182,72 +238,81 @@ void A_IceCheckHeadDone (AActor *actor)
 //
 //============================================================================
 
-void A_FreezeDeathChunks (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_FreezeDeathChunks)
 {
 
 	int i;
 	int numChunks;
 	AActor *mo;
 	
-	if (actor->momx || actor->momy || actor->momz)
+	if ((self->velx || self->vely || self->velz) && !(self->flags6 & MF6_SHATTERING))
 	{
-		actor->tics = 3*TICRATE;
+		self->tics = 3*TICRATE;
 		return;
 	}
-	S_Sound (actor, CHAN_BODY, "misc/icebreak", 1, ATTN_NORM);
+	self->velx = self->vely = self->velz = 0;
+	S_Sound (self, CHAN_BODY, "misc/icebreak", 1, ATTN_NORM);
 
 	// [RH] In Hexen, this creates a random number of shards (range [24,56])
-	// with no relation to the size of the actor shattering. I think it should
+	// with no relation to the size of the self shattering. I think it should
 	// base the number of shards on the size of the dead thing, so bigger
 	// things break up into more shards than smaller things.
 	// An actor with radius 20 and height 64 creates ~40 chunks.
-	numChunks = MAX<int> (4, (actor->radius>>FRACBITS)*(actor->height>>FRACBITS)/32);
+	numChunks = MAX<int> (4, (self->radius>>FRACBITS)*(self->height>>FRACBITS)/32);
 	i = (pr_freeze.Random2()) % (numChunks/4);
 	for (i = MAX (24, numChunks + i); i >= 0; i--)
 	{
-		mo = Spawn<AIceChunk> (
-			actor->x + (((pr_freeze()-128)*actor->radius)>>7), 
-			actor->y + (((pr_freeze()-128)*actor->radius)>>7), 
-			actor->z + (pr_freeze()*actor->height/255));
-		mo->SetState (mo->SpawnState + (pr_freeze()%3));
+		mo = Spawn("IceChunk", 
+			self->x + (((pr_freeze()-128)*self->radius)>>7), 
+			self->y + (((pr_freeze()-128)*self->radius)>>7), 
+			self->z + (pr_freeze()*self->height/255), ALLOW_REPLACE);
 		if (mo)
 		{
-			mo->momz = FixedDiv(mo->z-actor->z, actor->height)<<2;
-			mo->momx = pr_freeze.Random2 () << (FRACBITS-7);
-			mo->momy = pr_freeze.Random2 () << (FRACBITS-7);
-			A_IceSetTics (mo); // set a random tic wait
-			mo->RenderStyle = actor->RenderStyle;
-			mo->alpha = actor->alpha;
+				mo->SetState (mo->SpawnState + (pr_freeze()%3));
+			mo->velz = FixedDiv(mo->z - self->z, self->height)<<2;
+			mo->velx = pr_freeze.Random2 () << (FRACBITS-7);
+			mo->vely = pr_freeze.Random2 () << (FRACBITS-7);
+			CALL_ACTION(A_IceSetTics, mo); // set a random tic wait
+			mo->RenderStyle = self->RenderStyle;
+			mo->alpha = self->alpha;
 		}
 	}
-	if (actor->player)
+	if (self->player)
 	{ // attach the player's view to a chunk of ice
-		AIceChunkHead *head = Spawn<AIceChunkHead> (actor->x, actor->y, actor->z+VIEWHEIGHT);
-		head->momz = FixedDiv(head->z-actor->z, actor->height)<<2;
-		head->momx = pr_freeze.Random2 () << (FRACBITS-7);
-		head->momy = pr_freeze.Random2 () << (FRACBITS-7);
-		head->player = actor->player;
-		actor->player = NULL;
-		head->health = actor->health;
-		head->angle = actor->angle;
-		head->player->mo = head;
-		head->pitch = 0;
-		head->RenderStyle = actor->RenderStyle;
-		head->alpha = actor->alpha;
-		if (head->player->camera == actor)
+		AActor *head = Spawn("IceChunkHead", self->x, self->y, 
+													self->z + self->player->mo->ViewHeight, ALLOW_REPLACE);
+		if (head != NULL)
 		{
-			head->player->camera = head;
+			head->velz = FixedDiv(head->z - self->z, self->height)<<2;
+			head->velx = pr_freeze.Random2 () << (FRACBITS-7);
+			head->vely = pr_freeze.Random2 () << (FRACBITS-7);
+			head->health = self->health;
+			head->angle = self->angle;
+			if (head->IsKindOf(RUNTIME_CLASS(APlayerPawn)))
+			{
+				head->player = self->player;
+				head->player->mo = static_cast<APlayerPawn*>(head);
+				self->player = NULL;
+				head->ObtainInventory (self);
+			}
+			head->pitch = 0;
+			head->RenderStyle = self->RenderStyle;
+			head->alpha = self->alpha;
+			if (head->player->camera == self)
+			{
+				head->player->camera = head;
+			}
 		}
 	}
 
 	// [RH] Do some stuff to make this more useful outside Hexen
-	if (actor->flags4 & MF4_BOSSDEATH)
+	if (self->flags4 & MF4_BOSSDEATH)
 	{
-		A_BossDeath (actor);
+		CALL_ACTION(A_BossDeath, self);
 	}
-	A_NoBlocking (actor);
+	A_Unblock(self, true);
 
-	actor->Destroy ();
+	self->SetState(self->FindState(NAME_Null));
 }
 
 //----------------------------------------------------------------------------
@@ -257,7 +322,6 @@ void A_FreezeDeathChunks (AActor *actor)
 //----------------------------------------------------------------------------
 
 // Corpse queue for monsters - this should be saved out
-#define CORPSEQUEUESIZE	64
 
 class DCorpsePointer : public DThinker
 {
@@ -267,7 +331,7 @@ public:
 	DCorpsePointer (AActor *ptr);
 	void Destroy ();
 	void Serialize (FArchive &arc);
-	AActor *Corpse;
+	TObjPtr<AActor> Corpse;
 	DWORD Count;	// Only the first corpse pointer's count is valid.
 private:
 	DCorpsePointer () {}
@@ -276,7 +340,22 @@ private:
 IMPLEMENT_POINTY_CLASS(DCorpsePointer)
  DECLARE_POINTER(Corpse)
 END_POINTERS
- 
+
+CUSTOM_CVAR(Int, sv_corpsequeuesize, 64, CVAR_ARCHIVE|CVAR_SERVERINFO)
+{
+	if (self > 0)
+	{
+		TThinkerIterator<DCorpsePointer> iterator (STAT_CORPSEPOINTER);
+		DCorpsePointer *first = iterator.Next ();
+		while (first != NULL && first->Count > (DWORD)self)
+		{
+			DCorpsePointer *next = iterator.Next ();
+			first->Destroy ();
+			first = next;
+		}
+	}
+}
+
 
 DCorpsePointer::DCorpsePointer (AActor *ptr)
 : DThinker (STAT_CORPSEPOINTER), Corpse (ptr)
@@ -290,12 +369,11 @@ DCorpsePointer::DCorpsePointer (AActor *ptr)
 
 	if (first != this)
 	{
-		if (first->Count >= CORPSEQUEUESIZE)
+		if (first->Count >= (DWORD)sv_corpsequeuesize)
 		{
 			DCorpsePointer *next = iterator.Next ();
-			next->Count = first->Count;
 			first->Destroy ();
-			return;
+			first = next;
 		}
 	}
 	++first->Count;
@@ -328,64 +406,27 @@ void DCorpsePointer::Destroy ()
 
 void DCorpsePointer::Serialize (FArchive &arc)
 {
+	Super::Serialize(arc);
 	arc << Corpse << Count;
 }
 
-// Pointers to members cannot be assigned to single array elements,
-// so this class is deprecated. It exists now only for compatibility with
-// old savegames.
-
-class DCorpseQueue : public DThinker
-{
-	DECLARE_CLASS (DCorpseQueue, DThinker)
-	HAS_OBJECT_POINTERS
-public:
-	void Serialize (FArchive &arc);
-	void Tick ();
-protected:
-	AActor *CorpseQueue[CORPSEQUEUESIZE];
-};
-
-IMPLEMENT_CLASS(DCorpseQueue)
-
-void DCorpseQueue::Serialize (FArchive &arc)
-{
-	int foo = 0;
-	int i;
-
-	Super::Serialize (arc);
-	for (i = 0; i < CORPSEQUEUESIZE; ++i)
-		arc << CorpseQueue[i];
-	arc << foo;
-}
-
-void DCorpseQueue::Tick ()
-{
-	for (int i = 0; i < CORPSEQUEUESIZE; ++i)
-	{
-		if (CorpseQueue[i] != NULL)
-		{
-			new DCorpsePointer (CorpseQueue[i]);
-		}
-	}
-	Destroy ();
-}
 
 // throw another corpse on the queue
-void A_QueueCorpse (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_QueueCorpse)
 {
-	new DCorpsePointer (actor);
+	if (sv_corpsequeuesize > 0)
+		new DCorpsePointer (self);
 }
 
-// Remove an actor from the queue (for resurrection)
-void A_DeQueueCorpse (AActor *actor)
+// Remove an self from the queue (for resurrection)
+DEFINE_ACTION_FUNCTION(AActor, A_DeQueueCorpse)
 {
 	TThinkerIterator<DCorpsePointer> iterator (STAT_CORPSEPOINTER);
 	DCorpsePointer *corpsePtr;
 
 	while ((corpsePtr = iterator.Next()) != NULL)
 	{
-		if (corpsePtr->Corpse == actor)
+		if (corpsePtr->Corpse == self)
 		{
 			corpsePtr->Corpse = NULL;
 			corpsePtr->Destroy ();
@@ -400,9 +441,9 @@ void A_DeQueueCorpse (AActor *actor)
 //
 //============================================================================
 
-void A_SetInvulnerable (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_SetInvulnerable)
 {
-	actor->flags2 |= MF2_INVULNERABLE;
+	self->flags2 |= MF2_INVULNERABLE;
 }
 
 //============================================================================
@@ -411,9 +452,9 @@ void A_SetInvulnerable (AActor *actor)
 //
 //============================================================================
 
-void A_UnSetInvulnerable (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_UnSetInvulnerable)
 {
-	actor->flags2 &= ~MF2_INVULNERABLE;
+	self->flags2 &= ~MF2_INVULNERABLE;
 }
 
 //============================================================================
@@ -422,9 +463,9 @@ void A_UnSetInvulnerable (AActor *actor)
 //
 //============================================================================
 
-void A_SetReflective (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_SetReflective)
 {
-	actor->flags2 |= MF2_REFLECTIVE;
+	self->flags2 |= MF2_REFLECTIVE;
 }
 
 //============================================================================
@@ -433,9 +474,9 @@ void A_SetReflective (AActor *actor)
 //
 //============================================================================
 
-void A_UnSetReflective (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_UnSetReflective)
 {
-	actor->flags2 &= ~MF2_REFLECTIVE;
+	self->flags2 &= ~MF2_REFLECTIVE;
 }
 
 //============================================================================
@@ -444,9 +485,9 @@ void A_UnSetReflective (AActor *actor)
 //
 //============================================================================
 
-void A_SetReflectiveInvulnerable (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_SetReflectiveInvulnerable)
 {
-	actor->flags2 |= MF2_REFLECTIVE|MF2_INVULNERABLE;
+	self->flags2 |= MF2_REFLECTIVE|MF2_INVULNERABLE;
 }
 
 //============================================================================
@@ -455,9 +496,9 @@ void A_SetReflectiveInvulnerable (AActor *actor)
 //
 //============================================================================
 
-void A_UnSetReflectiveInvulnerable (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_UnSetReflectiveInvulnerable)
 {
-	actor->flags2 &= ~(MF2_REFLECTIVE|MF2_INVULNERABLE);
+	self->flags2 &= ~(MF2_REFLECTIVE|MF2_INVULNERABLE);
 }
 
 //==========================================================================
@@ -466,10 +507,10 @@ void A_UnSetReflectiveInvulnerable (AActor *actor)
 //
 //==========================================================================
 
-void A_SetShootable (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_SetShootable)
 {
-	actor->flags2 &= ~MF2_NONSHOOTABLE;
-	actor->flags |= MF_SHOOTABLE;
+	self->flags2 &= ~MF2_NONSHOOTABLE;
+	self->flags |= MF_SHOOTABLE;
 }
 
 //==========================================================================
@@ -478,10 +519,10 @@ void A_SetShootable (AActor *actor)
 //
 //==========================================================================
 
-void A_UnSetShootable (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_UnSetShootable)
 {
-	actor->flags2 |= MF2_NONSHOOTABLE;
-	actor->flags &= ~MF_SHOOTABLE;
+	self->flags2 |= MF2_NONSHOOTABLE;
+	self->flags &= ~MF_SHOOTABLE;
 }
 
 //===========================================================================
@@ -490,9 +531,9 @@ void A_UnSetShootable (AActor *actor)
 //
 //===========================================================================
 
-void A_NoGravity (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_NoGravity)
 {
-	actor->flags |= MF_NOGRAVITY;
+	self->flags |= MF_NOGRAVITY;
 }
 
 //===========================================================================
@@ -501,10 +542,10 @@ void A_NoGravity (AActor *actor)
 //
 //===========================================================================
 
-void A_Gravity (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_Gravity)
 {
-	actor->flags &= ~MF_NOGRAVITY;
-	actor->flags2 &= ~MF2_LOGRAV;
+	self->flags &= ~MF_NOGRAVITY;
+	self->gravity = FRACUNIT;
 }
 
 //===========================================================================
@@ -513,10 +554,10 @@ void A_Gravity (AActor *actor)
 //
 //===========================================================================
 
-void A_LowGravity (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_LowGravity)
 {
-	actor->flags &= ~MF_NOGRAVITY;
-	actor->flags2 |= MF2_LOGRAV;
+	self->flags &= ~MF_NOGRAVITY;
+	self->gravity = FRACUNIT/8;
 }
 
 //===========================================================================
@@ -556,16 +597,3 @@ void FaceMovementDirection (AActor *actor)
 	}
 }
 
-//----------------------------------------------------------------------------
-//
-// PROC A_CheckBurnGone
-//
-//----------------------------------------------------------------------------
-
-void A_CheckBurnGone (AActor *actor)
-{
-	if (actor->player == NULL)
-	{
-		actor->Destroy ();
-	}
-}

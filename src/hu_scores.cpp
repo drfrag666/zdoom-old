@@ -1,9 +1,10 @@
 /*
 ** hu_scores.cpp
-** Routines for drawing the deathmatch scoreboard.
+** Routines for drawing the scoreboards.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
+** Copyright 2007-2008 Christopher Westley
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,41 +33,120 @@
 **
 */
 
-#include <string.h>
-#include <ctype.h>
-#include "doomdef.h"
-#include "m_swap.h"
-#include "hu_stuff.h"
-#include "w_wad.h"
-#include "s_sound.h"
-#include "doomstat.h"
-#include "st_stuff.h"
+// HEADER FILES ------------------------------------------------------------
+
 #include "c_console.h"
-#include "c_dispatch.h"
-#include "c_cvars.h"
-#include "v_text.h"
-#include "v_video.h"
-#include "gi.h"
-#include "d_gui.h"
-#include "i_input.h"
+#include "st_stuff.h"
+#include "teaminfo.h"
 #include "templates.h"
+#include "v_video.h"
+#include "doomstat.h"
+#include "g_level.h"
+#include "d_netinf.h"
+#include "v_font.h"
+#include "v_palette.h"
+#include "d_player.h"
+#include "hu_stuff.h"
+#include "gstrings.h"
 
-static const char *FaceNames[3] = { "FITEFACE", "CLERFACE", "MAGEFACE" };
+// MACROS ------------------------------------------------------------------
 
-static void HU_DrawTeamScores (player_t *, player_t *[MAXPLAYERS]);
-static void HU_DrawSingleScores (player_t *, player_t *[MAXPLAYERS]);
+// TYPES -------------------------------------------------------------------
+
+// EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
+
+// PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
+
+// PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
+
+static void HU_DoDrawScores (player_t *, player_t *[MAXPLAYERS]);
 static void HU_DrawTimeRemaining (int y);
-static void HU_DrawPlayer (player_t *, bool, int, int, int, bool);
+static void HU_DrawPlayer (player_t *, bool, int, int, int, int, int, int, int, int);
 
-static int STACK_ARGS compare (const void *arg1, const void *arg2)
-{
-	return (*(player_t **)arg2)->fragcount - (*(player_t **)arg1)->fragcount;
-}
+// EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 EXTERN_CVAR (Float, timelimit)
 
+// PUBLIC DATA DEFINITIONS -------------------------------------------------
+
+CVAR (Bool,	sb_cooperative_enable,				true,		CVAR_ARCHIVE)
+CVAR (Int,	sb_cooperative_headingcolor,		CR_RED,		CVAR_ARCHIVE)
+CVAR (Int,	sb_cooperative_yourplayercolor,		CR_GREEN,	CVAR_ARCHIVE)
+CVAR (Int,	sb_cooperative_otherplayercolor,	CR_GREY,	CVAR_ARCHIVE)
+
+CVAR (Bool,	sb_deathmatch_enable,				true,		CVAR_ARCHIVE)
+CVAR (Int,	sb_deathmatch_headingcolor,			CR_RED,		CVAR_ARCHIVE)
+CVAR (Int,	sb_deathmatch_yourplayercolor,		CR_GREEN,	CVAR_ARCHIVE)
+CVAR (Int,	sb_deathmatch_otherplayercolor,		CR_GREY,	CVAR_ARCHIVE)
+
+CVAR (Bool,	sb_teamdeathmatch_enable,			true,		CVAR_ARCHIVE)
+CVAR (Int,	sb_teamdeathmatch_headingcolor,		CR_RED,		CVAR_ARCHIVE)
+
+// PRIVATE DATA DEFINITIONS ------------------------------------------------
+
+static int STACK_ARGS comparepoints (const void *arg1, const void *arg2)
+{
+	// Compare first be frags/kills, then by name.
+	player_t *p1 = *(player_t **)arg1;
+	player_t *p2 = *(player_t **)arg2;
+	int diff;
+
+	diff = deathmatch ? p2->fragcount - p1->fragcount : p2->killcount - p1->killcount;
+	if (diff == 0)
+	{
+		diff = stricmp(p1->userinfo.GetName(), p2->userinfo.GetName());
+	}
+	return diff;
+}
+
+static int STACK_ARGS compareteams (const void *arg1, const void *arg2)
+{
+	// Compare first by teams, then by frags, then by name.
+	player_t *p1 = *(player_t **)arg1;
+	player_t *p2 = *(player_t **)arg2;
+	int diff;
+
+	diff = p1->userinfo.GetTeam() - p2->userinfo.GetTeam();
+	if (diff == 0)
+	{
+		diff = p2->fragcount - p1->fragcount;
+		if (diff == 0)
+		{
+			diff = stricmp (p1->userinfo.GetName(), p2->userinfo.GetName());
+		}
+	}
+	return diff;
+}
+
+// CODE --------------------------------------------------------------------
+
+//==========================================================================
+//
+// HU_DrawScores
+//
+//==========================================================================
+
 void HU_DrawScores (player_t *player)
 {
+	if (deathmatch)
+	{
+		if (teamplay)
+		{
+			if (!sb_teamdeathmatch_enable)
+				return;
+		}
+		else
+		{
+			if (!sb_deathmatch_enable)
+				return;
+		}
+	}
+	else
+	{
+		if (!sb_cooperative_enable || !multiplayer)
+			return;
+	}
+
 	int i, j;
 	player_t *sortedplayers[MAXPLAYERS];
 
@@ -81,126 +161,192 @@ void HU_DrawScores (player_t *player)
 		sortedplayers[j] = &players[i];
 	}
 
-	qsort (sortedplayers, MAXPLAYERS, sizeof(player_t *), compare);
-
-	if (teamplay)
-	{
-		HU_DrawTeamScores (player, sortedplayers);
-	}
+	if (teamplay && deathmatch)
+		qsort (sortedplayers, MAXPLAYERS, sizeof(player_t *), compareteams);
 	else
-	{
-		HU_DrawSingleScores (player, sortedplayers);
-	}
+		qsort (sortedplayers, MAXPLAYERS, sizeof(player_t *), comparepoints);
 
-	BorderNeedRefresh = screen->GetPageCount ();
+	HU_DoDrawScores (player, sortedplayers);
+
+	V_SetBorderNeedRefresh();
 }
 
-static void HU_DrawSingleScores (player_t *player, player_t *sortedplayers[MAXPLAYERS])
-{
-	int i, x, y, maxwidth;
-	int height = screen->Font->GetHeight() * CleanYfac;
+//==========================================================================
+//
+// HU_GetPlayerWidths
+//
+// Returns the widest player name and class icon.
+//
+//==========================================================================
 
-	maxwidth = 0;
-	for (i = 0; i < MAXPLAYERS; i++)
+void HU_GetPlayerWidths(int &maxnamewidth, int &maxscorewidth, int &maxiconheight)
+{
+	maxnamewidth = SmallFont->StringWidth("Name");
+	maxscorewidth = 0;
+	maxiconheight = 0;
+
+	for (int i = 0; i < MAXPLAYERS; i++)
 	{
 		if (playeringame[i])
 		{
-			int width = SmallFont->StringWidth (players[i].userinfo.netname);
-			if (width > maxwidth)
-				maxwidth = width;
+			int width = SmallFont->StringWidth(players[i].userinfo.GetName());
+			if (width > maxnamewidth)
+			{
+				maxnamewidth = width;
+			}
+			if (players[i].mo->ScoreIcon.isValid())
+			{
+				FTexture *pic = TexMan[players[i].mo->ScoreIcon];
+				width = pic->GetScaledWidth() - pic->GetScaledLeftOffset() + 2;
+				if (width > maxscorewidth)
+				{
+					maxscorewidth = width;
+				}
+				// The icon's top offset does not count toward its height, because
+				// zdoom.pk3's standard Hexen class icons are designed that way.
+				int height = pic->GetScaledHeight() - pic->GetScaledTopOffset();
+				if (height > maxiconheight)
+				{
+					maxiconheight = height;
+				}
+			}
 		}
 	}
+}
 
-	x = (SCREENWIDTH >> 1) - (((maxwidth + 32 + 32 + 16) * CleanXfac) >> 1);
+//==========================================================================
+//
+// HU_DoDrawScores
+//
+//==========================================================================
 
-	y = (ST_Y >> 1) - (MAXPLAYERS * 6);
-	if (y < 48) y = 48;
+static void HU_DoDrawScores (player_t *player, player_t *sortedplayers[MAXPLAYERS])
+{
+	int color;
+	int height, lineheight;
+	unsigned int i;
+	int maxnamewidth, maxscorewidth, maxiconheight;
+	int numTeams = 0;
+	int x, y, ypadding, bottom;
+	int col2, col3, col4;
+	
+	if (deathmatch)
+	{
+		if (teamplay)
+			color = sb_teamdeathmatch_headingcolor;
+		else
+			color = sb_deathmatch_headingcolor;
+	}
+	else
+	{
+		color = sb_cooperative_headingcolor;
+	}
 
-	HU_DrawTimeRemaining (ST_Y - height);
+	HU_GetPlayerWidths(maxnamewidth, maxscorewidth, maxiconheight);
+	height = SmallFont->GetHeight() * CleanYfac;
+	lineheight = MAX(height, maxiconheight * CleanYfac);
+	ypadding = (lineheight - height + 1) / 2;
 
-	for (i = 0; i < MAXPLAYERS && y < ST_Y - 12 * CleanYfac; i++)
+	bottom = gamestate != GS_INTERMISSION ? ST_Y : SCREENHEIGHT;
+	y = MAX(48*CleanYfac, (bottom - MAXPLAYERS * (height + CleanYfac + 1)) / 2);
+
+	HU_DrawTimeRemaining (bottom - height);
+
+	if (teamplay && deathmatch)
+	{
+		y -= (BigFont->GetHeight() + 8) * CleanYfac;
+		if (gamestate == GS_INTERMISSION)
+		{
+			y = MAX(BigFont->GetHeight() * 4, y);
+		}
+
+		for (i = 0; i < Teams.Size (); i++)
+		{
+			Teams[i].m_iPlayerCount = 0;
+			Teams[i].m_iScore = 0;
+		}
+
+		for (i = 0; i < MAXPLAYERS; ++i)
+		{
+			if (playeringame[sortedplayers[i]-players] && TeamLibrary.IsValidTeam (sortedplayers[i]->userinfo.GetTeam()))
+			{
+				if (Teams[sortedplayers[i]->userinfo.GetTeam()].m_iPlayerCount++ == 0)
+				{
+					numTeams++;
+				}
+
+				Teams[sortedplayers[i]->userinfo.GetTeam()].m_iScore += sortedplayers[i]->fragcount;
+			}
+		}
+
+		int scorexwidth = SCREENWIDTH / MAX(8, numTeams);
+		int numscores = 0;
+		int scorex;
+
+		for (i = 0; i < Teams.Size(); ++i)
+		{
+			if (Teams[i].m_iPlayerCount)
+			{
+				numscores++;
+			}
+		}
+
+		scorex = (SCREENWIDTH - scorexwidth * (numscores - 1)) / 2;
+
+		for (i = 0; i < Teams.Size(); ++i)
+		{
+			if (Teams[i].m_iPlayerCount)
+			{
+				char score[80];
+				mysnprintf (score, countof(score), "%d", Teams[i].m_iScore);
+
+				screen->DrawText (BigFont, Teams[i].GetTextColor(),
+					scorex - BigFont->StringWidth(score)*CleanXfac/2, y, score,
+					DTA_CleanNoMove, true, TAG_DONE);
+
+				scorex += scorexwidth;
+			}
+		}
+
+		y += (BigFont->GetHeight() + 8) * CleanYfac;
+	}
+
+	const char *text_color = GStrings("SCORE_COLOR"),
+		*text_frags = GStrings(deathmatch ? "SCORE_FRAGS" : "SCORE_KILLS"),
+		*text_name = GStrings("SCORE_NAME");
+
+	col2 = (SmallFont->StringWidth(text_color) + 8) * CleanXfac;
+	col3 = col2 + (SmallFont->StringWidth(text_frags) + 8) * CleanXfac;
+	col4 = col3 + maxscorewidth * CleanXfac;
+	x = (SCREENWIDTH >> 1) - ((maxnamewidth * CleanXfac + col4) >> 1);
+
+	screen->DrawText (SmallFont, color, x, y, text_color,
+		DTA_CleanNoMove, true, TAG_DONE);
+
+	screen->DrawText (SmallFont, color, x + col2, y, text_frags,
+		DTA_CleanNoMove, true, TAG_DONE);
+
+	screen->DrawText (SmallFont, color, x + col4, y, text_name,
+		DTA_CleanNoMove, true, TAG_DONE);
+
+	y += height + 6 * CleanYfac;
+	bottom -= height;
+
+	for (i = 0; i < MAXPLAYERS && y <= bottom; i++)
 	{
 		if (playeringame[sortedplayers[i] - players])
 		{
-			HU_DrawPlayer (sortedplayers[i], player==sortedplayers[i], x, y, height, false);
-			y += height + CleanYfac;
+			HU_DrawPlayer (sortedplayers[i], player==sortedplayers[i], x, col2, col3, col4, maxnamewidth, y, ypadding, lineheight);
+			y += lineheight + CleanYfac;
 		}
 	}
 }
 
-static void HU_DrawTeamScores (player_t *player, player_t *sorted[MAXPLAYERS])
-{
-	static const int teamColors[NUM_TEAMS] = { CR_RED, CR_BLUE, CR_GREEN, CR_GOLD };
-
-	char str[80];
-	int height = screen->Font->GetHeight() * CleanYfac;
-	int teamPlayers[NUM_TEAMS] = { 0 }, teamSlot[NUM_TEAMS];
-	int teamX[NUM_TEAMS], teamY[NUM_TEAMS], teamScore[NUM_TEAMS] = { 0 };
-	int numTeams = 0;
-	int i, j, tallest;
-
-	for (i = 0; i < MAXPLAYERS; ++i)
-	{
-		if (playeringame[sorted[i]-players] && sorted[i]->userinfo.team < NUM_TEAMS)
-		{
-			if (teamPlayers[sorted[i]->userinfo.team]++ == 0)
-			{
-				numTeams++;
-			}
-			teamScore[sorted[i]->userinfo.team] += sorted[i]->fragcount;
-		}
-	}
-
-	if (numTeams == 0)
-	{
-		HU_DrawSingleScores (player, sorted);
-		return;
-	}
-
-	HU_DrawTimeRemaining (ST_Y - height);
-
-	screen->SetFont (BigFont);
-
-	for (i = j = tallest = 0; i < NUM_TEAMS; ++i)
-	{
-		if (teamPlayers[i])
-		{
-			teamPlayers[j] = teamPlayers[i];
-			teamSlot[i] = j;
-
-			if (j < 2 && teamPlayers[i] > tallest)
-			{
-				tallest = teamPlayers[i];
-			}
-			else if (j == 2)
-			{
-				tallest = tallest * (height+CleanYfac) + 36*CleanYfac + teamY[0];
-			}
-
-			teamX[j] = (j&1) ? (SCREENWIDTH+teamX[0]) >> 1 : 10*CleanXfac;
-			teamY[j] = (j&2) ? tallest : (gamestate==GS_LEVEL?32*CleanYfac:
-								(56-100)*CleanYfac+(SCREENHEIGHT/2));
-
-			sprintf (str, "%s %d", TeamNames[i], teamScore[i]);
-			screen->DrawText (teamColors[i], teamX[j],
-				teamY[j] - 20*CleanYfac, str, DTA_CleanNoMove, true, TAG_DONE);
-
-			j++;
-		}
-	}
-
-	screen->SetFont (SmallFont);
-
-	for (i = 0; i < MAXPLAYERS; ++i)
-	{
-		if (playeringame[sorted[i]-players] && sorted[i]->userinfo.team < NUM_TEAMS)
-		{
-			int slot = teamSlot[sorted[i]->userinfo.team];
-			HU_DrawPlayer (sorted[i], player==sorted[i], teamX[slot], teamY[slot], height, true);
-			teamY[slot] += height + CleanYfac;
-		}
-	}
-}
+//==========================================================================
+//
+// HU_DrawTimeRemaining
+//
+//==========================================================================
 
 static void HU_DrawTimeRemaining (int y)
 {
@@ -220,50 +366,114 @@ static void HU_DrawTimeRemaining (int y)
 		seconds = timeleft / TICRATE;
 
 		if (hours)
-			sprintf (str, "Level ends in %02d:%02d:%02d", hours, minutes, seconds);
+			mysnprintf (str, countof(str), "Level ends in %d:%02d:%02d", hours, minutes, seconds);
 		else
-			sprintf (str, "Level ends in %02d:%02d", minutes, seconds);
+			mysnprintf (str, countof(str), "Level ends in %d:%02d", minutes, seconds);
 		
-		screen->DrawText (CR_GREY, SCREENWIDTH/2 - SmallFont->StringWidth (str)/2*CleanXfac,
+		screen->DrawText (SmallFont, CR_GREY, SCREENWIDTH/2 - SmallFont->StringWidth (str)/2*CleanXfac,
 			y, str, DTA_CleanNoMove, true, TAG_DONE);
 	}
-
 }
 
-static void HU_DrawPlayer (player_t *player, bool highlight, int x, int y, int height, bool pack)
+//==========================================================================
+//
+// HU_DrawPlayer
+//
+//==========================================================================
+
+static void HU_DrawPlayer (player_t *player, bool highlight, int col1, int col2, int col3, int col4, int maxnamewidth, int y, int ypadding, int height)
 {
-	char str[80];
-	float h, s, v, r, g, b;
 	int color;
+	char str[80];
 
-	D_GetPlayerColor (player - players, &h, &s, &v);
-	HSVtoRGB (&r, &g, &b, h, s, v);
-
-	color = ColorMatcher.Pick (clamp (int(r*255.f),0,255),
-		clamp (int(g*255.f),0,255), clamp (int(b*255.f),0,255));
-
-	screen->Clear (x, y, x + 24*CleanXfac, y + height, color);
-
-	if (gameinfo.gametype == GAME_Hexen &&
-		player->CurrentPlayerClass < 3)
+	if (highlight)
 	{
-		screen->DrawTexture (TexMan[FaceNames[player->CurrentPlayerClass]], x+(pack?20:32)*CleanXfac, y,
-			DTA_CleanNoMove, true, TAG_DONE);
+		// The teamplay mode uses colors to show teams, so we need some
+		// other way to do highlighting. And it may as well be used for
+		// all modes for the sake of consistancy.
+		screen->Dim(MAKERGB(200,245,255), 0.125f, col1 - 12*CleanXfac, y - 1, col4 + (maxnamewidth + 24)*CleanXfac, height + 2);
 	}
 
-	sprintf (str, "%d", player->fragcount);
-	screen->DrawText (highlight ? CR_GREEN : CR_BRICK, x+(pack?28:40)*CleanXfac, y, str,
+	col2 += col1;
+	col3 += col1;
+	col4 += col1;
+
+	color = HU_GetRowColor(player, highlight);
+	HU_DrawColorBar(col1, y, height, (int)(player - players));
+	mysnprintf (str, countof(str), "%d", deathmatch ? player->fragcount : player->killcount);
+
+	screen->DrawText (SmallFont, color, col2, y + ypadding, player->playerstate == PST_DEAD && !deathmatch ? "DEAD" : str,
 		DTA_CleanNoMove, true, TAG_DONE);
 
-	if (!highlight)
+	if (player->mo->ScoreIcon.isValid())
 	{
-		color = (demoplayback && player == &players[consoleplayer]) ? CR_GOLD : CR_GREY;
+		FTexture *pic = TexMan[player->mo->ScoreIcon];
+		screen->DrawTexture (pic, col3, y,
+			DTA_CleanNoMove, true,
+			TAG_DONE);
+	}
+
+	screen->DrawText (SmallFont, color, col4, y + ypadding, player->userinfo.GetName(),
+		DTA_CleanNoMove, true, TAG_DONE);
+
+	if (teamplay && Teams[player->userinfo.GetTeam()].GetLogo().IsNotEmpty ())
+	{
+		FTexture *pic = TexMan[Teams[player->userinfo.GetTeam()].GetLogo().GetChars ()];
+		screen->DrawTexture (pic, col1 - (pic->GetScaledWidth() + 2) * CleanXfac, y,
+			DTA_CleanNoMove, true, TAG_DONE);
+	}
+}
+
+//==========================================================================
+//
+// HU_DrawColorBar
+//
+//==========================================================================
+
+void HU_DrawColorBar(int x, int y, int height, int playernum)
+{
+	float h, s, v, r, g, b;
+
+	D_GetPlayerColor (playernum, &h, &s, &v, NULL);
+	HSVtoRGB (&r, &g, &b, h, s, v);
+
+	screen->Clear (x, y, x + 24*CleanXfac, y + height, -1,
+		MAKEARGB(255,clamp(int(r*255.f),0,255),
+					 clamp(int(g*255.f),0,255),
+					 clamp(int(b*255.f),0,255)));
+}
+
+//==========================================================================
+//
+// HU_GetRowColor
+//
+//==========================================================================
+
+int HU_GetRowColor(player_t *player, bool highlight)
+{
+	if (teamplay && deathmatch)
+	{
+		if (TeamLibrary.IsValidTeam (player->userinfo.GetTeam()))
+			return Teams[player->userinfo.GetTeam()].GetTextColor();
+		else
+			return CR_GREY;
 	}
 	else
 	{
-		color = CR_GREEN;
+		if (!highlight)
+		{
+			if (demoplayback && player == &players[consoleplayer])
+			{
+				return CR_GOLD;
+			}
+			else
+			{
+				return deathmatch ? sb_deathmatch_otherplayercolor : sb_cooperative_otherplayercolor;
+			}
+		}
+		else
+		{
+			return deathmatch ? sb_deathmatch_yourplayercolor : sb_cooperative_yourplayercolor;
+		}
 	}
-
-	screen->DrawText (color, x + (pack?54:72)*CleanXfac, y, player->userinfo.netname,
-		DTA_CleanNoMove, true, TAG_DONE);
 }

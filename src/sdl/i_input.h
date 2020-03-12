@@ -2,18 +2,9 @@
 #define __I_INPUT_H__
 
 void I_PutInClipboard (const char *str);
-char *I_GetFromClipboard ();
-
-struct GUIDName
-{
-        GUID ID;
-        char *Name;
-};
-
-extern TArray<GUIDName> JoystickNames;
-extern char *JoyAxisNames[8];
-
-extern void DI_EnumJoy ();
+FString I_GetFromClipboard (bool use_primary_selection);
+void I_SetMouseCapture();
+void I_ReleaseMouseCapture();
 
 #endif
 

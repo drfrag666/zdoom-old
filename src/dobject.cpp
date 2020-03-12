@@ -3,7 +3,7 @@
 ** Implements the base class DObject, which most other classes derive from
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -38,7 +38,6 @@
 #include "cmdlib.h"
 #include "actor.h"
 #include "dobject.h"
-#include "m_alloc.h"
 #include "doomstat.h"		// Ideally, DObjects can be used independant of Doom.
 #include "d_player.h"		// See p_user.cpp to find out why this doesn't work.
 #include "g_game.h"			// Needed for bodyque.
@@ -46,236 +45,21 @@
 #include "i_system.h"
 #include "r_state.h"
 #include "stats.h"
+#include "a_sharedglobal.h"
+#include "dsectoreffect.h"
+#include "farchive.h"
 
-TArray<TypeInfo *> TypeInfo::m_RuntimeActors;
-TypeInfo **TypeInfo::m_Types;
-unsigned short TypeInfo::m_NumTypes;
-unsigned short TypeInfo::m_MaxTypes;
-unsigned int TypeInfo::TypeHash[256];	// Why can't I use TypeInfo::HASH_SIZE?
-
-#if defined(_MSC_VER) || defined(__GNUC__)
-#include "autosegs.h"
-
-TypeInfo DObject::_StaticType =
+PClass DObject::_StaticType;
+ClassReg DObject::RegistrationInfo =
 {
-	"DObject",
-	NULL,
-	sizeof(DObject),
+	&DObject::_StaticType,			// MyClass
+	"DObject",						// Name
+	NULL,							// ParentType
+	sizeof(DObject),				// SizeOf
+	NULL,							// Pointers
+	&DObject::InPlaceConstructor	// ConstructNative
 };
-
-void TypeInfo::StaticInit ()
-{
-	TAutoSegIterator<TypeInfo *, &CRegHead, &CRegTail> probe;
-
-	while (++probe != NULL)
-	{
-		probe->RegisterType ();
-	}
-}
-#else
-TypeInfo DObject::_StaticType(NULL, "DObject", NULL, sizeof(DObject));
-#endif
-
-static cycle_t StaleCycles;
-static int StaleCount;
-
-void TypeInfo::RegisterType ()
-{
-	// Add type to list
-	if (m_NumTypes == m_MaxTypes)
-	{
-		m_MaxTypes = m_MaxTypes ? m_MaxTypes*2 : 256;
-		m_Types = (TypeInfo **)Realloc (m_Types, m_MaxTypes * sizeof(*m_Types));
-	}
-	m_Types[m_NumTypes] = this;
-	TypeIndex = m_NumTypes;
-	m_NumTypes++;
-
-	// Add type to hash table. Types are inserted into each bucket
-	// lexicographically, and the prefix character is ignored.
-	unsigned int bucket = MakeKey (Name+1) % HASH_SIZE;
-	unsigned int *hashpos = &TypeHash[bucket];
-	while (*hashpos != 0)
-	{
-		int lexx = strcmp (Name+1, m_Types[*hashpos-1]->Name+1);
-		// (The Lexx is the most powerful weapon of destruction
-		//  in the two universes.)
-
-		if (lexx > 0)
-		{ // This type should come later in the chain
-			hashpos = &m_Types[*hashpos-1]->HashNext;
-		}
-		else if (lexx == 0)
-		{ // This type has already been inserted
-			I_FatalError ("Class %s already registered", Name);
-		}
-		else
-		{ // Type comes right here
-			break;
-		}
-	}
-	HashNext = *hashpos;
-	*hashpos = TypeIndex + 1;
-}
-
-// Case-sensitive search (preferred)
-const TypeInfo *TypeInfo::FindType (const char *name)
-{
-	if (name != NULL)
-	{
-		unsigned int index = TypeHash[MakeKey (name) % HASH_SIZE];
-
-		while (index != 0)
-		{
-			int lexx = strcmp (name, m_Types[index-1]->Name + 1);
-			if (lexx > 0)
-			{
-				index = m_Types[index-1]->HashNext;
-			}
-			else if (lexx == 0)
-			{
-				return m_Types[index-1];
-			}
-			else
-			{
-				break;
-			}
-		}
-	}
-	return NULL;
-}
-
-// Case-insensitive search
-const TypeInfo *TypeInfo::IFindType (const char *name)
-{
-	if (name != NULL)
-	{
-		for (int i = 0; i < TypeInfo::m_NumTypes; i++)
-		{
-			if (stricmp (TypeInfo::m_Types[i]->Name + 1, name) == 0)
-				return TypeInfo::m_Types[i];
-		}
-	}
-	return NULL;
-}
-
-// Create a new object that this type represents
-DObject *TypeInfo::CreateNew () const
-{
-	BYTE *mem = (BYTE *)Malloc (SizeOf);
-	ConstructNative (mem);
-	((DObject *)mem)->SetClass (const_cast<TypeInfo *>(this));
-
-	// If this is a scripted extension of a class but not an actor,
-	// initialize any extended space to zero. Actors have defaults, so
-	// we can initialize them better
-	if (ActorInfo != NULL)
-	{
-		AActor *actor = (AActor *)mem;
-		memcpy (&(actor->x), &(((AActor *)ActorInfo->Defaults)->x), SizeOf - ((BYTE *)&actor->x - (BYTE *)actor));
-	}
-	else if (ParentType != 0 &&
-		ConstructNative == ParentType->ConstructNative &&
-		SizeOf > ParentType->SizeOf)
-	{
-		memset (mem + ParentType->SizeOf, 0, SizeOf - ParentType->SizeOf);
-	}
-	return (DObject *)mem;
-}
-
-// Create a new type based on an existing type
-TypeInfo *TypeInfo::CreateDerivedClass (char *name, unsigned int size)
-{
-	TypeInfo *type = new TypeInfo;
-
-	type->Name = name;
-	type->ParentType = this;
-	type->SizeOf = size;
-	type->Pointers = NULL;
-	type->ConstructNative = ConstructNative;
-	type->RegisterType();
-	type->Meta = Meta;
-	type->FlatPointers = NULL;
-
-	// If this class has an actor info, then any classes derived from it
-	// also need an actor info.
-	if (this->ActorInfo != NULL)
-	{
-		FActorInfo *info = type->ActorInfo = new FActorInfo;
-		info->Class = type;
-		info->Defaults = new BYTE[size];
-		info->GameFilter = GAME_Any;
-		info->SpawnID = 0;
-		info->DoomEdNum = -1;
-		info->OwnedStates = NULL;
-		info->NumOwnedStates = 0;
-
-		memcpy (info->Defaults, ActorInfo->Defaults, SizeOf);
-		if (size > SizeOf)
-		{
-			memset (info->Defaults + SizeOf, 0, size - SizeOf);
-		}
-		m_RuntimeActors.Push (type);
-	}
-	else
-	{
-		type->ActorInfo = NULL;
-	}
-	return type;
-}
-
-// Create the FlatPointers array, if it doesn't exist already.
-// It comprises all the Pointers from superclasses plus this class's own Pointers.
-// If this class does not define any new Pointers, then FlatPointers will be set
-// to the same array as the super class's.
-void TypeInfo::BuildFlatPointers ()
-{
-	static const size_t TheEnd = ~0;
-
-	if (FlatPointers != NULL)
-	{ // Already built: Do nothing.
-		return;
-	}
-	else if (ParentType == NULL)
-	{ // No parent: FlatPointers is the same as Pointers.
-		if (Pointers == NULL)
-		{ // No pointers: Make FlatPointers a harmless non-NULL.
-			FlatPointers = &TheEnd;
-		}
-		else
-		{
-			FlatPointers = Pointers;
-		}
-	}
-	else
-	{
-		ParentType->BuildFlatPointers ();
-		if (Pointers == NULL)
-		{ // No new pointers: Just use the same FlatPointers as the parent.
-			FlatPointers = ParentType->FlatPointers;
-		}
-		else
-		{ // New pointers: Create a new FlatPointers array and add them.
-			int numPointers, numSuperPointers;
-
-			// Count pointers defined by this class.
-			for (numPointers = 0; Pointers[numPointers] != ~(size_t)0; numPointers++)
-			{ }
-			// Count pointers defined by superclasses.
-			for (numSuperPointers = 0; ParentType->FlatPointers[numSuperPointers] != ~(size_t)0; numSuperPointers++)
-			{ }
-
-			// Concatenate them into a new array
-			size_t *flat = new size_t[numPointers + numSuperPointers + 1];
-			if (numSuperPointers > 0)
-			{
-				memcpy (flat, ParentType->FlatPointers, sizeof(size_t)*numSuperPointers);
-			}
-			memcpy (flat + numSuperPointers, Pointers, sizeof(size_t)*(numPointers+1));
-			FlatPointers = flat;
-		}
-	}
-}
+_DECLARE_TI(DObject)
 
 FMetaTable::~FMetaTable ()
 {
@@ -303,7 +87,7 @@ void FMetaTable::FreeMeta ()
 		switch (meta->Type)
 		{
 		case META_String:
-			delete meta->Value.String;
+			delete[] meta->Value.String;
 			break;
 		default:
 			break;
@@ -375,10 +159,10 @@ void FMetaTable::SetMetaInt (DWORD id, int parm)
 	meta->Value.Int = parm;
 }
 
-int FMetaTable::GetMetaInt (DWORD id) const
+int FMetaTable::GetMetaInt (DWORD id, int def) const
 {
 	FMetaData *meta = FindMeta (META_Int, id);
-	return meta != NULL ? meta->Value.Int : 0;
+	return meta != NULL ? meta->Value.Int : def;
 }
 
 void FMetaTable::SetMetaFixed (DWORD id, fixed_t parm)
@@ -387,10 +171,10 @@ void FMetaTable::SetMetaFixed (DWORD id, fixed_t parm)
 	meta->Value.Fixed = parm;
 }
 
-fixed_t FMetaTable::GetMetaFixed (DWORD id) const
+fixed_t FMetaTable::GetMetaFixed (DWORD id, fixed_t def) const
 {
 	FMetaData *meta = FindMeta (META_Fixed, id);
-	return meta != NULL ? meta->Value.Fixed : 0;
+	return meta != NULL ? meta->Value.Fixed : def;
 }
 
 void FMetaTable::SetMetaString (DWORD id, const char *parm)
@@ -405,16 +189,145 @@ const char *FMetaTable::GetMetaString (DWORD id) const
 	return meta != NULL ? meta->Value.String : NULL;
 }
 
+CCMD (dumpactors)
+{
+	const char *const filters[32] =
+	{
+		"0:All", "1:Doom", "2:Heretic", "3:DoomHeretic", "4:Hexen", "5:DoomHexen", "6:Raven", "7:IdRaven",
+		"8:Strife", "9:DoomStrife", "10:HereticStrife", "11:DoomHereticStrife", "12:HexenStrife", 
+		"13:DoomHexenStrife", "14:RavenStrife", "15:NotChex", "16:Chex", "17:DoomChex", "18:HereticChex",
+		"19:DoomHereticChex", "20:HexenChex", "21:DoomHexenChex", "22:RavenChex", "23:NotStrife", "24:StrifeChex",
+		"25:DoomStrifeChex", "26:HereticStrifeChex", "27:NotHexen",	"28:HexenStrifeChex", "29:NotHeretic",
+		"30:NotDoom", "31:All",
+	};
+	Printf("%i object class types total\nActor\tEd Num\tSpawnID\tFilter\tSource\n", PClass::m_Types.Size());
+	for (unsigned int i = 0; i < PClass::m_Types.Size(); i++)
+	{
+		PClass *cls = PClass::m_Types[i];
+		if (cls != NULL && cls->ActorInfo != NULL)
+			Printf("%s\t%i\t%i\t%s\t%s\n",
+			cls->TypeName.GetChars(), cls->ActorInfo->DoomEdNum,
+			cls->ActorInfo->SpawnID, filters[cls->ActorInfo->GameFilter & 31],
+			cls->Meta.GetMetaString (ACMETA_Lump));
+		else if (cls != NULL)
+			Printf("%s\tn/a\tn/a\tn/a\tEngine (not an actor type)\n", cls->TypeName.GetChars());
+		else
+			Printf("Type %i is not an object class\n", i);
+	}
+}
+
 CCMD (dumpclasses)
 {
-	const TypeInfo *root;
-	int i;
+	// This is by no means speed-optimized. But it's an informational console
+	// command that will be executed infrequently, so I don't mind.
+	struct DumpInfo
+	{
+		const PClass *Type;
+		DumpInfo *Next;
+		DumpInfo *Children;
+
+		static DumpInfo *FindType (DumpInfo *root, const PClass *type)
+		{
+			if (root == NULL)
+			{
+				return root;
+			}
+			if (root->Type == type)
+			{
+				return root;
+			}
+			if (root->Next != NULL)
+			{
+				return FindType (root->Next, type);
+			}
+			if (root->Children != NULL)
+			{
+				return FindType (root->Children, type);
+			}
+			return NULL;
+		}
+
+		static DumpInfo *AddType (DumpInfo **root, const PClass *type)
+		{
+			DumpInfo *info, *parentInfo;
+
+			if (*root == NULL)
+			{
+				info = new DumpInfo;
+				info->Type = type;
+				info->Next = NULL;
+				info->Children = *root;
+				*root = info;
+				return info;
+			}
+			if (type->ParentClass == (*root)->Type)
+			{
+				parentInfo = *root;
+			}
+			else if (type == (*root)->Type)
+			{
+				return *root;
+			}
+			else
+			{
+				parentInfo = FindType (*root, type->ParentClass);
+				if (parentInfo == NULL)
+				{
+					parentInfo = AddType (root, type->ParentClass);
+				}
+			}
+			// Has this type already been added?
+			for (info = parentInfo->Children; info != NULL; info = info->Next)
+			{
+				if (info->Type == type)
+				{
+					return info;
+				}
+			}
+			info = new DumpInfo;
+			info->Type = type;
+			info->Next = parentInfo->Children;
+			info->Children = NULL;
+			parentInfo->Children = info;
+			return info;
+		}
+
+		static void PrintTree (DumpInfo *root, int level)
+		{
+			Printf ("%*c%s\n", level, ' ', root->Type->TypeName.GetChars());
+			if (root->Children != NULL)
+			{
+				PrintTree (root->Children, level + 2);
+			}
+			if (root->Next != NULL)
+			{
+				PrintTree (root->Next, level);
+			}
+		}
+
+		static void FreeTree (DumpInfo *root)
+		{
+			if (root->Children != NULL)
+			{
+				FreeTree (root->Children);
+			}
+			if (root->Next != NULL)
+			{
+				FreeTree (root->Next);
+			}
+			delete root;
+		}
+	};
+
+	unsigned int i;
 	int shown, omitted;
+	DumpInfo *tree = NULL;
+	const PClass *root = NULL;
 	bool showall = true;
 
 	if (argv.argc() > 1)
 	{
-		root = TypeInfo::IFindType (argv[1]);
+		root = PClass::FindClass (argv[1]);
 		if (root == NULL)
 		{
 			Printf ("Class '%s' not found\n", argv[1]);
@@ -428,20 +341,19 @@ CCMD (dumpclasses)
 			}
 		}
 	}
-	else
-	{
-		root = NULL;
-	}
 
 	shown = omitted = 0;
-	for (i = 0; i < TypeInfo::m_NumTypes; i++)
+	DumpInfo::AddType (&tree, root != NULL ? root : RUNTIME_CLASS(DObject));
+	for (i = 0; i < PClass::m_Types.Size(); i++)
 	{
+		PClass *cls = PClass::m_Types[i];
 		if (root == NULL ||
-			(TypeInfo::m_Types[i]->IsDescendantOf (root) &&
-			 (showall || TypeInfo::m_Types[i] == root ||
-			  TypeInfo::m_Types[i]->ActorInfo != root->ActorInfo)))
+			(cls->IsDescendantOf (root) &&
+			(showall || cls == root ||
+			cls->ActorInfo != root->ActorInfo)))
 		{
-			Printf (" %s\n", TypeInfo::m_Types[i]->Name + 1);
+			DumpInfo::AddType (&tree, cls);
+//			Printf (" %s\n", PClass::m_Types[i]->Name + 1);
 			shown++;
 		}
 		else
@@ -449,240 +361,255 @@ CCMD (dumpclasses)
 			omitted++;
 		}
 	}
+	DumpInfo::PrintTree (tree, 2);
+	DumpInfo::FreeTree (tree);
 	Printf ("%d classes shown, %d omitted\n", shown, omitted);
 }
 
-TArray<DObject *> DObject::Objects;
-TArray<size_t> DObject::FreeIndices;
-TArray<DObject *> DObject::ToDestroy;
-bool DObject::Inactive;
-
-DObject::DObject ()
-: ObjectFlags(0), Class(0)
+void DObject::InPlaceConstructor (void *mem)
 {
-	if (FreeIndices.Pop (Index))
-		Objects[Index] = this;
-	else
-		Index = Objects.Push (this);
+	new ((EInPlace *)mem) DObject;
 }
 
-DObject::DObject (TypeInfo *inClass)
-: ObjectFlags(0), Class(inClass)
+DObject::DObject ()
+: Class(0), ObjectFlags(0)
 {
-	if (FreeIndices.Pop (Index))
-		Objects[Index] = this;
-	else
-		Index = Objects.Push (this);
+	ObjectFlags = GC::CurrentWhite & OF_WhiteBits;
+	ObjNext = GC::Root;
+	GC::Root = this;
+}
+
+DObject::DObject (PClass *inClass)
+: Class(inClass), ObjectFlags(0)
+{
+	ObjectFlags = GC::CurrentWhite & OF_WhiteBits;
+	ObjNext = GC::Root;
+	GC::Root = this;
 }
 
 DObject::~DObject ()
 {
-	if (!Inactive)
+	if (!(ObjectFlags & OF_Cleanup))
 	{
-		if (!(ObjectFlags & OF_MassDestruction))
-		{
-			RemoveFromArray ();
-			DestroyScan (this);
-		}
-		else if (!(ObjectFlags & OF_Cleanup))
-		{
-			// object is queued for deletion, but is not being deleted
-			// by the destruction process, so remove it from the
-			// ToDestroy array and do other necessary stuff.
-			unsigned int i;
+		DObject **probe;
+		PClass *type = GetClass();
 
-			for (i = ToDestroy.Size() - 1; i-- > 0; )
+		if (!(ObjectFlags & OF_YesReallyDelete))
+		{
+			Printf ("Warning: '%s' is freed outside the GC process.\n",
+				type != NULL ? type->TypeName.GetChars() : "==some object==");
+		}
+
+		// Find all pointers that reference this object and NULL them.
+		StaticPointerSubstitution(this, NULL);
+
+		// Now unlink this object from the GC list.
+		for (probe = &GC::Root; *probe != NULL; probe = &((*probe)->ObjNext))
+		{
+			if (*probe == this)
 			{
-				if (ToDestroy[i] == this)
+				*probe = ObjNext;
+				if (&ObjNext == GC::SweepPos)
 				{
-					ToDestroy[i] = NULL;
+					GC::SweepPos = probe;
+				}
+				break;
+			}
+		}
+
+		// If it's gray, also unlink it from the gray list.
+		if (this->IsGray())
+		{
+			for (probe = &GC::Gray; *probe != NULL; probe = &((*probe)->GCNext))
+			{
+				if (*probe == this)
+				{
+					*probe = GCNext;
 					break;
 				}
 			}
-			DestroyScan (this);
 		}
 	}
 }
 
 void DObject::Destroy ()
 {
-	if (!Inactive)
+	ObjectFlags = (ObjectFlags & ~OF_Fixed) | OF_EuthanizeMe;
+}
+
+size_t DObject::PropagateMark()
+{
+	const PClass *info = GetClass();
+	if (!PClass::bShutdown)
 	{
-		if (!(ObjectFlags & OF_MassDestruction))
+		const size_t *offsets = info->FlatPointers;
+		if (offsets == NULL)
 		{
-			RemoveFromArray ();
-			ObjectFlags |= OF_MassDestruction;
-			ToDestroy.Push (this);
+			const_cast<PClass *>(info)->BuildFlatPointers();
+			offsets = info->FlatPointers;
 		}
-	}
-	else
-		delete this;
-}
-
-void DObject::BeginFrame ()
-{
-	StaleCycles = 0;
-	StaleCount = 0;
-}
-
-void DObject::EndFrame ()
-{
-	clock (StaleCycles);
-	if (ToDestroy.Size ())
-	{
-		StaleCount += (int)ToDestroy.Size ();
-		DestroyScan ();
-		//Printf ("Destroyed %d objects\n", ToDestroy.Size());
-
-		DObject *obj;
-		while (ToDestroy.Pop (obj))
+		while (*offsets != ~(size_t)0)
 		{
-			if (obj)
-			{
-				obj->ObjectFlags |= OF_Cleanup;
-				delete obj;
-			}
+			GC::Mark((DObject **)((BYTE *)this + *offsets));
+			offsets++;
 		}
+		return info->Size;
 	}
-	unclock (StaleCycles);
+	return 0;
 }
 
-void DObject::RemoveFromArray ()
+size_t DObject::PointerSubstitution (DObject *old, DObject *notOld)
 {
-	if (Objects.Size() == Index + 1)
+	const PClass *info = GetClass();
+	const size_t *offsets = info->FlatPointers;
+	size_t changed = 0;
+	if (offsets == NULL)
 	{
-		DObject *dummy;
-		Objects.Pop (dummy);
+		const_cast<PClass *>(info)->BuildFlatPointers();
+		offsets = info->FlatPointers;
 	}
-	else if (Objects.Size() > Index)
+	while (*offsets != ~(size_t)0)
 	{
-		Objects[Index] = NULL;
-		FreeIndices.Push (Index);
-	}
-}
-
-void DObject::PointerSubstitution (DObject *old, DObject *notOld)
-{
-	unsigned int i, highest;
-	highest = Objects.Size ();
-
-	for (i = 0; i <= highest; i++)
-	{
-		DObject *current = i < highest ? Objects[i] : &bglobal;
-		if (current)
+		if (*(DObject **)((BYTE *)this + *offsets) == old)
 		{
-			const TypeInfo *info = current->GetClass();
-			const size_t *offsets = info->FlatPointers;
-			if (offsets == NULL)
-			{
-				const_cast<TypeInfo *>(info)->BuildFlatPointers();
-				offsets = info->FlatPointers;
-			}
-			while (*offsets != ~(size_t)0)
-			{
-				if (*(DObject **)((BYTE *)current + *offsets) == old)
-				{
-					*(DObject **)((BYTE *)current + *offsets) = notOld;
-				}
-				offsets++;
-			}
+			*(DObject **)((BYTE *)this + *offsets) = notOld;
+			changed++;
 		}
+		offsets++;
+	}
+	return changed;
+}
+
+size_t DObject::StaticPointerSubstitution (DObject *old, DObject *notOld)
+{
+	DObject *probe;
+	size_t changed = 0;
+	int i;
+
+	// Go through all objects.
+	for (probe = GC::Root; probe != NULL; probe = probe->ObjNext)
+	{
+		changed += probe->PointerSubstitution(old, notOld);
 	}
 
+	// Go through the bodyque.
 	for (i = 0; i < BODYQUESIZE; ++i)
 	{
 		if (bodyque[i] == old)
 		{
 			bodyque[i] = static_cast<AActor *>(notOld);
+			changed++;
 		}
 	}
 
-	// This is an ugly hack, but it's the best I can do for now.
+	// Go through players.
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
 		if (playeringame[i])
-			players[i].FixPointers (old, notOld);
+			changed += players[i].FixPointers (old, notOld);
 	}
-}
 
-// Search for references to a single object and NULL them.
-// It should not be listed in ToDestroy.
-void DObject::DestroyScan (DObject *obj)
-{
-	PointerSubstitution (obj, NULL);
-}
-
-// Search for references to all objects scheduled for
-// destruction and NULL them.
-void DObject::DestroyScan ()
-{
-	unsigned int i, highest;
-	int j, destroycount;
-	DObject **destroybase;
-	destroycount = (int)ToDestroy.Size ();
-	if (destroycount == 0)
-		return;
-	destroybase = &ToDestroy[0] + destroycount;
-	destroycount = -destroycount;
-	highest = Objects.Size ();
-
-	for (i = 0; i <= highest; i++)
+	// Go through sectors.
+	if (sectors != NULL)
 	{
-		DObject *current = i < highest ? Objects[i] : &bglobal;
-		if (current)
+		for (i = 0; i < numsectors; ++i)
 		{
-			const TypeInfo *info = current->GetClass();
-			const size_t *offsets = info->FlatPointers;
-			if (offsets == NULL)
+#define SECTOR_CHECK(f,t) \
+	if (sectors[i].f.p == static_cast<t *>(old)) { sectors[i].f = static_cast<t *>(notOld); changed++; }
+			SECTOR_CHECK( SoundTarget, AActor );
+			SECTOR_CHECK( CeilingSkyBox, ASkyViewpoint );
+			SECTOR_CHECK( FloorSkyBox, ASkyViewpoint );
+			SECTOR_CHECK( SecActTarget, ASectorAction );
+			SECTOR_CHECK( floordata, DSectorEffect );
+			SECTOR_CHECK( ceilingdata, DSectorEffect );
+			SECTOR_CHECK( lightingdata, DSectorEffect );
+#undef SECTOR_CHECK
+		}
+	}
+
+	// Go through bot stuff.
+	if (bglobal.firstthing.p == (AActor *)old)		bglobal.firstthing = (AActor *)notOld, ++changed;
+	if (bglobal.body1.p == (AActor *)old)			bglobal.body1 = (AActor *)notOld, ++changed;
+	if (bglobal.body2.p == (AActor *)old)			bglobal.body2 = (AActor *)notOld, ++changed;
+
+	return changed;
+}
+
+void DObject::SerializeUserVars(FArchive &arc)
+{
+	PSymbolTable *symt;
+	FName varname;
+	DWORD count, j;
+	int *varloc = NULL;
+
+	symt = &GetClass()->Symbols;
+
+	if (arc.IsStoring())
+	{
+		// Write all user variables.
+		for (; symt != NULL; symt = symt->ParentSymbolTable)
+		{
+			for (unsigned i = 0; i < symt->Symbols.Size(); ++i)
 			{
-				const_cast<TypeInfo *>(info)->BuildFlatPointers();
-				offsets = info->FlatPointers;
-			}
-			while (*offsets != ~(size_t)0)
-			{
-				j = destroycount;
-				do
+				PSymbol *sym = symt->Symbols[i];
+				if (sym->SymbolType == SYM_Variable)
 				{
-					if (*(DObject **)((BYTE *)current + *offsets) == *(destroybase + j))
+					PSymbolVariable *var = static_cast<PSymbolVariable *>(sym);
+					if (var->bUserVar)
 					{
-						*(DObject **)((BYTE *)current + *offsets) = NULL;
+						count = var->ValueType.Type == VAL_Array ? var->ValueType.size : 1;
+						varloc = (int *)(reinterpret_cast<BYTE *>(this) + var->offset);
+
+						arc << var->SymbolName;
+						arc.WriteCount(count);
+						for (j = 0; j < count; ++j)
+						{
+							arc << varloc[j];
+						}
 					}
-				} while (++j);
-				offsets++;
+				}
 			}
 		}
+		// Write terminator.
+		varname = NAME_None;
+		arc << varname;
 	}
-
-	j = destroycount;
-	do
+	else
 	{
-		for (i = 0; i < BODYQUESIZE; ++i)
+		// Read user variables until 'None' is encountered.
+		arc << varname;
+		while (varname != NAME_None)
 		{
-			if (bodyque[i] == *(destroybase + j))
+			PSymbol *sym = symt->FindSymbol(varname, true);
+			DWORD wanted = 0;
+
+			if (sym != NULL && sym->SymbolType == SYM_Variable)
 			{
-				bodyque[i] = NULL;
+				PSymbolVariable *var = static_cast<PSymbolVariable *>(sym);
+
+				if (var->bUserVar)
+				{
+					wanted = var->ValueType.Type == VAL_Array ? var->ValueType.size : 1;
+					varloc = (int *)(reinterpret_cast<BYTE *>(this) + var->offset);
+				}
 			}
-		}
-
-	} while (++j);
-
-	// This is an ugly hack, but it's the best I can do for now.
-	for (i = 0; i < MAXPLAYERS; i++)
-	{
-		if (playeringame[i])
-		{
-			j = destroycount;
-			do
+			count = arc.ReadCount();
+			for (j = 0; j < MIN(wanted, count); ++j)
 			{
-				players[i].FixPointers (*(destroybase + j), NULL);
-			} while (++j);
+				arc << varloc[j];
+			}
+			if (wanted < count)
+			{
+				// Ignore remaining values from archive.
+				for (; j < count; ++j)
+				{
+					int foo;
+					arc << foo;
+				}
+			}
+			arc << varname;
 		}
 	}
-}
-
-void STACK_ARGS DObject::StaticShutdown ()
-{
-	Inactive = true;
 }
 
 void DObject::Serialize (FArchive &arc)
@@ -698,25 +625,7 @@ void DObject::CheckIfSerialized () const
 			"BUG: %s::Serialize\n"
 			"(or one of its superclasses) needs to call\n"
 			"Super::Serialize\n",
-			StaticType ()->Name);
+			StaticType()->TypeName.GetChars());
 	}
 }
 
-FArchive &operator<< (FArchive &arc, const TypeInfo * &info)
-{
-	if (arc.IsStoring ())
-	{
-		arc.UserWriteClass (info);
-	}
-	else
-	{
-		arc.UserReadClass (info);
-	}
-	return arc;
-}
-
-ADD_STAT (destroys, out)
-{
-	sprintf (out, "Pointer fixing: %d in %04.1f ms",
-		StaleCount, SecondsPerCycle * (double)StaleCycles * 1000);
-}

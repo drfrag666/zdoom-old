@@ -3,7 +3,7 @@
 ** ACS-accessible thing utilities
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2007 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,7 +34,6 @@
 
 #include "doomtype.h"
 #include "p_local.h"
-#include "p_effect.h"
 #include "info.h"
 #include "s_sound.h"
 #include "tables.h"
@@ -45,31 +44,43 @@
 #include "a_sharedglobal.h"
 #include "gi.h"
 #include "templates.h"
+#include "g_level.h"
 
-// List of spawnable things for the Thing_Spawn and Thing_Projectile specials.
-const TypeInfo *SpawnableThings[MAX_SPAWNABLES];
+// Set of spawnable things for the Thing_Spawn and Thing_Projectile specials.
+TMap<int, const PClass *> SpawnableThings;
 
 static FRandom pr_leadtarget ("LeadTarget");
 
-bool P_Thing_Spawn (int tid, int type, angle_t angle, bool fog, int newtid)
+bool P_Thing_Spawn (int tid, AActor *source, int type, angle_t angle, bool fog, int newtid)
 {
 	int rtn = 0;
-	const TypeInfo *kind;
+	const PClass *kind;
 	AActor *spot, *mobj;
 	FActorIterator iterator (tid);
 
-	if (type >= MAX_SPAWNABLES)
+	kind = P_GetSpawnableType(type);
+
+	if (kind == NULL)
 		return false;
 
-	if ( (kind = SpawnableThings[type]) == NULL)
+	// Handle decorate replacements.
+	kind = kind->GetReplacement();
+
+	if ((GetDefaultByType (kind)->flags3 & MF3_ISMONSTER) && 
+		((dmflags & DF_NO_MONSTERS) || (level.flags2 & LEVEL2_NOMONSTERS)))
 		return false;
 
-	if ((GetDefaultByType (kind)->flags3 & MF3_ISMONSTER) && (dmflags & DF_NO_MONSTERS))
-		return false;
-
-	while ( (spot = iterator.Next ()) )
+	if (tid == 0)
 	{
-		mobj = Spawn (kind, spot->x, spot->y, spot->z);
+		spot = source;
+	}
+	else
+	{
+		spot = iterator.Next();
+	}
+	while (spot != NULL)
+	{
+		mobj = Spawn (kind, spot->x, spot->y, spot->z, ALLOW_REPLACE);
 
 		if (mobj != NULL)
 		{
@@ -81,7 +92,7 @@ bool P_Thing_Spawn (int tid, int type, angle_t angle, bool fog, int newtid)
 				mobj->angle = (angle != ANGLE_MAX ? angle : spot->angle);
 				if (fog)
 				{
-					Spawn<ATeleportFog> (spot->x, spot->y, spot->z + TELEFOGHEIGHT);
+					Spawn<ATeleportFog> (spot->x, spot->y, spot->z + TELEFOGHEIGHT, ALLOW_REPLACE);
 				}
 				if (mobj->flags & MF_SPECIAL)
 					mobj->flags |= MF_DROPPED;	// Don't respawn
@@ -93,19 +104,11 @@ bool P_Thing_Spawn (int tid, int type, angle_t angle, bool fog, int newtid)
 			{
 				// If this is a monster, subtract it from the total monster
 				// count, because it already added to it during spawning.
-				if (mobj->flags & MF_COUNTKILL)
-				{
-					level.total_monsters--;
-				}
-				// Same, for items
-				if (mobj->flags & MF_COUNTITEM)
-				{
-					level.total_items--;
-				}
+				mobj->ClearCounters();
 				mobj->Destroy ();
-				rtn = false;
 			}
 		}
+		spot = iterator.Next();
 	}
 
 	return rtn != 0;
@@ -114,61 +117,98 @@ bool P_Thing_Spawn (int tid, int type, angle_t angle, bool fog, int newtid)
 // [BC] Added
 // [RH] Fixed
 
-bool P_Thing_Move (int tid, int mapspot)
+bool P_MoveThing(AActor *source, fixed_t x, fixed_t y, fixed_t z, bool fog)
 {
-	FActorIterator iterator1 (tid);
-	FActorIterator iterator2 (mapspot);
-	AActor *source, *target;
+	fixed_t oldx, oldy, oldz;
 
-	source = iterator1.Next ();
+	oldx = source->x;
+	oldy = source->y;
+	oldz = source->z;
+
+	source->SetOrigin (x, y, z);
+	if (P_TestMobjLocation (source))
+	{
+		if (fog)
+		{
+			Spawn<ATeleportFog> (x, y, z + TELEFOGHEIGHT, ALLOW_REPLACE);
+			Spawn<ATeleportFog> (oldx, oldy, oldz + TELEFOGHEIGHT, ALLOW_REPLACE);
+		}
+		source->PrevX = x;
+		source->PrevY = y;
+		source->PrevZ = z;
+		if (source == players[consoleplayer].camera)
+		{
+			R_ResetViewInterpolation();
+		}
+		return true;
+	}
+	else
+	{
+		source->SetOrigin (oldx, oldy, oldz);
+		return false;
+	}
+}
+
+bool P_Thing_Move (int tid, AActor *source, int mapspot, bool fog)
+{
+	AActor *target;
+
+	if (tid != 0)
+	{
+		FActorIterator iterator1(tid);
+		source = iterator1.Next();
+	}
+	FActorIterator iterator2 (mapspot);
 	target = iterator2.Next ();
 
 	if (source != NULL && target != NULL)
 	{
-		fixed_t oldx, oldy, oldz;
-
-		oldx = source->x;
-		oldy = source->y;
-		oldz = source->z;
-
-		source->SetOrigin (target->x, target->y, target->z);
-		if (P_TestMobjLocation (source))
-		{
-			Spawn<ATeleportFog> (target->x, target->y, target->z + TELEFOGHEIGHT);
-			Spawn<ATeleportFog> (oldx, oldy, oldz + TELEFOGHEIGHT);
-			return true;
-		}
-		else
-		{
-			source->SetOrigin (oldx, oldy, oldz);
-			return false;
-		}
+		return P_MoveThing(source, target->x, target->y, target->z, fog);
 	}
 	return false;
 }
 
-bool P_Thing_Projectile (int tid, int type, angle_t angle,
+bool P_Thing_Projectile (int tid, AActor *source, int type, const char *type_name, angle_t angle,
 	fixed_t speed, fixed_t vspeed, int dest, AActor *forcedest, int gravity, int newtid,
 	bool leadTarget)
 {
 	int rtn = 0;
-	const TypeInfo *kind;
+	const PClass *kind;
 	AActor *spot, *mobj, *targ = forcedest;
 	FActorIterator iterator (tid);
-	float fspeed = float(speed);
+	double fspeed = speed;
 	int defflags3;
 
-	if (type >= MAX_SPAWNABLES)
+	if (type_name == NULL)
+	{
+		kind = P_GetSpawnableType(type);
+	}
+	else
+	{
+		kind = PClass::FindClass(type_name);
+	}
+	if (kind == NULL || kind->ActorInfo == NULL)
+	{
 		return false;
+	}
 
-	if ((kind = SpawnableThings[type]) == NULL)
-		return false;
+	// Handle decorate replacements.
+	kind = kind->GetReplacement();
 
 	defflags3 = GetDefaultByType (kind)->flags3;
-	if ((defflags3 & MF3_ISMONSTER) && (dmflags & DF_NO_MONSTERS))
+	if ((defflags3 & MF3_ISMONSTER) && 
+		((dmflags & DF_NO_MONSTERS) || (level.flags2 & LEVEL2_NOMONSTERS)))
 		return false;
 
-	while ( (spot = iterator.Next ()) )
+	if (tid == 0)
+	{
+		spot = source;
+	}
+	else
+	{
+		spot = iterator.Next();
+	}
+	while (spot != NULL)
 	{
 		FActorIterator tit (dest);
 
@@ -189,22 +229,19 @@ bool P_Thing_Projectile (int tid, int type, angle_t angle,
 				{
 					z -= spot->floorclip;
 				}
-				mobj = Spawn (kind, spot->x, spot->y, z);
+				mobj = Spawn (kind, spot->x, spot->y, z, ALLOW_REPLACE);
 
 				if (mobj)
 				{
 					mobj->tid = newtid;
 					mobj->AddToHash ();
-					if (mobj->SeeSound)
-					{
-						S_SoundID (mobj, CHAN_VOICE, mobj->SeeSound, 1, ATTN_NORM);
-					}
+					P_PlaySpawnSound(mobj, spot);
 					if (gravity)
 					{
 						mobj->flags &= ~MF_NOGRAVITY;
 						if (!(mobj->flags3 & MF3_ISMONSTER) && gravity == 1)
 						{
-							mobj->flags2 |= MF2_LOGRAV;
+							mobj->gravity = FRACUNIT/8;
 						}
 					}
 					else
@@ -216,14 +253,9 @@ bool P_Thing_Projectile (int tid, int type, angle_t angle,
 					if (targ != NULL)
 					{
 						fixed_t spot[3] = { targ->x, targ->y, targ->z+targ->height/2 };
-						vec3_t aim =
-						{
-							float(spot[0] - mobj->x),
-							float(spot[1] - mobj->y),
-							float(spot[2] - mobj->z)
-						};
+						FVector3 aim(float(spot[0] - mobj->x), float(spot[1] - mobj->y), float(spot[2] - mobj->z));
 
-						if (leadTarget && speed > 0 && (targ->momx | targ->momy | targ->momz))
+						if (leadTarget && speed > 0 && (targ->velx | targ->vely | targ->velz))
 						{
 							// Aiming at the target's position some time in the future
 							// is basically just an application of the law of sines:
@@ -232,70 +264,49 @@ bool P_Thing_Projectile (int tid, int type, angle_t angle,
 							// with the math. I don't think I would have thought of using
 							// trig alone had I been left to solve it by myself.
 
-							double tvel[3] = { double(targ->momx), double(targ->momy), double(targ->momz) };
+							FVector3 tvel(targ->velx, targ->vely, targ->velz);
 							if (!(targ->flags & MF_NOGRAVITY) && targ->waterlevel < 3)
 							{ // If the target is subject to gravity and not underwater,
 							  // assume that it isn't moving vertically. Thanks to gravity,
 							  // even if we did consider the vertical component of the target's
 							  // velocity, we would still miss more often than not.
-								tvel[2] = 0.0;
-								if ((targ->momx | targ->momy) == 0)
+								tvel.Z = 0.0;
+								if ((targ->velx | targ->vely) == 0)
 								{
 									goto nolead;
 								}
 							}
-							double dist = sqrt (aim[0]*aim[0] + aim[1]*aim[1] + aim[2]*aim[2]);
-							double targspeed = sqrt (tvel[0]*tvel[0] + tvel[1]*tvel[1] + tvel[2]*tvel[2]);
-							double ydotx = -aim[0]*tvel[0] - aim[1]*tvel[1] - aim[2]*tvel[2];
+							double dist = aim.Length();
+							double targspeed = tvel.Length();
+							double ydotx = -aim | tvel;
 							double a = acos (clamp (ydotx / targspeed / dist, -1.0, 1.0));
 							double multiplier = double(pr_leadtarget.Random2())*0.1/255+1.1;
-							double sinb = clamp (targspeed*multiplier * sin(a) / fspeed, -1.0, 1.0);
-							double cosb = cos (asin (sinb));
+							double sinb = -clamp (targspeed*multiplier * sin(a) / fspeed, -1.0, 1.0);
 
 							// Use the cross product of two of the triangle's sides to get a
 							// rotation vector.
-							double rv[3] =
-							{
-								tvel[1]*aim[2] - tvel[2]*aim[1],
-								tvel[2]*aim[0] - tvel[0]*aim[2],
-								tvel[0]*aim[1] - tvel[1]*aim[0]
-							};
+							FVector3 rv(tvel ^ aim);
 							// The vector must be normalized.
-							double irvlen = 1.0 / sqrt(rv[0]*rv[0] + rv[1]*rv[1] + rv[2]*rv[2]);
-							rv[0] *= irvlen;
-							rv[1] *= irvlen;
-							rv[2] *= irvlen;
+							rv.MakeUnit();
 							// Now combine the rotation vector with angle b to get a rotation matrix.
-							double t = 1.0 - cosb;
-							double rm[3][3] =
-							{
-								{t*rv[0]*rv[0]+cosb, t*rv[0]*rv[1]-sinb*rv[2], t*rv[0]*rv[2]+sinb*rv[1]},
-								{t*rv[0]*rv[1]+sinb*rv[2], t*rv[1]*rv[1]+cosb, t*rv[1]*rv[2]-sinb*rv[0]},
-								{t*rv[0]*rv[2]-sinb*rv[1], t*rv[1]*rv[2]+sinb*rv[0], t*rv[2]*rv[2]+cosb}
-							};
+							FMatrix3x3 rm(rv, cos(asin(sinb)), sinb);
 							// And multiply the original aim vector with the matrix to get a
 							// new aim vector that leads the target.
-							double aimvec[3] =
-							{
-								rm[0][0]*aim[0] + rm[1][0]*aim[1] + rm[2][0]*aim[2],
-								rm[0][1]*aim[0] + rm[1][1]*aim[1] + rm[2][1]*aim[2],
-								rm[0][2]*aim[0] + rm[1][2]*aim[1] + rm[2][2]*aim[2]
-							};
+							FVector3 aimvec = rm * aim;
 							// And make the projectile follow that vector at the desired speed.
 							double aimscale = fspeed / dist;
-							mobj->momx = fixed_t (aimvec[0] * aimscale);
-							mobj->momy = fixed_t (aimvec[1] * aimscale);
-							mobj->momz = fixed_t (aimvec[2] * aimscale);
-							mobj->angle = R_PointToAngle2 (0, 0, mobj->momx, mobj->momy);
+							mobj->velx = fixed_t (aimvec[0] * aimscale);
+							mobj->vely = fixed_t (aimvec[1] * aimscale);
+							mobj->velz = fixed_t (aimvec[2] * aimscale);
+							mobj->angle = R_PointToAngle2 (0, 0, mobj->velx, mobj->vely);
 						}
 						else
 						{
-nolead:
-							mobj->angle = R_PointToAngle2 (mobj->x, mobj->y, targ->x, targ->y);
-							VectorNormalize (aim);
-							mobj->momx = fixed_t(aim[0] * fspeed);
-							mobj->momy = fixed_t(aim[1] * fspeed);
-							mobj->momz = fixed_t(aim[2] * fspeed);
+nolead:						mobj->angle = R_PointToAngle2 (mobj->x, mobj->y, targ->x, targ->y);
+							aim.Resize (fspeed);
+							mobj->velx = fixed_t(aim[0]);
+							mobj->vely = fixed_t(aim[1]);
+							mobj->velz = fixed_t(aim[2]);
 						}
 						if (mobj->flags2 & MF2_SEEKERMISSILE)
 						{
@@ -305,19 +316,19 @@ nolead:
 					else
 					{
 						mobj->angle = angle;
-						mobj->momx = FixedMul (speed, finecosine[angle>>ANGLETOFINESHIFT]);
-						mobj->momy = FixedMul (speed, finesine[angle>>ANGLETOFINESHIFT]);
-						mobj->momz = vspeed;
+						mobj->velx = FixedMul (speed, finecosine[angle>>ANGLETOFINESHIFT]);
+						mobj->vely = FixedMul (speed, finesine[angle>>ANGLETOFINESHIFT]);
+						mobj->velz = vspeed;
 					}
 					// Set the missile's speed to reflect the speed it was spawned at.
 					if (mobj->flags & MF_MISSILE)
 					{
-						mobj->Speed = fixed_t (sqrtf (float(speed*speed + vspeed*vspeed)));
+						mobj->Speed = fixed_t (sqrt (double(mobj->velx)*mobj->velx + double(mobj->vely)*mobj->vely + double(mobj->velz)*mobj->velz));
 					}
 					// Hugger missiles don't have any vertical velocity
 					if (mobj->flags3 & (MF3_FLOORHUGGER|MF3_CEILINGHUGGER))
 					{
-						mobj->momz = 0;
+						mobj->velz = 0;
 					}
 					if (mobj->flags & MF_SPECIAL)
 					{
@@ -325,7 +336,7 @@ nolead:
 					}
 					if (mobj->flags & MF_MISSILE)
 					{
-						if (P_CheckMissileSpawn (mobj))
+						if (P_CheckMissileSpawn (mobj, spot->radius))
 						{
 							rtn = true;
 						}
@@ -334,15 +345,7 @@ nolead:
 					{
 						// If this is a monster, subtract it from the total monster
 						// count, because it already added to it during spawning.
-						if (mobj->flags & MF_COUNTKILL)
-						{
-							level.total_monsters--;
-						}
-						// Same, for items
-						if (mobj->flags & MF_COUNTITEM)
-						{
-							level.total_items--;
-						}
+						mobj->ClearCounters();
 						mobj->Destroy ();
 					}
 					else
@@ -352,21 +355,182 @@ nolead:
 					}
 				}
 			} while (dest != 0 && (targ = tit.Next()));
-		} 
+		}
+		spot = iterator.Next();
 	}
 
 	return rtn != 0;
 }
 
-CCMD (dumpspawnables)
+int P_Thing_Damage (int tid, AActor *whofor0, int amount, FName type)
 {
-	int i;
+	FActorIterator iterator (tid);
+	int count = 0;
+	AActor *actor;
 
-	for (i = 0; i < MAX_SPAWNABLES; i++)
+	actor = (tid == 0 ? whofor0 : iterator.Next());
+	while (actor)
 	{
-		if (SpawnableThings[i] != NULL)
+		AActor *next = tid == 0 ? NULL : iterator.Next ();
+		if (actor->flags & MF_SHOOTABLE)
 		{
-			Printf ("%d %s\n", i, SpawnableThings[i]->Name + 1);
+			if (amount > 0)
+			{
+				P_DamageMobj (actor, NULL, whofor0, amount, type);
+			}
+			else if (actor->health < actor->SpawnHealth())
+			{
+				actor->health -= amount;
+				if (actor->health > actor->SpawnHealth())
+				{
+					actor->health = actor->SpawnHealth();
+				}
+				if (actor->player != NULL)
+				{
+					actor->player->health = actor->health;
+				}
+			}
+			count++;
+		}
+		actor = next;
+	}
+	return count;
+}
+
+void P_RemoveThing(AActor * actor)
+{
+	// Don't remove live players.
+	if (actor->player == NULL || actor != actor->player->mo)
+	{
+		// be friendly to the level statistics. ;)
+		actor->ClearCounters();
+		actor->Destroy ();
+	}
+}
+
+bool P_Thing_Raise(AActor *thing)
+{
+	if (thing == NULL)
+		return false;	// not valid
+
+	if (!(thing->flags & MF_CORPSE) )
+		return true;	// not a corpse
+	
+	if (thing->tics != -1)
+		return true;	// not lying still yet
+	
+	FState * RaiseState = thing->FindState(NAME_Raise);
+	if (RaiseState == NULL)
+		return true;	// monster doesn't have a raise state
+	
+	AActor *info = thing->GetDefault ();
+
+	thing->velx = thing->vely = 0;
+
+	// [RH] Check against real height and radius
+	fixed_t oldheight = thing->height;
+	fixed_t oldradius = thing->radius;
+	int oldflags = thing->flags;
+
+	thing->flags |= MF_SOLID;
+	thing->height = info->height;	// [RH] Use real height
+	thing->radius = info->radius;	// [RH] Use real radius
+	if (!P_CheckPosition (thing, thing->x, thing->y))
+	{
+		thing->flags = oldflags;
+		thing->radius = oldradius;
+		thing->height = oldheight;
+		return false;
+	}
+
+	S_Sound (thing, CHAN_BODY, "vile/raise", 1, ATTN_IDLE);
+	
+	thing->SetState (RaiseState);
+	thing->flags = info->flags;
+	thing->flags2 = info->flags2;
+	thing->flags3 = info->flags3;
+	thing->flags4 = info->flags4;
+	thing->flags5 = info->flags5;
+	thing->flags6 = info->flags6;
+	thing->health = info->health;
+	thing->target = NULL;
+	thing->lastenemy = NULL;
+
+	// [RH] If it's a monster, it gets to count as another kill
+	if (thing->CountsAsKill())
+	{
+		level.total_monsters++;
+	}
+	return true;
+}
+
+void P_Thing_SetVelocity(AActor *actor, fixed_t vx, fixed_t vy, fixed_t vz, bool add, bool setbob)
+{
+	if (actor != NULL)
+	{
+		if (!add)
+		{
+			actor->velx = actor->vely = actor->velz = 0;
+			if (actor->player != NULL) actor->player->velx = actor->player->vely = 0;
+		}
+		actor->velx += vx;
+		actor->vely += vy;
+		actor->velz += vz;
+		if (setbob && actor->player != NULL)
+		{
+			actor->player->velx += vx;
+			actor->player->vely += vy;
 		}
 	}
 }
+
+const PClass *P_GetSpawnableType(int spawnnum)
+{
+	if (spawnnum < 0)
+	{ // A named arg from a UDMF map
+		FName spawnname = FName(ENamedName(-spawnnum));
+		if (spawnname.IsValidName())
+		{
+			return PClass::FindClass(spawnname);
+		}
+	}
+	else
+	{ // A numbered arg from a Hexen or UDMF map
+		const PClass **type = SpawnableThings.CheckKey(spawnnum);
+		if (type != NULL)
+		{
+			return *type;
+		}
+	}
+	return NULL;
+}
+
+typedef TMap<int, const PClass *>::Pair SpawnablePair;
+
+static int STACK_ARGS SpawnableSort(const void *a, const void *b)
+{
+	return (*((SpawnablePair **)a))->Key - (*((SpawnablePair **)b))->Key;
+}
+
+CCMD (dumpspawnables)
+{
+	TMapIterator<int, const PClass *> it(SpawnableThings);
+	SpawnablePair *pair, **allpairs;
+	int i = 0;
+
+	// Sort into numerical order, since their arrangement in the map can
+	// be in an unspecified order.
+	allpairs = new TMap<int, const PClass *>::Pair *[SpawnableThings.CountUsed()];
+	while (it.NextPair(pair))
+	{
+		allpairs[i++] = pair;
+	}
+	qsort(allpairs, i, sizeof(*allpairs), SpawnableSort);
+	for (int j = 0; j < i; ++j)
+	{
+		pair = allpairs[j];
+		Printf ("%d %s\n", pair->Key, pair->Value->TypeName.GetChars());
+	}
+	delete[] allpairs;
+}
+

@@ -21,7 +21,6 @@
 //
 //-----------------------------------------------------------------------------
 
-#include "m_alloc.h"
 #include "i_system.h"
 #include "m_random.h"
 #include "doomdef.h"
@@ -31,10 +30,26 @@
 #include "doomstat.h"
 #include "r_state.h"
 #include "gi.h"
+#include "farchive.h"
 
 static FRandom pr_doplat ("DoPlat");
 
 IMPLEMENT_CLASS (DPlat)
+
+inline FArchive &operator<< (FArchive &arc, DPlat::EPlatType &type)
+{
+	BYTE val = (BYTE)type;
+	arc << val;
+	type = (DPlat::EPlatType)val;
+	return arc;
+}
+inline FArchive &operator<< (FArchive &arc, DPlat::EPlatState &state)
+{
+	BYTE val = (BYTE)state;
+	arc << val;
+	state = (DPlat::EPlatState)val;
+	return arc;
+}
 
 DPlat::DPlat ()
 {
@@ -58,9 +73,17 @@ void DPlat::Serialize (FArchive &arc)
 void DPlat::PlayPlatSound (const char *sound)
 {
 	if (m_Sector->seqType >= 0)
-		SN_StartSequence (m_Sector, m_Sector->seqType, SEQ_PLATFORM);
+	{
+		SN_StartSequence (m_Sector, CHAN_FLOOR, m_Sector->seqType, SEQ_PLATFORM, 0);
+	}
+	else if (m_Sector->SeqName != NAME_None)
+	{
+		SN_StartSequence (m_Sector, CHAN_FLOOR, m_Sector->SeqName, 0);
+	}
 	else
-		SN_StartSequence (m_Sector, sound);
+	{
+		SN_StartSequence (m_Sector, CHAN_FLOOR, sound, 0);
+	}
 }
 
 //
@@ -73,7 +96,7 @@ void DPlat::Tick ()
 	switch (m_Status)
 	{
 	case up:
-		res = MoveFloor (m_Speed, m_High, m_Crush, 1);
+		res = MoveFloor (m_Speed, m_High, m_Crush, 1, false);
 										
 		if (res == crushed && (m_Crush == -1))
 		{
@@ -83,7 +106,7 @@ void DPlat::Tick ()
 		}
 		else if (res == pastdest)
 		{
-			SN_StopSequence (m_Sector);
+			SN_StopSequence (m_Sector, CHAN_FLOOR);
 			if (m_Type != platToggle)
 			{
 				m_Count = m_Wait;
@@ -91,9 +114,12 @@ void DPlat::Tick ()
 
 				switch (m_Type)
 				{
+					case platRaiseAndStayLockout:
+						// Instead of keeping the dead thinker like Heretic did let's 
+						// better use a flag to avoid problems elsewhere. For example,
+						// keeping the thinker would make tagwait wait indefinitely.
+						m_Sector->planes[sector_t::floor].Flags |= PLANEF_BLOCKED; 
 					case platRaiseAndStay:
-						if (gameinfo.gametype == GAME_Heretic)
-							break;
 					case platDownByValue:
 					case platDownWaitUpStay:
 					case platDownWaitUpStayStone:
@@ -115,11 +141,11 @@ void DPlat::Tick ()
 		break;
 		
 	case down:
-		res = MoveFloor (m_Speed, m_Low, -1, -1);
+		res = MoveFloor (m_Speed, m_Low, -1, -1, false);
 
 		if (res == pastdest)
 		{
-			SN_StopSequence (m_Sector);
+			SN_StopSequence (m_Sector, CHAN_FLOOR);
 			// if not an instant toggle, start waiting
 			if (m_Type != platToggle)		//jff 3/14/98 toggle up down
 			{								// is silent, instant, no waiting
@@ -143,6 +169,12 @@ void DPlat::Tick ()
 				m_Status = in_stasis;		//for reactivation of toggle
 			}
 		}
+		else if (res == crushed && m_Crush < 0 && m_Type != platToggle)
+		{
+			m_Status = up;
+			m_Count = m_Wait;
+			PlayPlatSound ("Platform");
+		}
 
 		//jff 1/26/98 remove the plat if it bounced so it can be tried again
 		//only affects plats that raise and bounce
@@ -152,6 +184,7 @@ void DPlat::Tick ()
 		{
 			case platUpByValueStay:
 			case platRaiseAndStay:
+			case platRaiseAndStayLockout:
 				Destroy ();
 			default:
 				break;
@@ -168,7 +201,7 @@ void DPlat::Tick ()
 				m_Status = down;
 
 			if (m_Type == platToggle)
-				SN_StartSequence (m_Sector, "Silence");
+				SN_StartSequence (m_Sector, CHAN_FLOOR, "Silence", 0);
 			else
 				PlayPlatSound ("Platform");
 		}
@@ -196,7 +229,7 @@ bool EV_DoPlat (int tag, line_t *line, DPlat::EPlatType type, int height,
 	int secnum;
 	sector_t *sec;
 	bool rtn = false;
-	BOOL manual = false;
+	bool manual = false;
 	fixed_t newheight = 0;
 	vertex_t *spot;
 
@@ -230,7 +263,7 @@ bool EV_DoPlat (int tag, line_t *line, DPlat::EPlatType type, int height,
 		sec = &sectors[secnum];
 
 manual_plat:
-		if (sec->floordata)
+		if (sec->PlaneMoving(sector_t::floor))
 		{
 			if (!manual)
 				continue;
@@ -255,7 +288,7 @@ manual_plat:
 		if (change)
 		{
 			if (line)
-				sec->floorpic = sides[line->sidenum[0]].sector->floorpic;
+				sec->SetTexture(sector_t::floor, line->sidedef[0]->sector->GetTexture(sector_t::floor));
 			if (change == 1)
 				sec->special &= SECRET_MASK;	// Stop damage and other stuff, if any
 		}
@@ -263,6 +296,7 @@ manual_plat:
 		switch (type)
 		{
 		case DPlat::platRaiseAndStay:
+		case DPlat::platRaiseAndStayLockout:
 			newheight = sec->FindNextHighestFloor (&spot);
 			plat->m_High = sec->floorplane.PointToDist (spot, newheight);
 			plat->m_Low = sec->floorplane.d;
@@ -346,7 +380,7 @@ manual_plat:
 			plat->m_Low = sec->floorplane.PointToDist (spot, newheight);
 			plat->m_High = sec->floorplane.d;
 			plat->m_Status = DPlat::down;
-			SN_StartSequence (sec, "Silence");
+			SN_StartSequence (sec, CHAN_FLOOR, "Silence", 0);
 			break;
 
 		case DPlat::platDownToNearestFloor:

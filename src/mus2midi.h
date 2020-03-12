@@ -2,7 +2,7 @@
 ** mus2midi.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -46,6 +46,7 @@
 #define MIDI_META		((BYTE)0xFF)		 // Meta event begin
 #define MIDI_META_TEMPO ((BYTE)0x51)
 #define MIDI_META_EOT	((BYTE)0x2F)		 // End-of-track
+#define MIDI_META_SSPEC	((BYTE)0x7F)		 // System-specific event
 
 #define MIDI_NOTEOFF	((BYTE)0x80)		 // + note + velocity
 #define MIDI_NOTEON 	((BYTE)0x90)		 // + note + velocity
@@ -71,8 +72,7 @@ typedef struct
 	WORD NumSecondaryChans;
 	WORD NumInstruments;
 	WORD Pad;
+	// WORD UsedInstruments[NumInstruments];
 } MUSHeader;
-
-bool ProduceMIDI (const BYTE *musBuf, FILE *outFile);
 
 #endif //__MUS2MIDI_H__

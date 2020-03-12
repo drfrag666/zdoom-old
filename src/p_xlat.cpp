@@ -3,7 +3,7 @@
 ** Translate old Doom format maps to the Hexen format
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2007 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -30,22 +30,21 @@
 ** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **---------------------------------------------------------------------------
 **
-** The linedef translations are read from a WAD lump (DOOMX or HERETICX),
-** so most of this file's behavior can be easily customized without
-** recompiling.
 */
 
 #include "doomtype.h"
 #include "g_level.h"
 #include "p_lnspec.h"
 #include "doomdata.h"
-#include "r_data.h"
 #include "m_swap.h"
 #include "p_spec.h"
 #include "p_local.h"
 #include "a_sharedglobal.h"
 #include "gi.h"
 #include "w_wad.h"
+#include "sc_man.h"
+#include "cmdlib.h"
+#include "xlat/xlat.h"
 
 // define names for the TriggerType field of the general linedefs
 
@@ -63,42 +62,40 @@ typedef enum
 
 void P_TranslateLineDef (line_t *ld, maplinedef_t *mld)
 {
-	static FMemLump tlatebase;
-	const BYTE *tlate;
-	short special = LittleShort(mld->special);
+	unsigned short special = (unsigned short) LittleShort(mld->special);
 	short tag = LittleShort(mld->tag);
 	DWORD flags = LittleShort(mld->flags);
-	BOOL passthrough;
-	int i;
+	INTBOOL passthrough = 0;
 
-	// In Doom format maps, the tag is always the same as the line's id.
-	ld->id = tag;
+	DWORD flags1 = flags;
+	DWORD newflags = 0;
 
-	if (flags & ML_TRANSLUCENT_STRIFE)
+	for(int i=0;i<16;i++)
 	{
-		ld->alpha = 255*3/4;
-	}
-	if (gameinfo.gametype == GAME_Strife)
-	{
-		// It might be useful to make these usable by all games.
-		// Unfortunately, there aren't enough flag bits left to do that,
-		// so they're Strife-only.
-		if (flags & ML_RAILING_STRIFE)
+		if ((flags & (1<<i)) && LineFlagTranslations[i].ismask)
 		{
-			flags |= ML_RAILING;
+			flags1 &= LineFlagTranslations[i].newvalue;
 		}
-		if (flags & ML_BLOCK_FLOATERS_STRIFE)
-		{
-			flags |= ML_BLOCK_FLOATERS;
-		}
-		flags |= ML_CLIP_MIDTEX;
-		passthrough = 0;
 	}
-	else
+	for(int i=0;i<16;i++)
 	{
-		passthrough = (flags & ML_PASSUSE_BOOM);
+		if ((flags1 & (1<<i)) && !LineFlagTranslations[i].ismask)
+		{
+			switch (LineFlagTranslations[i].newvalue)
+			{
+			case -1:
+				passthrough = true;
+				break;
+			case -2:
+				ld->Alpha = FRACUNIT*3/4;
+				break;
+			default:
+				newflags |= LineFlagTranslations[i].newvalue;
+				break;
+			}
+		}
 	}
-	flags = flags & 0xFFFF01FF;	// Ignore flags unknown to DOOM
+	flags = newflags;
 
 	// For purposes of maintaining BOOM compatibility, each
 	// line also needs to have its ID set to the same as its tag.
@@ -116,139 +113,81 @@ void P_TranslateLineDef (line_t *ld, maplinedef_t *mld)
 		return;
 	}
 
-/*	if (special == 52 || special == 124 || special == 51 || special == 11)
+	FLineTrans *linetrans = NULL;
+	if (special < SimpleLineTranslations.Size()) linetrans = &SimpleLineTranslations[special];
+	if (linetrans != NULL && linetrans->special != 0)
 	{
-		Printf ("Line %d has special %d (%d,%d)-(%d,%d)\n", ld-lines, special,
-			vertexes[mld->v1].x>>16, vertexes[mld->v1].y>>16,
-			vertexes[mld->v2].x>>16, vertexes[mld->v2].y>>16);
-	}
-*/
-	if (tlatebase.GetMem() == NULL)
-	{
-		if (gameinfo.gametype == GAME_Doom)
-		{
-			tlatebase = Wads.ReadLump ("DOOMX");
+		ld->special = linetrans->special;
+
+		ld->flags = flags | ((linetrans->flags & 0x1f) << 9);
+		if (linetrans->flags & 0x20) ld->flags |= ML_FIRSTSIDEONLY;
+		ld->activation = 1 << GET_SPAC(ld->flags);
+		if (ld->activation == SPAC_AnyCross)
+		{ // this is really PTouch
+			ld->activation = SPAC_Impact|SPAC_PCross;
 		}
-		else if (gameinfo.gametype == GAME_Strife)
-		{
-			tlatebase = Wads.ReadLump ("STRIFEX");
+		else if (ld->activation == SPAC_Impact)
+		{ // In non-UMDF maps, Impact implies PCross
+			ld->activation = SPAC_Impact | SPAC_PCross;
 		}
-		else
+		ld->flags &= ~ML_SPAC_MASK;
+
+		if (passthrough && ld->activation == SPAC_Use)
 		{
-			tlatebase = Wads.ReadLump ("HERETICX");
+			ld->activation = SPAC_UseThrough;
 		}
-	}
-	tlate = (const BYTE *)tlatebase.GetMem();
-
-	// Check if this is a regular linetype
-	if (tlate[0] == 'N' && tlate[1] == 'O' && tlate[2] == 'R' && tlate[3] == 'M')
-	{
-		int count = (tlate[4] << 8) | tlate[5];
-		tlate += 6;
-		while (count)
+		// Set special arguments.
+		FXlatExprState state;
+		state.tag = tag;
+		state.linetype = special;
+		for (int t = 0; t < LINETRANS_MAXARGS; ++t)
 		{
-			int low = (tlate[0] << 8) | tlate[1];
-			int high = (tlate[2] << 8) | tlate[3];
-			tlate += 4;
-			if (special >= low && special <= high)
-			{ // found it, so use the LUT
-				const BYTE *specialmap = tlate + (special - low) * 7;
+			int arg = linetrans->args[t];
+			int argop = (linetrans->flags >> (LINETRANS_TAGSHIFT + t*TAGOP_NUMBITS)) & TAGOP_MASK;
 
-				ld->flags = flags | ((specialmap[0] & 0x1f) << 9);
-
-				if (passthrough && (GET_SPAC(ld->flags) == SPAC_USE))
+			switch (argop)
+			{
+			case ARGOP_Const:
+				ld->args[t] = arg;
+				break;
+			case ARGOP_Tag:
+				ld->args[t] = tag;
+				break;
+			case ARGOP_Expr:
 				{
-					ld->flags &= ~ML_SPAC_MASK;
-					ld->flags |= SPAC_USETHROUGH << ML_SPAC_SHIFT;
+					int *xnode = &XlatExpressions[arg];
+					state.bIsConstant = true;
+					XlatExprEval[*xnode](&ld->args[t], xnode, &state);
 				}
-				ld->special = specialmap[1];
-				ld->args[0] = specialmap[2];
-				ld->args[1] = specialmap[3];
-				ld->args[2] = specialmap[4];
-				ld->args[3] = specialmap[5];
-				ld->args[4] = specialmap[6];
-				switch (specialmap[0] & 0xe0)
-				{
-				case 7<<5:					// First two arguments are tags
-					ld->args[1] = tag;
-				case 1<<5: case 6<<5:		// First argument is a tag
-					ld->args[0] = tag;
-					break;
-
-				case 2<<5:					// Second argument is a tag
-					ld->args[1] = tag;
-					break;
-
-				case 3<<5:					// Third argument is a tag
-					ld->args[2] = tag;
-					break;
-
-				case 4<<5:					// Fourth argument is a tag
-					ld->args[3] = tag;
-					break;
-
-				case 5<<5:					// Fifth argument is a tag
-					ld->args[4] = tag;
-					break;
-				}
-				if (ld->flags & ML_SECRET)
-				{
-					ld->flags &= ~ML_MONSTERSCANACTIVATE;
-				}
-				return;
+				break;
+			default:
+				assert(0);
+				ld->args[t] = 0;
+				break;
 			}
-			tlate += (high - low + 1) * 7;
-			count--;
 		}
+
+		if ((ld->flags & ML_SECRET) && ld->activation & (SPAC_Use|SPAC_UseThrough))
+		{
+			ld->flags &= ~ML_MONSTERSCANACTIVATE;
+		}
+		return;
 	}
 
-	// Check if this is a BOOM generalized linetype
-	if (tlate[0] == 'B' && tlate[1] == 'O' && tlate[2] == 'O' && tlate[3] == 'M')
+	for(int i=0;i<NumBoomish;i++)
 	{
-		int count = (tlate[4] << 8) | tlate[5];
-		tlate += 6;
+		FBoomTranslator *b = &Boomish[i];
 
-		// BOOM translators are stored on disk as:
-		//
-		// WORD <first linetype in range>
-		// WORD <last linetype in range>
-		// BYTE <new special>
-		// repeat [BYTE op BYTES parms]
-		//
-		// op consists of some bits:
-		//
-		// 76543210
-		// ||||||++-- Dest is arg[(op&3)+1] (arg[0] is always tag)
-		// |||||+---- 0 = store, 1 = or with existing value
-		// ||||+----- 0 = this is normal, 1 = x-op in next byte
-		// ++++------ # of elements in list, or 0 to always use a constant value
-		//
-		// If a constant value is used, parms is a single byte containing that value.
-		// Otherwise, parms has the format:
-		//
-		// WORD <value to AND with linetype>
-		// repeat [WORD <if result is this> BYTE <use this>]
-		//
-		// These x-ops are defined:
-		//
-		// 0 = end of this BOOM translator
-		// 1 = dest is flags
-
-		while (count)
+		if (special >= b->FirstLinetype && special <= b->LastLinetype)
 		{
-			int low = (tlate[0] << 8) | tlate[1];
-			int high = (tlate[2] << 8) | tlate[3];
-			tlate += 4;
+			ld->special = b->NewSpecial;
 
-			DWORD oflags = flags;
-
-			// Assume we found it and translate
 			switch (special & 0x0007)
 			{
 			case WalkMany:
 				flags |= ML_REPEAT_SPECIAL;
 			case WalkOnce:
-				flags |= SPAC_CROSS << ML_SPAC_SHIFT;
+				ld->activation = SPAC_Cross;
 				break;
 
 			case SwitchMany:
@@ -257,75 +196,58 @@ void P_TranslateLineDef (line_t *ld, maplinedef_t *mld)
 			case SwitchOnce:
 			case PushOnce:
 				if (passthrough)
-					flags |= SPAC_USETHROUGH << ML_SPAC_SHIFT;
+					ld->activation = SPAC_UseThrough;
 				else
-					flags |= SPAC_USE << ML_SPAC_SHIFT;
+					ld->activation = SPAC_Use;
 				break;
 
 			case GunMany:
 				flags |= ML_REPEAT_SPECIAL;
 			case GunOnce:
-				flags |= SPAC_IMPACT << ML_SPAC_SHIFT;
+				ld->activation = SPAC_Impact;
 				break;
 			}
 
 			ld->args[0] = tag;
 			ld->args[1] = ld->args[2] = ld->args[3] = ld->args[4] = 0;
 
-			ld->special = *tlate++;
-			for (;;)
+			for(unsigned j=0; j < b->Args.Size(); j++)
 			{
-				short *destp;
-				short flagtemp;
-				BYTE op = *tlate++;
-				BYTE dest;
+				FBoomArg *arg = &b->Args[j];
+				int *destp;
+				int flagtemp;
 				BYTE val = 0;	// quiet, GCC
 				bool found;
-				int lsize;
 
-				dest = op & 3;
-				if (op & 8)
+				if (arg->ArgNum < 4)
 				{
-					BYTE xop = *tlate++;
-					if (xop == 0)
-						break;
-					else if (xop == 1)
-						dest = 4;
-				}
-				if (dest < 4)
-				{
-					destp = &ld->args[dest+1];
+					destp = &ld->args[arg->ArgNum+1];
 				}
 				else
 				{
-					flagtemp = short((flags >> 9) & 0x3f);
+					flagtemp = ((flags >> 9) & 0x3f);
 					destp = &flagtemp;
 				}
-				lsize = op >> 4;
-				if (lsize == 0)
+				if (arg->ListSize == 0)
 				{
-					val = *tlate++;
+					val = arg->ConstantValue;
 					found = true;
 				}
 				else
 				{
-					WORD mask = (tlate[0] << 8) | tlate[1];
-					tlate += 2;
 					found = false;
-					for (i = 0; i < lsize; i++)
+					for (int k = 0; k < arg->ListSize; k++)
 					{
-						WORD filter = (tlate[0] << 8) | tlate[1];
-						if ((special & mask) == filter)
+						if ((special & arg->AndValue) == arg->ResultFilter[k])
 						{
-							val = tlate[2];
+							val = arg->ResultValue[k];
 							found = true;
 						}
-						tlate += 3;
 					}
 				}
 				if (found)
 				{
-					if (op & 4)
+					if (arg->bOrExisting)
 					{
 						*destp |= val;
 					}
@@ -333,35 +255,33 @@ void P_TranslateLineDef (line_t *ld, maplinedef_t *mld)
 					{
 						*destp = val;
 					}
-					if (dest == 4)
+					if (arg->ArgNum == 4)
 					{
 						flags = (flags & ~0x7e00) | (flagtemp << 9);
 					}
 				}
 			}
-			if (special >= low && special <= high)
-			{ // Really found it, so we're done
-				// We treat push triggers like switch triggers with zero tags.
-				if ((special & 7) == PushMany || (special & 7) == PushOnce)
+			// We treat push triggers like switch triggers with zero tags.
+			if ((special & 7) == PushMany || (special & 7) == PushOnce)
+			{
+				if (ld->special == Generic_Door)
 				{
-					if (ld->special == Generic_Door)
-					{
-						ld->args[2] |= 128;
-					}
-					else
-					{
-						ld->args[0] = 0;
-					}
+					ld->args[2] |= 128;
 				}
-				ld->flags = flags;
-				return;
+				else
+				{
+					ld->args[0] = 0;
+				}
 			}
-
-			flags = oflags;
-			count--;
+			ld->flags = flags;
+			if (flags & ML_MONSTERSCANACTIVATE && ld->activation == SPAC_Cross)
+			{
+				// In Boom anything can activate such a line so set the proper type here.
+				ld->activation = SPAC_AnyCross;
+			}
+			return;
 		}
 	}
-
 	// Don't know what to do, so 0 it
 	ld->special = 0;
 	ld->flags = flags;
@@ -375,8 +295,8 @@ void P_TranslateLineDef (line_t *ld, maplinedef_t *mld)
 
 void P_TranslateTeleportThings ()
 {
-	ATeleportDest *dest;
-	TThinkerIterator<ATeleportDest> iterator;
+	AActor *dest;
+	TThinkerIterator<AActor> iterator(NAME_TeleportDest);
 	bool foundSomething = false;
 
 	while ( (dest = iterator.Next()) )
@@ -407,78 +327,173 @@ void P_TranslateTeleportThings ()
 					lines[i].args[0] = 1;
 				}
 			}
+			else if (lines[i].special == Teleport_ZombieChanger)
+			{
+				if (lines[i].args[1] == 0)
+				{
+					lines[i].args[0] = 1;
+				}
+			}
 		}
 	}
 }
 
 int P_TranslateSectorSpecial (int special)
 {
-	int high;
+	int mask = 0;
 
-	// Allow any supported sector special by or-ing 0x8000 to it in Doom format maps
-	// That's for those who like to mess around with existing maps. ;)
-	if (special & 0x8000)
+	for(int i = SectorMasks.Size()-1; i>=0; i--)
 	{
-		return special & 0x7fff;
+		int newmask = special & SectorMasks[i].mask;
+		if (newmask)
+		{
+			special &= ~newmask;
+			if (SectorMasks[i].op == 1)
+				newmask <<= SectorMasks[i].shift;
+			else if (SectorMasks[i].op == -1)
+				newmask >>= SectorMasks[i].shift;
+			else if (SectorMasks[i].op == 0 && SectorMasks[i].shift == 1)
+				newmask = 0;
+			mask |= newmask;
+		}
 	}
 	
-	if (special == 9)
+	if ((unsigned)special < SectorTranslations.Size())
 	{
-		return SECRET_MASK;
+		if (!SectorTranslations[special].bitmask_allowed && mask)
+			special = 0;
+		else
+			special = SectorTranslations[special].newtype;
 	}
-
-	if (gameinfo.gametype == GAME_Doom || gameinfo.gametype == GAME_Strife)
-	{
-		// This supports phased lighting with specials 21-24
-		high = (special & 0xfe0) << 3;
-		special &= 0x1f;
-		if (special < 21)
-		{
-			if (gameinfo.gametype == GAME_Strife)
-			{
-				if (special == 4 || special == 5 || special == 15 || special == 16 || special == 18)
-				{
-					return high | (special + 100);
-				}
-			}
-			else if (level.flags & LEVEL_CAVERNS_OF_DARKNESS)
-			{
-				// CoD uses 18 as an instant death sector type and 19 for healing the player
-				if (special == 18) return high | Damage_InstantDeath;
-				if (special == 19) return high | Sector_Heal;
-			}
-			return high | (special + 64);
-		}
-		else if (special < 40)
-		{
-			return high | (special - 20);
-		}
-	}
-	else
-	{
-		high = (special & 0xfc0) << 3;
-		special &= 0x3f;
-		if (special == 5)
-		{
-			return high | dDamage_LavaWimpy;
-		}
-		else if (special == 16)
-		{
-			return high | dDamage_LavaHefty;
-		}
-		else if (special == 4)
-		{
-			return high | dScroll_EastLavaDamage;
-		}
-		else if (special < 20)
-		{
-			return high | (special + 64);
-		}
-		else if (special < 40)
-		{
-			return high | (special + 205);
-		}
-	}
-
-	return high | special;
+	return special | mask;
 }
+
+static const int *Expr_Const(int *dest, const int *xnode, FXlatExprState *state)
+{
+	*dest = xnode[-1];
+	return xnode - 2;
+}
+
+static const int *Expr_Tag(int *dest, const int *xnode, FXlatExprState *state)
+{
+	*dest = state->tag;
+	state->bIsConstant = false;
+	return xnode - 1;
+}
+
+static const int *Expr_Add(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	*dest = op1 + op2;
+	return xnode;
+}
+
+static const int *Expr_Sub(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	*dest = op1 - op2;
+	return xnode;
+}
+
+static const int *Expr_Mul(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	*dest = op1 * op2;
+	return xnode;
+}
+
+static void Div0Check(int &op1, int &op2, const FXlatExprState *state)
+{
+	if (op2 == 0)
+	{
+		Printf("Xlat: Division by 0 for line type %d\n", state->linetype);
+		// Set some safe values
+		op1 = 0;
+		op2 = 1;
+	}
+}
+
+static const int *Expr_Div(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	Div0Check(op1, op2, state);
+	*dest = op1 / op2;
+	return xnode;
+}
+
+static const int *Expr_Mod(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	Div0Check(op1, op2, state);
+	*dest = op1 % op2;
+	return xnode;
+}
+
+static const int *Expr_And(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	*dest = op1 & op2;
+	return xnode;
+}
+
+static const int *Expr_Or(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	*dest = op1 | op2;
+	return xnode;
+}
+
+static const int *Expr_Xor(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op1, op2;
+
+	xnode = XlatExprEval[xnode[-1]](&op2, xnode-1, state);
+	xnode = XlatExprEval[xnode[0]](&op1, xnode, state);
+	*dest = op1 ^ op2;
+	return xnode;
+}
+
+static const int *Expr_Neg(int *dest, const int *xnode, FXlatExprState *state)
+{
+	int op;
+
+	xnode = XlatExprEval[xnode[-1]](&op, xnode-1, state);
+	*dest = -op;
+	return xnode;
+}
+
+const int* (*XlatExprEval[XEXP_COUNT])(int *dest, const int *xnode, FXlatExprState *state) =
+{
+	Expr_Const,
+	Expr_Tag,
+	Expr_Add,
+	Expr_Sub,
+	Expr_Mul,
+	Expr_Div,
+	Expr_Mod,
+	Expr_And,
+	Expr_Or,
+	Expr_Xor,
+	Expr_Neg
+};

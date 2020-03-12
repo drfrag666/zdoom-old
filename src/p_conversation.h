@@ -1,29 +1,35 @@
 #ifndef P_CONVERSATION_H
 #define P_CONVERSATION_H 1
 
-// TODO: Generalize the conversation system to something NWN-like that
-// users can edit as simple text files. Particularly useful would be
-// the ability to call ACS functions to implement AppearsWhen properties
-// and ACS scripts to implement ActionTaken properties.
-// TODO: Make this work in multiplayer and in demos. Multiplayer probably
-// isn't possible for Strife conversations, but demo playback should be.
+#include <tarray.h>
+
+#include "s_sound.h"
+#include "textures/textures.h"
 
 struct FStrifeDialogueReply;
 class FTexture;
-struct brokenlines_t;
+struct FBrokenLines;
+struct PClass;
+
+struct FStrifeDialogueItemCheck
+{
+	const PClass *Item;
+	int Amount;
+};
 
 // FStrifeDialogueNode holds text an NPC says to the player
 struct FStrifeDialogueNode
 {
 	~FStrifeDialogueNode ();
-	const TypeInfo *DropType;
-	const TypeInfo *ItemCheck[3];
+	const PClass *DropType;
+	TArray<FStrifeDialogueItemCheck> ItemCheck;
+	int ThisNodeNum;	// location of this node in StrifeDialogues
 	int ItemCheckNode;	// index into StrifeDialogues
 
-	const TypeInfo *SpeakerType;
+	const PClass *SpeakerType;
 	char *SpeakerName;
-	int SpeakerVoice;
-	int Backdrop;
+	FSoundID SpeakerVoice;
+	FTextureID Backdrop;
 	char *Dialogue;
 
 	FStrifeDialogueReply *Children;
@@ -35,31 +41,41 @@ struct FStrifeDialogueReply
 	~FStrifeDialogueReply ();
 
 	FStrifeDialogueReply *Next;
-	const TypeInfo *GiveType;
-	const TypeInfo *ItemCheck[3];
-	int ItemCheckAmount[3];
+	const PClass *GiveType;
+	int ActionSpecial;
+	int Args[5];
+	TArray<FStrifeDialogueItemCheck> ItemCheck;
 	char *Reply;
 	char *QuickYes;
 	int NextNode;	// index into StrifeDialogues
 	int LogNumber;
+	char *LogString;
 	char *QuickNo;
 	bool NeedsGold;
-
-	brokenlines_t *ReplyLines;
 };
 
 extern TArray<FStrifeDialogueNode *> StrifeDialogues;
 
-// There were 344 types in Strife, and Strife conversations refer
-// to their index in the mobjinfo table. This table indexes all
-// the Strife actor types in the order Strife had them and is
-// initialized as part of the actor's setup in infodefaults.cpp.
-extern const TypeInfo *StrifeTypes[344];
+struct MapData;
 
-void P_LoadStrifeConversations (const char *mapname);
+void SetStrifeType(int convid, const PClass *Class);
+void SetConversation(int convid, const PClass *Class, int dlgindex);
+const PClass *GetStrifeType (int typenum);
+int GetConversation(int conv_id);
+int GetConversation(FName classname);
+
+bool LoadScriptFile (const char *name, bool include, int type = 0);
+
+void P_LoadStrifeConversations (MapData *map, const char *mapname);
 void P_FreeStrifeConversations ();
 
-void P_StartConversation (AActor *npc, AActor *pc);
+void P_StartConversation (AActor *npc, AActor *pc, bool facetalker, bool saveangle);
 void P_ResumeConversation ();
+
+void P_ConversationCommand (int netcode, int player, BYTE **stream);
+
+class FileReader;
+bool P_ParseUSDF(int lumpnum, FileReader *lump, int lumplen);
+
 
 #endif

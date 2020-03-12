@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 
+#define USE_WINDOWS_DWORD
 #include "resource.h"
 #include "s_sound.h"
 #include "templates.h"
@@ -16,6 +17,10 @@
 #include "c_dispatch.h"
 #include "c_cvars.h"
 #include "doomstat.h"
+
+#ifdef _MSC_VER
+#pragma warning(disable:4244)
+#endif
 
 // More w32api lackings
 #ifndef TTM_SETTITLE
@@ -195,7 +200,7 @@ LRESULT AddEnvToDropDown (HWND hCtl, bool showID, const ReverbContainer *env)
 
 	if (showID)
 	{
-		sprintf (buff, "(%3d,%3d) %s", HIBYTE(env->ID), LOBYTE(env->ID), env->Name);
+		mysnprintf (buff, countof(buff), "(%3d,%3d) %s", HIBYTE(env->ID), LOBYTE(env->ID), env->Name);
 		i = SendMessage (hCtl, CB_ADDSTRING, 0, (LPARAM)buff);
 	}
 	else
@@ -254,9 +259,9 @@ void SetIDEdits (HWND hDlg, WORD id)
 {
 	char text[4];
 
-	sprintf (text, "%d", HIBYTE(id));
+	mysnprintf (text, countof(text), "%d", HIBYTE(id));
 	SendMessage (GetDlgItem (hDlg, IDC_EDITID1), WM_SETTEXT, 0, (LPARAM)text);
-	sprintf (text, "%d", LOBYTE(id));
+	mysnprintf (text, countof(text), "%d", LOBYTE(id));
 	SendMessage (GetDlgItem (hDlg, IDC_EDITID2), WM_SETTEXT, 0, (LPARAM)text);
 }
 
@@ -405,11 +410,11 @@ LRESULT CALLBACK EditControlProc (HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				int vali = SendMessage (env->SliderHWND, TBM_GETPOS, 0, 0);
 				if (env->Float)
 				{
-					sprintf (buff, "%d.%03d", vali/1000, abs(vali%1000));
+					mysnprintf (buff, countof(buff), "%d.%03d", vali/1000, abs(vali%1000));
 				}
 				else
 				{
-					sprintf (buff, "%d", vali);
+					mysnprintf (buff, countof(buff), "%d", vali);
 				}
 				CallWindowProc (StdEditProc, hWnd, WM_SETTEXT, 0, (LPARAM)buff);
 				CallWindowProc (StdEditProc, hWnd, EM_SETSEL, 0, -1);
@@ -454,7 +459,7 @@ void SetupEnvControls (HWND hDlg)
 {
 	size_t i;
 
-	for (i = 0; i < sizeof(EnvControls)/sizeof(EnvControls[0]); ++i)
+	for (i = 0; i < countof(EnvControls); ++i)
 	{
 		if (EnvControls[i].EditControl == 0)
 			continue;
@@ -469,7 +474,7 @@ void SetupEnvControls (HWND hDlg)
 		SetWindowLongPtr (EnvControls[i].EditHWND, GWLP_USERDATA, (LONG_PTR)&EnvControls[i]);
 		SetWindowLongPtr (EnvControls[i].SliderHWND, GWLP_USERDATA, (LONG_PTR)&EnvControls[i]);
 	}
-	for (i = 0; i < sizeof(EnvFlags)/sizeof(EnvFlags[0]); ++i)
+	for (i = 0; i < countof(EnvFlags); ++i)
 	{
 		EnvFlags[i].CheckboxHWND = GetDlgItem (hDlg, EnvFlags[i].CheckboxControl);
 		SetWindowLongPtr (EnvFlags[i].CheckboxHWND, GWLP_USERDATA, (LONG_PTR)&EnvFlags[i]);
@@ -486,7 +491,7 @@ void UpdateControl (const EnvControl *control, int value, bool slider)
 	}
 	if (control->Float)
 	{
-		sprintf (buff, "%d.%03d", value/1000, abs(value%1000));
+		mysnprintf (buff, countof(buff), "%d.%03d", value/1000, abs(value%1000));
 		if (CurrentEnv != NULL)
 		{
 			CurrentEnv->Properties.*control->Float = float(value) / 1000.0;
@@ -494,7 +499,7 @@ void UpdateControl (const EnvControl *control, int value, bool slider)
 	}
 	else
 	{
-		sprintf (buff, "%d", value);
+		mysnprintf (buff, countof(buff), "%d", value);
 		if (CurrentEnv != NULL)
 		{
 			CurrentEnv->Properties.*control->Int = value;
@@ -517,7 +522,7 @@ void UpdateControls (ReverbContainer *env, HWND hDlg)
 
 	CurrentEnv = NULL;
 
-	for (i = 0; i < sizeof(EnvControls)/sizeof(EnvControls[0]); ++i)
+	for (i = 0; i < countof(EnvControls); ++i)
 	{
 		EnvControl *ctrl = &EnvControls[i];
 
@@ -533,7 +538,7 @@ void UpdateControls (ReverbContainer *env, HWND hDlg)
 		EnableWindow (ctrl->EditHWND, !env->Builtin);
 		EnableWindow (ctrl->SliderHWND, !env->Builtin);
 	}
-	for (i = 0; i < sizeof(EnvFlags)/sizeof(EnvFlags[0]); ++i)
+	for (i = 0; i < countof(EnvFlags); ++i)
 	{
 		SendMessage (EnvFlags[i].CheckboxHWND, BM_SETCHECK,
 			(env->Properties.Flags & EnvFlags[i].Flag) ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -541,10 +546,10 @@ void UpdateControls (ReverbContainer *env, HWND hDlg)
 	}
 	EnableWindow (GetDlgItem (hDlg, IDC_REVERT), !env->Builtin);
 
-	sprintf (buff, "%d", HIBYTE(env->ID));
+	mysnprintf (buff, countof(buff), "%d", HIBYTE(env->ID));
 	SendMessage (GetDlgItem (hDlg, IDC_ID1), WM_SETTEXT, 0, (LPARAM)buff);
 
-	sprintf (buff, "%d", LOBYTE(env->ID));
+	mysnprintf (buff, countof(buff), "%d", LOBYTE(env->ID));
 	SendMessage (GetDlgItem (hDlg, IDC_ID2), WM_SETTEXT, 0, (LPARAM)buff);
 
 	SavedProperties = env->Properties;
@@ -631,7 +636,7 @@ INT_PTR CALLBACK EAXProp (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	case WM_COMMAND:
 		if (HIWORD(wParam) == BN_CLICKED && CurrentEnv != NULL)
 		{
-			for (size_t i = 0; i < sizeof(EnvFlags)/sizeof(EnvFlags[0]); ++i)
+			for (size_t i = 0; i < countof(EnvFlags); ++i)
 			{
 				if ((HWND)lParam == EnvFlags[i].CheckboxHWND)
 				{
@@ -689,7 +694,7 @@ void SuggestNewName (const ReverbContainer *env, HWND hEdit)
 		{
 			len = 31 - numdigits;
 		}
-		sprintf (text + len, "%d", number);
+		mysnprintf (text + len, countof(text) - len, "%d", number);
 
 		probe = Environments;
 		while (probe != NULL)
@@ -761,10 +766,11 @@ INT_PTR CALLBACK NewEAXProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			hDlg, NULL, g_hInst, NULL);
 		if (ToolTip)
 		{
+			char zero = '\0';
 			ti.cbSize = sizeof(ti);
 			ti.uFlags = TTF_TRACK | TTF_TRANSPARENT;
 			ti.hinst = g_hInst;
-			ti.lpszText = "";
+			ti.lpszText = &zero;
 			for (i = 0; i < 3; ++i)
 			{
 				ti.uId = i;
@@ -798,14 +804,11 @@ INT_PTR CALLBACK NewEAXProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (0 == GetWindowText (GetDlgItem (hDlg, IDC_NEWENVNAME), buff, 32) ||
 				S_FindEnvironment (buff) != NULL)
 			{
-				static CHAR *texts[2] =
-				{
-					"That name is already used.",
-					"Please enter a name."
-				};
+				static CHAR text0[] = "That name is already used.";
+				static CHAR text1[] = "Please enter a name.";
 				ti.uId = 0;
 				ti.hwnd = GetDlgItem (hDlg, IDC_NEWENVNAME);
-				ti.lpszText = buff[0] ? texts[0] : texts[1];
+				ti.lpszText = buff[0] ? text0 : text1;
 				ShowErrorTip (ToolTip, ti, hDlg, "Bad Name");
 				return 0;
 			}
@@ -819,9 +822,10 @@ INT_PTR CALLBACK NewEAXProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			}
 			if (id1 > 255 || id2 > 255)
 			{
+				static CHAR text[] = "Please enter a number between 0 and 255.";
 				ti.uId = id1 > 255 ? 1 : 2;
 				ti.hwnd = GetDlgItem (hDlg, IDC_EDITID1 + ti.uId - 1);
-				ti.lpszText = "Please enter a number between 0 and 255.";
+				ti.lpszText = text;
 				ShowErrorTip (ToolTip, ti, hDlg, "Bad Value");
 			}
 			else if (NULL != (rev = S_FindEnvironment (MAKEWORD (id2, id1))))
@@ -829,7 +833,7 @@ INT_PTR CALLBACK NewEAXProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				static char foo[80];
 				ti.uId = 2;
 				ti.hwnd = GetDlgItem (hDlg, IDC_EDITID2);
-				sprintf (foo, "This ID is already used by \"%s\".", rev->Name);
+				mysnprintf (foo, countof(foo), "This ID is already used by \"%s\".", rev->Name);
 				ti.lpszText = foo;
 				ShowErrorTip (ToolTip, ti, hDlg, "Bad ID");
 			}
@@ -997,7 +1001,7 @@ UINT_PTR CALLBACK SaveHookProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
 					"Nothing Selected",
 					MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2))
 				{
-					SetWindowLongPtr (hDlg, DWL_MSGRESULT, 1);
+					SetWindowLongPtr (hDlg, DWLP_MSGRESULT, 1);
 					return 1;
 				}
 			}
@@ -1052,7 +1056,7 @@ retry:
 				base = NULL;
 			}
 			fprintf (f, "\"%s\" %u %u\n{\n", env->Name, HIBYTE(env->ID), LOBYTE(env->ID));
-			for (j = 0; j < sizeof(EnvControls)/sizeof(EnvControls[0]); ++j)
+			for (j = 0; j < countof(EnvControls); ++j)
 			{
 				const EnvControl *ctl = &EnvControls[j];
 				if (ctl->Name &&
@@ -1074,7 +1078,7 @@ retry:
 					}
 				}
 			}
-			for (j = 0; j < sizeof(EnvFlags)/sizeof(EnvFlags[0]); ++j)
+			for (j = 0; j < countof(EnvFlags); ++j)
 			{
 				if (EnvFlags[j].Flag & (env->Properties.Flags ^ base->Properties.Flags))
 				{
@@ -1348,7 +1352,7 @@ void ShowEAXEditor ()
 	EAXEditWindow = CreateDialog (g_hInst, MAKEINTRESOURCE(IDD_EAXEDIT), Window, EAXProc);
 }
 
-CCMD (eaxedit)
+CCMD (reverbedit)
 {
 	if (EAXEditWindow != 0)
 	{

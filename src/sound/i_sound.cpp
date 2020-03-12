@@ -1,9 +1,9 @@
 /*
 ** i_sound.cpp
-** System interface for sound; uses fmod.dll
+** Stubs for sound interfaces.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -39,6 +39,7 @@
 #include "resource.h"
 extern HWND Window;
 extern HINSTANCE g_hInst;
+#define USE_WINDOWS_DWORD
 #else
 #define FALSE 0
 #define TRUE 1
@@ -49,13 +50,9 @@ extern HINSTANCE g_hInst;
 #include <stdarg.h>
 
 #include "doomtype.h"
-#include "m_alloc.h"
 #include <math.h>
 
 #include "fmodsound.h"
-#ifdef _WIN32
-#include "altsound.h"
-#endif
 
 #include "m_swap.h"
 #include "stats.h"
@@ -70,60 +67,24 @@ extern HINSTANCE g_hInst;
 #include "w_wad.h"
 #include "i_video.h"
 #include "s_sound.h"
+#include "v_text.h"
 #include "gi.h"
 
 #include "doomdef.h"
 
 EXTERN_CVAR (Float, snd_sfxvolume)
-CVAR (Int, snd_samplerate, 44100, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CVAR (Int, snd_samplerate, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Int, snd_buffersize, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (String, snd_output, "default", CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
 // killough 2/21/98: optionally use varying pitched sounds
 CVAR (Bool, snd_pitched, false, CVAR_ARCHIVE)
 
-// Maps sfx channels onto FMOD channels
-static struct ChanMap
-{
-	int soundID;		// sfx playing on this channel
-	long channelID;
-	bool bIsLooping;
-	bool bIs3D;
-	unsigned int lastPos;
-} *ChannelMap;
-
 SoundRenderer *GSnd;
+bool nosound;
+bool nosfx;
 
-static int numChannels;
-static unsigned int DriverCaps;
-static int OutputType;
-
-static bool SoundDown = true;
-
-#if 0
-static const char *FmodErrors[] =
-{
-	"No errors",
-	"Cannot call this command after FSOUND_Init.  Call FSOUND_Close first.",
-	"This command failed because FSOUND_Init was not called",
-	"Error initializing output device.",
-	"Error initializing output device, but more specifically, the output device is already in use and cannot be reused.",
-	"Playing the sound failed.",
-	"Soundcard does not support the features needed for this soundsystem (16bit stereo output)",
-	"Error setting cooperative level for hardware.",
-	"Error creating hardware sound buffer.",
-	"File not found",
-	"Unknown file format",
-	"Error loading file",
-	"Not enough memory ",
-	"The version number of this file format is not supported",
-	"Incorrect mixer selected",
-	"An invalid parameter was passed to this function",
-	"Tried to use a3d and not an a3d hardware card, or dll didnt exist, try another output type.",
-	"Tried to use an EAX command on a non EAX enabled channel or output.",
-	"Failed to allocate a new channel"
-};
-#endif
+void I_CloseSound ();
 
 
 //
@@ -137,7 +98,7 @@ static const char *FmodErrors[] =
 // Maximum volume of a sound effect.
 //==========================================================================
 
-CUSTOM_CVAR (Float, snd_sfxvolume, 0.5f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
+CUSTOM_CVAR (Float, snd_sfxvolume, 1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOINITCALL)
 {
 	if (self < 0.f)
 		self = 0.f;
@@ -149,155 +110,205 @@ CUSTOM_CVAR (Float, snd_sfxvolume, 0.5f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOI
 	}
 }
 
-
-#ifdef _WIN32
-// [RH] Dialog procedure for the error dialog that appears if FMOD
-//		could not be initialized for some reason.
-BOOL CALLBACK InitBoxCallback (HWND hwndDlg, UINT message, WPARAM wParam, LPARAM lParam)
+class NullSoundRenderer : public SoundRenderer
 {
-	switch (message)
+public:
+	virtual bool IsNull() { return true; }
+	void SetSfxVolume (float volume)
 	{
-	case WM_COMMAND:
-		if (wParam == IDOK ||
-			wParam == IDC_NOSOUND ||
-			wParam == IDCANCEL)
-		{
-			EndDialog (hwndDlg, wParam);
-			return TRUE;
-		}
-		break;
 	}
-	return FALSE;
-}
-#endif
+	void SetMusicVolume (float volume)
+	{
+	}
+	SoundHandle LoadSound(BYTE *sfxdata, int length)
+	{
+		SoundHandle retval = { NULL };
+		return retval;
+	}
+	SoundHandle LoadSoundRaw(BYTE *sfxdata, int length, int frequency, int channels, int bits, int loopstart, int loopend)
+	{
+		SoundHandle retval = { NULL };
+		return retval;
+	}
+	void UnloadSound (SoundHandle sfx)
+	{
+	}
+	unsigned int GetMSLength(SoundHandle sfx)
+	{
+		// Return something that isn't 0. This is only used by some
+		// ambient sounds to specify a default minimum period.
+		return 250;
+	}
+	unsigned int GetSampleLength(SoundHandle sfx)
+	{
+		return 0;
+	}
+	float GetOutputRate()
+	{
+		return 11025;	// Lies!
+	}
+	void StopChannel(FISoundChannel *chan)
+	{
+	}
+	void ChannelVolume(FISoundChannel *, float)
+	{
+	}
+
+	// Streaming sounds.
+	SoundStream *CreateStream (SoundStreamCallback callback, int buffbytes, int flags, int samplerate, void *userdata)
+	{
+		return NULL;
+	}
+	SoundStream *OpenStream (const char *filename, int flags, int offset, int length)
+	{
+		return NULL;
+	}
+
+	// Starts a sound.
+	FISoundChannel *StartSound (SoundHandle sfx, float vol, int pitch, int chanflags, FISoundChannel *reuse_chan)
+	{
+		return NULL;
+	}
+	FISoundChannel *StartSound3D (SoundHandle sfx, SoundListener *listener, float vol, FRolloffInfo *rolloff, float distscale, int pitch, int priority, const FVector3 &pos, const FVector3 &vel, int channum, int chanflags, FISoundChannel *reuse_chan)
+	{
+		return NULL;
+	}
+
+	// Marks a channel's start time without actually playing it.
+	void MarkStartTime (FISoundChannel *chan)
+	{
+	}
+
+	// Returns position of sound on this channel, in samples.
+	unsigned int GetPosition(FISoundChannel *chan)
+	{
+		return 0;
+	}
+
+	// Gets a channel's audibility (real volume).
+	float GetAudibility(FISoundChannel *chan)
+	{
+		return 0;
+	}
+
+	// Synchronizes following sound startups.
+	void Sync (bool sync)
+	{
+	}
+
+	// Pauses or resumes all sound effect channels.
+	void SetSfxPaused (bool paused, int slot)
+	{
+	}
+
+	// Pauses or resumes *every* channel, including environmental reverb.
+	void SetInactive(SoundRenderer::EInactiveState inactive)
+	{
+	}
+
+	// Updates the volume, separation, and pitch of a sound channel.
+	void UpdateSoundParams3D (SoundListener *listener, FISoundChannel *chan, bool areasound, const FVector3 &pos, const FVector3 &vel)
+	{
+	}
+
+	void UpdateListener (SoundListener *)
+	{
+	}
+	void UpdateSounds ()
+	{
+	}
+
+	bool IsValid ()
+	{
+		return true;
+	}
+	void PrintStatus ()
+	{
+		Printf("Null sound module active.\n");
+	}
+	void PrintDriversList ()
+	{
+		Printf("Null sound module uses no drivers.\n");
+	}
+	FString GatherStats ()
+	{
+		return "Null sound module has no stats.";
+	}
+};
 
 void I_InitSound ()
 {
 	/* Get command line options: */
-	bool nosound = !!Args.CheckParm ("-nosfx") || !!Args.CheckParm ("-nosound");
+	nosound = !!Args->CheckParm ("-nosound");
+	nosfx = !!Args->CheckParm ("-nosfx");
 
 	if (nosound)
 	{
+		GSnd = new NullSoundRenderer;
 		I_InitMusic ();
 		return;
 	}
 
-	// clamp snd_samplerate to FMOD's limits
-	if (snd_samplerate < 4000)
-	{
-		snd_samplerate = 4000;
-	}
-	else if (snd_samplerate > 65535)
-	{
-		snd_samplerate = 65535;
-	}
-
-#ifdef _WIN32
-	if (stricmp (snd_output, "alternate") == 0)
-	{
-		GSnd = new AltSoundRenderer;
-	}
-	else
-	{
-		GSnd = new FMODSoundRenderer;
-		if (!GSnd->IsValid ())
-		{
-			delete GSnd;
-			GSnd = new AltSoundRenderer;
-		}
-	}
-#else
 	GSnd = new FMODSoundRenderer;
-#endif
 
 	if (!GSnd->IsValid ())
 	{
-		delete GSnd;
-		GSnd = NULL;
-#ifdef _WIN32
-		// If sound cannot be initialized, give the user some options.
-		switch (DialogBox (g_hInst,
-						   MAKEINTRESOURCE(IDD_FMODINITFAILED),
-						   (HWND)Window,
-						   (DLGPROC)InitBoxCallback))
-		{
-		case IDC_NOSOUND:
-			break;
-
-		case IDCANCEL:
-			exit (0);
-			break;
-		}
-#else
-		Printf ("Sound init failed. Using nosound.\n");
-#endif
+		I_CloseSound();
+		GSnd = new NullSoundRenderer;
+		Printf (TEXTCOLOR_RED"Sound init failed. Using nosound.\n");
 	}
 	I_InitMusic ();
 	snd_sfxvolume.Callback ();
 }
 
 
-void STACK_ARGS I_ShutdownSound (void)
+void I_CloseSound ()
+{
+	// Free all loaded samples
+	for (unsigned i = 0; i < S_sfx.Size(); i++)
+	{
+		S_UnloadSound(&S_sfx[i]);
+	}
+
+	delete GSnd;
+	GSnd = NULL;
+}
+
+void I_ShutdownSound()
 {
 	if (GSnd != NULL)
 	{
-		delete GSnd;
-		GSnd = NULL;
+		S_StopAllChannels();
+		I_CloseSound();
 	}
 }
 
 CCMD (snd_status)
 {
-	if (GSnd == NULL)
-	{
-		Printf ("sound is not active\n");
-	}
-	else
-	{
-		GSnd->PrintStatus ();
-	}
+	GSnd->PrintStatus ();
 }
 
 CCMD (snd_reset)
 {
-	SoundRenderer *snd = GSnd;
-	if (snd != NULL)
-	{
-		snd->MovieDisableSound ();
-		GSnd = NULL;
-	}
-	I_InitSound ();
-	S_Init ();
-	S_RestartMusic ();
-	if (snd != NULL) delete snd;
+	I_ShutdownMusic();
+	S_EvictAllChannels();
+	I_CloseSound();
+	I_InitSound();
+	S_RestartMusic();
+	S_RestoreEvictedChannels();
 }
 
 CCMD (snd_listdrivers)
 {
-	if (GSnd != NULL)
-	{
-		GSnd->PrintDriversList ();
-	}
-	else
-	{
-		Printf ("Sound is inactive.\n");
-	}
+	GSnd->PrintDriversList ();
 }
 
-ADD_STAT (sound, out)
+ADD_STAT (sound)
 {
-	if (GSnd != NULL)
-	{
-		GSnd->GatherStats (out);
-	}
-	else
-	{
-		strcpy (out, "no sound");
-	}
+	return GSnd->GatherStats ();
 }
 
 SoundRenderer::SoundRenderer ()
-: Sound3D (false)
 {
 }
 
@@ -305,37 +316,190 @@ SoundRenderer::~SoundRenderer ()
 {
 }
 
-SoundTrackerModule *SoundRenderer::OpenModule (const char *file, int offset, int length)
+FString SoundRenderer::GatherStats ()
+{
+	return "No stats for this sound renderer.";
+}
+
+short *SoundRenderer::DecodeSample(int outlen, const void *coded, int sizebytes, ECodecType type)
 {
 	return NULL;
 }
 
-long SoundRenderer::StartSound3D (sfxinfo_t *sfx, float vol, int pitch, int channel, bool looping, float pos[3], float vel[3])
+void SoundRenderer::DrawWaveDebug(int mode)
 {
-	return 0;
-}
-
-void SoundRenderer::UpdateSoundParams3D (long handle, float pos[3], float vel[3])
-{
-}
-
-void SoundRenderer::UpdateListener (AActor *listener)
-{
-}
-
-void SoundRenderer::UpdateSounds ()
-{
-}
-
-void SoundRenderer::GatherStats (char *outstring)
-{
-	sprintf (outstring, "No stats for this sound renderer.");
 }
 
 SoundStream::~SoundStream ()
 {
 }
 
-SoundTrackerModule::~SoundTrackerModule ()
+bool SoundStream::SetPosition(unsigned int pos)
 {
+	return false;
 }
+
+bool SoundStream::SetOrder(int order)
+{
+	return false;
+}
+
+FString SoundStream::GetStats()
+{
+	return "No stream stats available.";
+}
+
+//==========================================================================
+//
+// SoundRenderer :: LoadSoundVoc
+//
+//==========================================================================
+
+SoundHandle SoundRenderer::LoadSoundVoc(BYTE *sfxdata, int length)
+{
+	BYTE * data = NULL;
+	int len, frequency, channels, bits, loopstart, loopend;
+	len = frequency = channels = bits = 0;
+	loopstart = loopend = -1;
+	do if (length > 26)
+	{
+		// First pass to parse data and validate the file
+		if (strncmp ((const char *)sfxdata, "Creative Voice File", 19))
+			break;
+		int i = 26, blocktype = 0, blocksize = 0, codec = -1;
+		bool noextra = true, okay = true;
+		while (i < length)
+		{
+			// Read block header
+			blocktype = sfxdata[i];
+			if (blocktype == 0)
+				break;
+			blocksize = sfxdata[i+1] + (sfxdata[i+2]<<8) + (sfxdata[i+3]<<16);
+			i += 4;
+			if (i + blocksize > length)
+			{
+				okay = false;
+				break;
+			}
+
+			// Read block data
+			switch (blocktype)
+			{
+			case 1: // Sound data
+				if (noextra && (codec == -1 || codec == sfxdata[i+1]))
+				{
+					frequency = 1000000/(256 - sfxdata[i]);
+					channels = 1;
+					codec = sfxdata[i+1];
+					if (codec == 0)
+						bits = 8;
+					else if (codec == 4)
+						bits = -16;
+					else okay = false;
+					len += blocksize - 2;
+				}
+				break;
+			case 2: // Sound data continuation
+				if (codec == -1)
+					okay = false;
+				len += blocksize;
+				break;
+			case 3: // Silence
+				if (frequency == 1000000/(256 - sfxdata[i+2]))
+				{
+					int silength = 1 + sfxdata[i] + (sfxdata[i+1]<<8);
+					if (codec == 0) // 8-bit unsigned PCM
+						len += silength;
+					else if (codec == 4) // 16-bit signed PCM
+						len += silength<<1;
+					else okay = false;
+				} else okay = false;
+				break;
+			case 4: // Mark (ignored)
+			case 5: // Text (ignored)
+				break;
+			case 6: // Repeat start
+				loopstart = len;
+				break;
+			case 7: // Repeat end
+				loopend = len;
+				if (loopend < loopstart)
+					okay = false;
+				break;
+			case 8: // Extra info
+				noextra = false;
+				if (codec == -1)
+				{
+					codec = sfxdata[i+2];
+					channels = 1+sfxdata[i+3];
+					frequency = 256000000/(channels * (65536 - (sfxdata[i]+(sfxdata[i+1]<<8))));
+				} else okay = false;
+				break;
+			case 9: // Sound data in new format
+				if (codec == -1)
+				{
+					frequency = sfxdata[i] + (sfxdata[i+1]<<8) + (sfxdata[i+2]<<16) + (sfxdata[i+3]<<24);
+					bits = sfxdata[i+4];
+					channels = sfxdata[i+5];
+					codec = sfxdata[i+6] + (sfxdata[i+7]<<8);
+					if (codec == 0)
+						bits = 8;
+					else if (codec == 4)
+						bits = -16;
+					else okay = false;
+					len += blocksize - 12;
+				} else okay = false;
+				break;
+			default: // Unknown block type
+				okay = false;
+				DPrintf ("Unknown VOC block type %i\n", blocktype);
+				break;
+			}
+			// Move to next block
+			i += blocksize;
+		}
+
+		// Second pass to write the data
+		if (okay)
+		{
+			data = new BYTE[len];
+			i = 26;
+			int j = 0;
+			while (i < length)
+			{
+				// Read block header again
+				blocktype = sfxdata[i];
+				if (blocktype == 0) break;
+				blocksize = sfxdata[i+1] + (sfxdata[i+2]<<8) + (sfxdata[i+3]<<16);
+				i += 4;
+				switch (blocktype)
+				{
+				case 1: memcpy(data+j, sfxdata+i+2,  blocksize-2 ); j += blocksize-2;	break;
+				case 2: memcpy(data+j, sfxdata+i,    blocksize   ); j += blocksize;		break;
+				case 9: memcpy(data+j, sfxdata+i+12, blocksize-12); j += blocksize-12;	break;
+				case 3:
+					{
+						int silength = 1 + sfxdata[i] + (sfxdata[i+1]<<8);
+						if (bits == 8)
+						{
+							memset(data+j, 128, silength);
+							j += silength;
+						}
+						else if (bits == -16)
+						{
+							memset(data+j, 0, silength<<1);
+							j += silength<<1;
+						}
+					}
+					break;
+				default: break;
+				}
+			}
+		}
+
+	} while (false);
+	SoundHandle retval = LoadSoundRaw(data, len, frequency, channels, bits, loopstart, loopend);
+	if (data) delete[] data;
+	return retval;
+}
+

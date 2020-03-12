@@ -4,6 +4,7 @@
 #include "w_wad.h"
 #include "r_defs.h"
 #include "m_swap.h"
+#include "doomstat.h"
 
 static int WriteTHINGS (FILE *file);
 static int WriteLINEDEFS (FILE *file);
@@ -18,18 +19,24 @@ static int WriteBLOCKMAP (FILE *file);
 static int WriteBEHAVIOR (FILE *file);
 
 #define APPEND(pos,name) \
-	lumps[pos].FilePos = LittleLong(ftell (file)); \
+	lumps[pos].FilePos = LittleLong((int)ftell (file)); \
 	lumps[pos].Size = LittleLong(Write##name (file)); \
 	memcpy (lumps[pos].Name, #name, sizeof(#name)-1);
 
 CCMD (dumpmap)
 {
-	char *mapname;
+	const char *mapname;
 	FILE *file;
 
 	if (argv.argc() < 2)
 	{
 		Printf ("Usage: dumpmap <wadname> [mapname]\n");
+		return;
+	}
+	
+	if (gamestate != GS_LEVEL)
+	{
+		Printf ("You can only dump a map when inside a level.\n");
 		return;
 	}
 
@@ -56,8 +63,8 @@ CCMD (dumpmap)
 		return;
 	}
 
-	wadinfo_t header = { PWAD_ID, 12 };
-	wadlump_t lumps[12] = { {0} };
+	wadinfo_t header = { PWAD_ID, 12, 0 };
+	wadlump_t lumps[12] = { {0, 0, {0}} };
 
 	fseek (file, 12, SEEK_SET);
 	
@@ -88,14 +95,14 @@ CCMD (dumpmap)
 
 static int WriteTHINGS (FILE *file)
 {
-	mapthing2_t mt = { 0 };
+	mapthinghexen_t mt = { 0, 0, 0, 0, 0, 0, 0, 0, {0} };
 	AActor *mo = players[consoleplayer].mo;
 
 	mt.x = LittleShort(short(mo->x >> FRACBITS));
 	mt.y = LittleShort(short(mo->y >> FRACBITS));
 	mt.angle = LittleShort(short(MulScale32 (mo->angle >> ANGLETOFINESHIFT, 360)));
-	mt.type = LittleShort(1);
-	mt.flags = LittleShort(7|224|MTF_SINGLE);
+	mt.type = LittleShort((short)1);
+	mt.flags = LittleShort((short)(7|224|MTF_SINGLE));
 	fwrite (&mt, sizeof(mt), 1, file);
 	return sizeof (mt);
 }
@@ -114,14 +121,14 @@ static int WriteLINEDEFS (FILE *file)
 		{
 			mld.args[j] = (BYTE)lines[i].args[j];
 		}
-		mld.sidenum[0] = LittleShort(WORD(lines[i].sidenum[0]));
-		mld.sidenum[1] = LittleShort(WORD(lines[i].sidenum[1]));
+		mld.sidenum[0] = LittleShort(WORD(lines[i].sidedef[0] - sides));
+		mld.sidenum[1] = LittleShort(WORD(lines[i].sidedef[1] - sides));
 		fwrite (&mld, sizeof(mld), 1, file);
 	}
 	return numlines * sizeof(mld);
 }
 
-static const char *GetTextureName (int texnum)
+static const char *GetTextureName (FTextureID texnum)
 {
 	FTexture *tex = TexMan[texnum];
 
@@ -141,12 +148,12 @@ static int WriteSIDEDEFS (FILE *file)
 
 	for (int i = 0; i < numsides; ++i)
 	{
-		msd.textureoffset = LittleShort(short(sides[i].textureoffset >> FRACBITS));
-		msd.rowoffset = LittleShort(short(sides[i].rowoffset >> FRACBITS));
+		msd.textureoffset = LittleShort(short(sides[i].GetTextureXOffset(side_t::mid) >> FRACBITS));
+		msd.rowoffset = LittleShort(short(sides[i].GetTextureYOffset(side_t::mid) >> FRACBITS));
 		msd.sector = LittleShort(short(sides[i].sector - sectors));
-		uppercopy (msd.toptexture, GetTextureName (sides[i].toptexture));
-		uppercopy (msd.bottomtexture, GetTextureName (sides[i].bottomtexture));
-		uppercopy (msd.midtexture, GetTextureName (sides[i].midtexture));
+		uppercopy (msd.toptexture, GetTextureName (sides[i].GetTexture(side_t::top)));
+		uppercopy (msd.bottomtexture, GetTextureName (sides[i].GetTexture(side_t::bottom)));
+		uppercopy (msd.midtexture, GetTextureName (sides[i].GetTexture(side_t::mid)));
 		fwrite (&msd, sizeof(msd), 1, file);
 	}
 	return numsides * sizeof(msd);
@@ -165,25 +172,34 @@ static int WriteVERTEXES (FILE *file)
 	return numvertexes * sizeof(mv);
 }
 
+
 static int WriteSEGS (FILE *file)
 {
+#if 0
 	mapseg_t ms;
 
 	ms.offset = 0;		// unused by ZDoom, so just leave it 0
 	for (int i = 0; i < numsegs; ++i)
 	{
-		ms.v1 = LittleShort(short(segs[i].v1 - vertexes));
-		ms.v2 = LittleShort(short(segs[i].v2 - vertexes));
-		ms.linedef = LittleShort(short(segs[i].linedef - lines));
-		ms.side = LittleShort(segs[i].sidedef - sides == segs[i].linedef->sidenum[0] ? 0 : 1);
-		ms.angle = LittleShort(short(R_PointToAngle2 (segs[i].v1->x, segs[i].v1->y, segs[i].v2->x, segs[i].v2->y)>>16));
-		fwrite (&ms, sizeof(ms), 1, file);
+		if (segs[i].linedef!=NULL)
+		{
+			ms.v1 = LittleShort(short(segs[i].v1 - vertexes));
+			ms.v2 = LittleShort(short(segs[i].v2 - vertexes));
+			ms.linedef = LittleShort(short(segs[i].linedef - lines));
+			ms.side = segs[i].sidedef == segs[i].linedef->sidedef[0] ? 0 : LittleShort((short)1);
+			ms.angle = LittleShort(short(R_PointToAngle2 (segs[i].v1->x, segs[i].v1->y, segs[i].v2->x, segs[i].v2->y)>>16));
+			fwrite (&ms, sizeof(ms), 1, file);
+		}
 	}
 	return numsegs * sizeof(ms);
+#else
+	return 0;
+#endif
 }
 
 static int WriteSSECTORS (FILE *file)
 {
+#if 0
 	mapsubsector_t mss;
 
 	for (int i = 0; i < numsubsectors; ++i)
@@ -193,10 +209,14 @@ static int WriteSSECTORS (FILE *file)
 		fwrite (&mss, sizeof(mss), 1, file);
 	}
 	return numsubsectors * sizeof(mss);
+#else
+	return 0;
+#endif
 }
 
 static int WriteNODES (FILE *file)
 {
+#if 0
 	mapnode_t mn;
 
 	for (int i = 0; i < numnodes; ++i)
@@ -214,7 +234,7 @@ static int WriteNODES (FILE *file)
 			WORD child;
 			if ((size_t)nodes[i].children[j] & 1)
 			{
-				child = NF_SUBSECTOR | WORD((subsector_t *)((byte *)nodes[i].children[j] - 1) - subsectors);
+				child = mapnode_t::NF_SUBSECTOR | WORD((subsector_t *)((BYTE *)nodes[i].children[j] - 1) - subsectors);
 			}
 			else
 			{
@@ -225,6 +245,9 @@ static int WriteNODES (FILE *file)
 		fwrite (&mn, sizeof(mn), 1, file);
 	}
 	return numnodes * sizeof(mn);
+#else
+	return 0;
+#endif
 }
 
 static int WriteSECTORS (FILE *file)
@@ -233,11 +256,11 @@ static int WriteSECTORS (FILE *file)
 
 	for (int i = 0; i < numsectors; ++i)
 	{
-		ms.floorheight = LittleShort(short(sectors[i].floortexz >> FRACBITS));
-		ms.ceilingheight = LittleShort(short(sectors[i].ceilingtexz >> FRACBITS));
-		uppercopy (ms.floorpic, GetTextureName (sectors[i].floorpic));
-		uppercopy (ms.ceilingpic, GetTextureName (sectors[i].ceilingpic));
-		ms.lightlevel = LittleShort(sectors[i].lightlevel);
+		ms.floorheight = LittleShort(short(sectors[i].GetPlaneTexZ(sector_t::floor) >> FRACBITS));
+		ms.ceilingheight = LittleShort(short(sectors[i].GetPlaneTexZ(sector_t::ceiling) >> FRACBITS));
+		uppercopy (ms.floorpic, GetTextureName (sectors[i].GetTexture(sector_t::floor)));
+		uppercopy (ms.ceilingpic, GetTextureName (sectors[i].GetTexture(sector_t::ceiling)));
+		ms.lightlevel = LittleShort((short)sectors[i].lightlevel);
 		ms.special = LittleShort(sectors[i].special);
 		ms.tag = LittleShort(sectors[i].tag);
 		fwrite (&ms, sizeof(ms), 1, file);

@@ -2,7 +2,7 @@
 ** configfile.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,6 +34,9 @@
 #ifndef __CONFIGFILE_H__
 #define __CONFIGFILE_H__
 
+#include <stdio.h>
+#include "zstring.h"
+
 class FConfigFile
 {
 public:
@@ -47,27 +50,38 @@ public:
 	FConfigFile &operator= (const FConfigFile &other);
 
 	bool HaveSections () { return Sections != NULL; }
+	void CreateSectionAtStart (const char *name);
+	void MoveSectionToStart (const char *name);
+	void SetSectionNote (const char *section, const char *note);
+	void SetSectionNote (const char *note);
 	bool SetSection (const char *section, bool allowCreate=false);
 	bool SetFirstSection ();
 	bool SetNextSection ();
 	const char *GetCurrentSection () const;
 	void ClearCurrentSection ();
+	bool DeleteCurrentSection ();
+	void ClearKey (const char *key);
 
+	bool SectionIsEmpty ();
 	bool NextInSection (const char *&key, const char *&value);
 	const char *GetValueForKey (const char *key) const;
 	void SetValueForKey (const char *key, const char *value, bool duplicates=false);
 
 	const char *GetPathName () const { return PathName.GetChars(); }
-	void ChangePathName (const string &path);
+	void ChangePathName (const char *path);
 
 	void LoadConfigFile (void (*nosechandler)(const char *pathname, FConfigFile *config, void *userdata), void *userdata);
-	void WriteConfigFile () const;
+	bool WriteConfigFile () const;
 
 protected:
 	virtual void WriteCommentHeader (FILE *file) const;
 
 	virtual char *ReadLine (char *string, int n, void *file) const;
 	bool ReadConfig (void *file);
+	static const char *GenerateEndTag(const char *value);
+
+	bool OkayToWrite;
+	bool FileExisted;
 
 private:
 	struct FConfigEntry
@@ -83,6 +97,7 @@ private:
 		FConfigEntry *RootEntry;
 		FConfigEntry **LastEntryPtr;
 		FConfigSection *Next;
+		FString Note;
 		char Name[1];	// + length of name
 	};
 
@@ -90,12 +105,14 @@ private:
 	FConfigSection **LastSectionPtr;
 	FConfigSection *CurrentSection;
 	FConfigEntry *CurrentEntry;
-	string PathName;
+	FString PathName;
 
 	FConfigSection *FindSection (const char *name) const;
 	FConfigEntry *FindEntry (FConfigSection *section, const char *key) const;
 	FConfigSection *NewConfigSection (const char *name);
 	FConfigEntry *NewConfigEntry (FConfigSection *section, const char *key, const char *value);
+	FConfigEntry *ReadMultiLineValue (void *file, FConfigSection *section, const char *key, const char *terminator);
+	void SetSectionNote (FConfigSection *section, const char *note);
 
 public:
 	class Position

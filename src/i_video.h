@@ -23,8 +23,8 @@
 #ifndef __I_VIDEO_H__
 #define __I_VIDEO_H__
 
-#include "doomtype.h"
-#include "v_video.h"
+
+class DFrameBuffer;
 
 
 // [RH] Set the display mode
@@ -38,18 +38,11 @@ void I_WaitVBL(int count);
 bool I_CheckResolution (int width, int height, int bpp);
 void I_ClosestResolution (int *width, int *height, int bits);
 
-void I_StartModeIterator (int bits);
-bool I_NextMode (int *width, int *height, bool *fullscreen);
-
-DCanvas *I_NewStaticCanvas (int width, int height);
-
 enum EDisplayType
 {
 	DISPLAY_WindowOnly,
 	DISPLAY_FullscreenOnly,
 	DISPLAY_Both
 };
-
-EDisplayType I_DisplayType ();
 
 #endif // __I_VIDEO_H__

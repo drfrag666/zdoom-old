@@ -3,7 +3,7 @@
 ** Particle effects
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -36,30 +36,47 @@
 
 #include "doomtype.h"
 #include "doomstat.h"
+#include "i_system.h"
 #include "c_cvars.h"
 #include "actor.h"
+#include "m_argv.h"
 #include "p_effect.h"
 #include "p_local.h"
 #include "g_level.h"
 #include "v_video.h"
 #include "m_random.h"
 #include "r_defs.h"
-#include "r_things.h"
 #include "s_sound.h"
 #include "templates.h"
+#include "gi.h"
+#include "v_palette.h"
+#include "colormatcher.h"
 
 CVAR (Int, cl_rockettrails, 1, CVAR_ARCHIVE);
+CVAR (Bool, r_rail_smartspiral, 0, CVAR_ARCHIVE);
+CVAR (Int, r_rail_spiralsparsity, 1, CVAR_ARCHIVE);
+CVAR (Int, r_rail_trailsparsity, 1, CVAR_ARCHIVE);
+CVAR (Bool, r_particles, true, 0);
+
+FRandom pr_railtrail("RailTrail");
 
 #define FADEFROMTTL(a)	(255/(a))
+
+// [RH] particle globals
+WORD			NumParticles;
+WORD			ActiveParticles;
+WORD			InactiveParticles;
+particle_t		*Particles;
+TArray<WORD>	ParticlesInSubsec;
 
 static int grey1, grey2, grey3, grey4, red, green, blue, yellow, black,
 		   red1, green1, blue1, yellow1, purple, purple1, white,
 		   rblue1, rblue2, rblue3, rblue4, orange, yorange, dred, grey5,
-		   maroon1, maroon2;
+		   maroon1, maroon2, blood1, blood2;
 
 static const struct ColorList {
 	int *color;
-	byte r, g, b;
+	BYTE r, g, b;
 } Colors[] = {
 	{&grey1,	85,  85,  85 },
 	{&grey2,	171, 171, 171},
@@ -87,19 +104,149 @@ static const struct ColorList {
 	{&dred,		80,  0,   0  },
 	{&maroon1,	154, 49,  49 },
 	{&maroon2,	125, 24,  24 },
-	{NULL}
+	{NULL, 0, 0, 0 }
 };
+
+inline particle_t *NewParticle (void)
+{
+	particle_t *result = NULL;
+	if (InactiveParticles != NO_PARTICLE)
+	{
+		result = Particles + InactiveParticles;
+		InactiveParticles = result->tnext;
+		result->tnext = ActiveParticles;
+		ActiveParticles = WORD(result - Particles);
+	}
+	return result;
+}
+
+//
+// [RH] Particle functions
+//
+void P_InitParticles ();
+void P_DeinitParticles ();
+
+// [BC] Allow the maximum number of particles to be specified by a cvar (so people
+// with lots of nice hardware can have lots of particles!).
+CUSTOM_CVAR( Int, r_maxparticles, 4000, CVAR_ARCHIVE )
+{
+	if ( self == 0 )
+		self = 4000;
+	else if ( self < 100 )
+		self = 100;
+
+	if ( gamestate != GS_STARTUP )
+	{
+		P_DeinitParticles( );
+		P_InitParticles( );
+	}
+}
+
+void P_InitParticles ()
+{
+	const char *i;
+
+	if ((i = Args->CheckValue ("-numparticles")))
+		NumParticles = atoi (i);
+	// [BC] Use r_maxparticles now.
+	else
+		NumParticles = r_maxparticles;
+
+	// This should be good, but eh...
+	NumParticles = clamp<WORD>(NumParticles, 100, 65535);
+
+	P_DeinitParticles();
+	Particles = new particle_t[NumParticles];
+	P_ClearParticles ();
+	atterm (P_DeinitParticles);
+}
+
+void P_DeinitParticles()
+{
+	if (Particles != NULL)
+	{
+		delete[] Particles;
+		Particles = NULL;
+	}
+}
+
+void P_ClearParticles ()
+{
+	int i;
+
+	memset (Particles, 0, NumParticles * sizeof(particle_t));
+	ActiveParticles = NO_PARTICLE;
+	InactiveParticles = 0;
+	for (i = 0; i < NumParticles-1; i++)
+		Particles[i].tnext = i + 1;
+	Particles[i].tnext = NO_PARTICLE;
+}
+
+// Group particles by subsectors. Because particles are always
+// in motion, there is little benefit to caching this information
+// from one frame to the next.
+
+void P_FindParticleSubsectors ()
+{
+	if (ParticlesInSubsec.Size() < (size_t)numsubsectors)
+	{
+		ParticlesInSubsec.Reserve (numsubsectors - ParticlesInSubsec.Size());
+	}
+
+	clearbufshort (&ParticlesInSubsec[0], numsubsectors, NO_PARTICLE);
+
+	if (!r_particles)
+	{
+		return;
+	}
+	for (WORD i = ActiveParticles; i != NO_PARTICLE; i = Particles[i].tnext)
+	{
+		subsector_t *ssec = R_PointInSubsector (Particles[i].x, Particles[i].y);
+		int ssnum = int(ssec-subsectors);
+		Particles[i].subsector = ssec;
+		Particles[i].snext = ParticlesInSubsec[ssnum];
+		ParticlesInSubsec[ssnum] = i;
+	}
+}
+
+static TMap<int, int> ColorSaver;
+
+static uint32 ParticleColor(int rgb)
+{
+	int *val;
+	int stuff;
+
+	val = ColorSaver.CheckKey(rgb);
+	if (val != NULL)
+	{
+		return *val;
+	}
+	stuff = rgb | (ColorMatcher.Pick(RPART(rgb), GPART(rgb), BPART(rgb)) << 24);
+	ColorSaver[rgb] = stuff;
+	return stuff;
+}
+
+static uint32 ParticleColor(int r, int g, int b)
+{
+	return ParticleColor(MAKERGB(r, g, b));
+}
 
 void P_InitEffects ()
 {
 	const struct ColorList *color = Colors;
 
+	P_InitParticles();
 	while (color->color)
 	{
-		*(color->color) = ColorMatcher.Pick (color->r, color->g, color->b);
+		*(color->color) = ParticleColor(color->r, color->g, color->b);
 		color++;
 	}
+
+	int kind = gameinfo.defaultbloodparticlecolor;
+	blood1 = ParticleColor(kind);
+	blood2 = ParticleColor(RPART(kind)/3, GPART(kind)/3, BPART(kind)/3);
 }
+
 
 void P_ThinkParticles ()
 {
@@ -110,7 +257,7 @@ void P_ThinkParticles ()
 	prev = NULL;
 	while (i != NO_PARTICLE)
 	{
-		byte oldtrans;
+		BYTE oldtrans;
 
 		particle = Particles + i;
 		i = particle->tnext;
@@ -144,7 +291,10 @@ void P_ThinkParticles ()
 //
 void P_RunEffects ()
 {
-	int pnum = int(players[consoleplayer].camera->Sector - sectors) * numsectors;
+	if (players[consoleplayer].camera == NULL) return;
+
+	int	pnum = int(players[consoleplayer].camera->Sector - sectors) * numsectors;
+
 	AActor *actor;
 	TThinkerIterator<AActor> iterator;
 
@@ -161,11 +311,16 @@ void P_RunEffects ()
 }
 
 //
-// AddParticle
+// JitterParticle
 //
 // Creates a particle with "jitter"
 //
 particle_t *JitterParticle (int ttl)
+{
+	return JitterParticle (ttl, 1.0);
+}
+// [XA] Added "drift speed" multiplier setting for enhanced railgun stuffs.
+particle_t *JitterParticle (int ttl, float drift)
 {
 	particle_t *particle = NewParticle ();
 
@@ -175,10 +330,10 @@ particle_t *JitterParticle (int ttl)
 
 		// Set initial velocities
 		for (i = 3; i; i--, val++)
-			*val = (FRACUNIT/4096) * (M_Random () - 128);
+			*val = (int)((FRACUNIT/4096) * (M_Random () - 128) * drift);
 		// Set initial accelerations
 		for (i = 3; i; i--, val++)
-			*val = (FRACUNIT/16384) * (M_Random () - 128);
+			*val = (int)((FRACUNIT/16384) * (M_Random () - 128) * drift);
 
 		particle->trans = 255;	// fully opaque
 		particle->ttl = ttl;
@@ -221,17 +376,28 @@ static void MakeFountain (AActor *actor, int color1, int color2)
 
 void P_RunEffect (AActor *actor, int effects)
 {
-	angle_t moveangle = R_PointToAngle2(0,0,actor->momx,actor->momy);
+	angle_t moveangle;
+	
+	// 512 is the limit below which R_PointToAngle2 does no longer returns usable values.
+	if (abs(actor->velx) > 512 || abs(actor->vely) > 512)
+	{
+		moveangle = R_PointToAngle2(0,0,actor->velx,actor->vely);
+	}
+	else
+	{
+		moveangle = actor->angle;
+	}
+
 	particle_t *particle;
 	int i;
 
-	if ((effects & FX_ROCKET) && cl_rockettrails)
+	if ((effects & FX_ROCKET) && (cl_rockettrails & 1))
 	{
 		// Rocket trail
 
 		fixed_t backx = actor->x - FixedMul (finecosine[(moveangle)>>ANGLETOFINESHIFT], actor->radius*2);
 		fixed_t backy = actor->y - FixedMul (finesine[(moveangle)>>ANGLETOFINESHIFT], actor->radius*2);
-		fixed_t backz = actor->z - (actor->height>>3) * (actor->momz>>16) + (2*actor->height)/3;
+		fixed_t backz = actor->z - (actor->height>>3) * (actor->velz>>16) + (2*actor->height)/3;
 
 		angle_t an = (moveangle + ANG90) >> ANGLETOFINESHIFT;
 		int speed;
@@ -239,9 +405,9 @@ void P_RunEffect (AActor *actor, int effects)
 		particle = JitterParticle (3 + (M_Random() & 31));
 		if (particle) {
 			fixed_t pathdist = M_Random()<<8;
-			particle->x = backx - FixedMul(actor->momx, pathdist);
-			particle->y = backy - FixedMul(actor->momy, pathdist);
-			particle->z = backz - FixedMul(actor->momz, pathdist);
+			particle->x = backx - FixedMul(actor->velx, pathdist);
+			particle->y = backy - FixedMul(actor->vely, pathdist);
+			particle->z = backz - FixedMul(actor->velz, pathdist);
 			speed = (M_Random () - 128) * (FRACUNIT/200);
 			particle->velx += FixedMul (speed, finecosine[an]);
 			particle->vely += FixedMul (speed, finesine[an]);
@@ -254,9 +420,9 @@ void P_RunEffect (AActor *actor, int effects)
 			particle_t *particle = JitterParticle (3 + (M_Random() & 31));
 			if (particle) {
 				fixed_t pathdist = M_Random()<<8;
-				particle->x = backx - FixedMul(actor->momx, pathdist);
-				particle->y = backy - FixedMul(actor->momy, pathdist);
-				particle->z = backz - FixedMul(actor->momz, pathdist) + (M_Random() << 10);
+				particle->x = backx - FixedMul(actor->velx, pathdist);
+				particle->y = backy - FixedMul(actor->vely, pathdist);
+				particle->z = backz - FixedMul(actor->velz, pathdist) + (M_Random() << 10);
 				speed = (M_Random () - 128) * (FRACUNIT/200);
 				particle->velx += FixedMul (speed, finecosine[an]);
 				particle->vely += FixedMul (speed, finesine[an]);
@@ -271,14 +437,14 @@ void P_RunEffect (AActor *actor, int effects)
 				break;
 		}
 	}
-	if ((effects & FX_GRENADE) && (cl_rockettrails))
+	if ((effects & FX_GRENADE) && (cl_rockettrails & 1))
 	{
 		// Grenade trail
 
 		P_DrawSplash2 (6,
 			actor->x - FixedMul (finecosine[(moveangle)>>ANGLETOFINESHIFT], actor->radius*2),
 			actor->y - FixedMul (finesine[(moveangle)>>ANGLETOFINESHIFT], actor->radius*2),
-			actor->z - (actor->height>>3) * (actor->momz>>16) + (2*actor->height)/3,
+			actor->z - (actor->height>>3) * (actor->velz>>16) + (2*actor->height)/3,
 			moveangle + ANG180, 2, 2);
 	}
 	if (effects & FX_FOUNTAINMASK)
@@ -370,8 +536,8 @@ void P_DrawSplash2 (int count, fixed_t x, fixed_t y, fixed_t z, angle_t angle, i
 	switch (kind)
 	{
 	case 0:		// Blood
-		color1 = red;
-		color2 = dred;
+		color1 = blood1;
+		color2 = blood2;
 		break;
 	case 1:		// Gunshot
 		color1 = grey3;
@@ -382,8 +548,8 @@ void P_DrawSplash2 (int count, fixed_t x, fixed_t y, fixed_t z, angle_t angle, i
 		color2 = grey1;
 		break;
 	default:	// colorized blood
-		color1 = ColorMatcher.Pick(RPART(kind), GPART(kind), BPART(kind));
-		color2 = ColorMatcher.Pick(RPART(kind)>>1, GPART(kind)>>1, BPART(kind)>>1);
+		color1 = ParticleColor(kind);
+		color2 = ParticleColor(RPART(kind)/3, GPART(kind)/3, BPART(kind)/3);
 		break;
 	}
 
@@ -420,46 +586,61 @@ void P_DrawSplash2 (int count, fixed_t x, fixed_t y, fixed_t z, angle_t angle, i
 	}
 }
 
-void P_DrawRailTrail (vec3_t start, vec3_t end)
+void P_DrawRailTrail (AActor *source, const FVector3 &start, const FVector3 &end, int color1, int color2, float maxdiff, int flags, const PClass *spawnclass, angle_t angle, int duration, float sparsity, float drift)
 {
-	float length;
+	double length, lengthsquared;
 	int steps, i;
-	float deg;
-	vec3_t step, dir, pos, extend;
+	FAngle deg;
+	FVector3 step, dir, pos, extend;
+	bool fullbright;
 
-	VectorSubtract (end, start, dir);
-	length = VectorLength (dir);
-	steps = (int)(length*0.3333f);
+	dir = end - start;
+	lengthsquared = dir | dir;
+	length = sqrt(lengthsquared);
+	steps = xs_FloorToInt(length / 3);
+	fullbright = !!(flags & RAF_FULLBRIGHT);
 
-	if (length)
+	if (steps)
 	{
-		// The railgun's sound is special. It gets played from the
-		// point on the slug's trail that is closest to the hearing player.
-		AActor *mo = players[consoleplayer].camera;
-		vec3_t point;
-		float r;
-		float dirz;
-
-		length = 1 / length;
-
-		if (abs(mo->x - FLOAT2FIXED(start[0])) < 20 * FRACUNIT
-			&& (mo->y - FLOAT2FIXED(start[1])) < 20 * FRACUNIT)
-		{ // This player (probably) fired the railgun
-			S_Sound (mo, CHAN_WEAPON, "weapons/railgf", 1, ATTN_NORM);
-		}
-		else
+		if (!(flags & RAF_SILENT))
 		{
-			// Only consider sound in 2D (for now, anyway)
-			r = ((start[1] - FIXED2FLOAT(mo->y)) * (-dir[1]) -
-				 (start[0] - FIXED2FLOAT(mo->x)) * (dir[0])) * length * length;
+			FSoundID sound;
+			
+			// Allow other sounds than 'weapons/railgf'!
+			if (!source->player) sound = source->AttackSound;
+			else if (source->player->ReadyWeapon) sound = source->player->ReadyWeapon->AttackSound;
+			else sound = 0;
+			if (!sound) sound = "weapons/railgf";
 
-			dirz = dir[2];
-			dir[2] = 0;
-			VectorMA (start, r, dir, point);
-			dir[2] = dirz;
+			// The railgun's sound is special. It gets played from the
+			// point on the slug's trail that is closest to the hearing player.
+			AActor *mo = players[consoleplayer].camera;
+			FVector3 point;
+			double r;
+			float dirz;
 
-			S_Sound (FLOAT2FIXED(point[0]), FLOAT2FIXED(point[1]),
-				CHAN_WEAPON, "weapons/railgf", 1, ATTN_NORM);
+			if (abs(mo->x - FLOAT2FIXED(start.X)) < 20 * FRACUNIT
+				&& (mo->y - FLOAT2FIXED(start.Y)) < 20 * FRACUNIT)
+			{ // This player (probably) fired the railgun
+				S_Sound (mo, CHAN_WEAPON, sound, 1, ATTN_NORM);
+			}
+			else
+			{
+
+				// Only consider sound in 2D (for now, anyway)
+				// [BB] You have to divide by lengthsquared here, not multiply with it.
+
+				r = ((start.Y - FIXED2FLOAT(mo->y)) * (-dir.Y) - (start.X - FIXED2FLOAT(mo->x)) * (dir.X)) / lengthsquared;
+				r = clamp<double>(r, 0., 1.);
+
+				dirz = dir.Z;
+				dir.Z = 0;
+				point = start + r * dir;
+				dir.Z = dirz;
+
+				S_Sound (FLOAT2FIXED(point.X), FLOAT2FIXED(point.Y), viewz,
+					CHAN_WEAPON, sound, 1, ATTN_NORM);
+			}
 		}
 	}
 	else
@@ -468,78 +649,172 @@ void P_DrawRailTrail (vec3_t start, vec3_t end)
 		return;
 	}
 
-	VectorScale2 (dir, length);
-	PerpendicularVector (extend, dir);
-	VectorScale2 (extend, 3);
-	VectorScale (dir, 3, step);
+	dir /= length;
 
-	VectorCopy (start, pos);
-	deg = 270;
-	for (i = steps; i; i--)
+	//Calculate PerpendicularVector (extend, dir):
+	double minelem = 1;
+	int epos;
+	for (epos = 0, i = 0; i < 3; ++i)
 	{
-		particle_t *p = NewParticle ();
-		vec3_t tempvec;
-
-		if (!p)
-			return;
-
-		p->trans = 255;
-		p->ttl = 35;
-		p->fade = FADEFROMTTL(35);
-		p->size = 3;
-
-		RotatePointAroundVector (tempvec, dir, extend, deg);
-		p->velx = FLOAT2FIXED(tempvec[0])>>4;
-		p->vely = FLOAT2FIXED(tempvec[1])>>4;
-		p->velz = FLOAT2FIXED(tempvec[2])>>4;
-		VectorAdd (tempvec, pos, tempvec);
-		deg += 14;
-		if (deg >= 360)
-			deg -= 360;
-		p->x = FLOAT2FIXED(tempvec[0]);
-		p->y = FLOAT2FIXED(tempvec[1]);
-		p->z = FLOAT2FIXED(tempvec[2]);
-		VectorAdd (pos, step, pos);
-
+		if (fabs(dir[i]) < minelem)
 		{
-			int rand = M_Random();
+			epos = i;
+			minelem = fabs(dir[i]);
+		}
+	}
+	FVector3 tempvec(0,0,0);
+	tempvec[epos] = 1;
+	extend = tempvec - (dir | tempvec) * dir;
+	//
 
-			if (rand < 155)
-				p->color = rblue2;
-			else if (rand < 188)
-				p->color = rblue1;
-			else if (rand < 222)
-				p->color = rblue3;
-			else
-				p->color = rblue4;
+	extend *= 3;
+	step = dir * 3;
+
+	// Create the outer spiral.
+	if (color1 != -1 && (!r_rail_smartspiral || color2 == -1) && r_rail_spiralsparsity > 0 && (spawnclass == NULL))
+	{
+		FVector3 spiral_step = step * r_rail_spiralsparsity * sparsity;
+		int spiral_steps = (int)(steps * r_rail_spiralsparsity / sparsity);
+		
+		color1 = color1 == 0 ? -1 : ParticleColor(color1);
+		pos = start;
+		deg = FAngle(270);
+		for (i = spiral_steps; i; i--)
+		{
+			particle_t *p = NewParticle ();
+			FVector3 tempvec;
+
+			if (!p)
+				return;
+
+			int spiralduration = (duration == 0) ? 35 : duration;
+
+			p->trans = 255;
+			p->ttl = duration;
+			p->fade = FADEFROMTTL(spiralduration);
+			p->size = 3;
+			p->bright = fullbright;
+
+			tempvec = FMatrix3x3(dir, deg) * extend;
+			p->velx = FLOAT2FIXED(tempvec.X * drift)>>4;
+			p->vely = FLOAT2FIXED(tempvec.Y * drift)>>4;
+			p->velz = FLOAT2FIXED(tempvec.Z * drift)>>4;
+			tempvec += pos;
+			p->x = FLOAT2FIXED(tempvec.X);
+			p->y = FLOAT2FIXED(tempvec.Y);
+			p->z = FLOAT2FIXED(tempvec.Z);
+			pos += spiral_step;
+			deg += FAngle(r_rail_spiralsparsity * 14);
+
+			if (color1 == -1)
+			{
+				int rand = M_Random();
+
+				if (rand < 155)
+					p->color = rblue2;
+				else if (rand < 188)
+					p->color = rblue1;
+				else if (rand < 222)
+					p->color = rblue3;
+				else
+					p->color = rblue4;
+			}
+			else 
+			{
+				p->color = color1;
+			}
 		}
 	}
 
-	VectorCopy (start, pos);
-	for (i = steps; i; i--)
+	// Create the inner trail.
+	if (color2 != -1 && r_rail_trailsparsity > 0 && spawnclass == NULL)
 	{
-		particle_t *p = JitterParticle (33);
+		FVector3 trail_step = step * r_rail_trailsparsity * sparsity;
+		int trail_steps = xs_FloorToInt(steps * r_rail_trailsparsity / sparsity);
 
-		if (!p)
-			return;
+		color2 = color2 == 0 ? -1 : ParticleColor(color2);
+		FVector3 diff(0, 0, 0);
 
-		p->size = 2;
-		p->x = FLOAT2FIXED(pos[0]);
-		p->y = FLOAT2FIXED(pos[1]);
-		p->z = FLOAT2FIXED(pos[2]);
-		p->accz -= FRACUNIT/4096;
-		VectorAdd (pos, step, pos);
+		pos = start;
+		for (i = trail_steps; i; i--)
 		{
-			int rand = M_Random();
+			// [XA] inner trail uses a different default duration (33).
+			int innerduration = (duration == 0) ? 33 : duration;
+			particle_t *p = JitterParticle (innerduration, drift);
 
-			if (rand < 85)
-				p->color = grey4;
-			else if (rand < 170)
-				p->color = grey2;
-			else
-				p->color = grey1;
+			if (!p)
+				return;
+
+			if (maxdiff > 0)
+			{
+				int rnd = M_Random ();
+				if (rnd & 1)
+					diff.X = clamp<float> (diff.X + ((rnd & 8) ? 1 : -1), -maxdiff, maxdiff);
+				if (rnd & 2)
+					diff.Y = clamp<float> (diff.Y + ((rnd & 16) ? 1 : -1), -maxdiff, maxdiff);
+				if (rnd & 4)
+					diff.Z = clamp<float> (diff.Z + ((rnd & 32) ? 1 : -1), -maxdiff, maxdiff);
+			}
+
+			FVector3 postmp = pos + diff;
+
+			p->size = 2;
+			p->x = FLOAT2FIXED(postmp.X);
+			p->y = FLOAT2FIXED(postmp.Y);
+			p->z = FLOAT2FIXED(postmp.Z);
+			if (color1 != -1)
+				p->accz -= FRACUNIT/4096;
+			pos += trail_step;
+
+			p->bright = fullbright;
+
+			if (color2 == -1)
+			{
+				int rand = M_Random();
+
+				if (rand < 85)
+					p->color = grey4;
+				else if (rand < 170)
+					p->color = grey2;
+				else
+					p->color = grey1;
+			}
+			else 
+			{
+				p->color = color2;
+			}
 		}
-		p->color = white;
+	}
+	// create actors
+	if (spawnclass != NULL)
+	{
+		if (sparsity < 1)
+			sparsity = 32;
+
+		FVector3 trail_step = (step / 3) * sparsity;
+		int trail_steps = (int)((steps * 3) / sparsity);
+		FVector3 diff(0, 0, 0);
+
+		pos = start;
+		for (i = trail_steps; i; i--)
+		{
+			if (maxdiff > 0)
+			{
+				int rnd = pr_railtrail();
+				if (rnd & 1)
+					diff.X = clamp<float> (diff.X + ((rnd & 8) ? 1 : -1), -maxdiff, maxdiff);
+				if (rnd & 2)
+					diff.Y = clamp<float> (diff.Y + ((rnd & 16) ? 1 : -1), -maxdiff, maxdiff);
+				if (rnd & 4)
+					diff.Z = clamp<float> (diff.Z + ((rnd & 32) ? 1 : -1), -maxdiff, maxdiff);
+			}			
+			FVector3 postmp = pos + diff;
+
+			AActor *thing = Spawn (spawnclass, FLOAT2FIXED(postmp.X), FLOAT2FIXED(postmp.Y), FLOAT2FIXED(postmp.Z), ALLOW_REPLACE);
+			if (thing)
+				thing->angle = angle;
+			pos += trail_step;
+		}
 	}
 }
 

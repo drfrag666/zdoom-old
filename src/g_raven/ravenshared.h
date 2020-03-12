@@ -2,37 +2,28 @@
 #define __RAVENSHARED_H__
 
 class AActor;
-class player_s;
-
-bool P_MorphPlayer (player_s *player);
-bool P_UndoPlayerMorph (player_s *player, bool force);
-
-bool P_MorphMonster (AActor *actor, const TypeInfo *morphClass);
-bool P_UpdateMorphedMonster (AActor *actor, int tics);
 
 class AMinotaur : public AActor
 {
-	DECLARE_ACTOR (AMinotaur, AActor)
+	DECLARE_CLASS (AMinotaur, AActor)
 public:
-	void NoBlockingSet ();
-	int DoSpecialDamage (AActor *target, int damage);
-	void BeginPlay ();
-	void Serialize (FArchive &arc);
+	int DoSpecialDamage (AActor *target, int damage, FName damagetype);
 
 public:
-	int StartTime;
-	bool IsOkayToAttack (AActor *target);
-	void Die (AActor *source, AActor *inflictor);
-	bool OkayToSwitchTarget (AActor *other);
 	bool Slam (AActor *);
 	void Tick ();
 };
 
 class AMinotaurFriend : public AMinotaur
 {
-	DECLARE_STATELESS_ACTOR (AMinotaurFriend, AMinotaur)
+	DECLARE_CLASS (AMinotaurFriend, AMinotaur)
 public:
-	void NoBlockingSet ();
+	int StartTime;
+
+	void Die (AActor *source, AActor *inflictor, int dmgflags);
+	bool OkayToSwitchTarget (AActor *other);
+	void BeginPlay ();
+	void Serialize (FArchive &arc);
 };
 
 #endif //__RAVENSHARED_H__

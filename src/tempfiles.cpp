@@ -3,7 +3,7 @@
 ** Temporary name generator. Deletes the temporary file when deconstructed.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -33,7 +33,7 @@
 */
 
 #include <stdio.h>
-#include <malloc.h>
+#include <stdlib.h>
 #include "tempfiles.h"
 
 FTempFileName::FTempFileName (const char *prefix)

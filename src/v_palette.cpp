@@ -3,7 +3,7 @@
 ** Automatic colormap generation for "colored lights", etc.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,6 +35,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -45,23 +46,19 @@
 
 #include "templates.h"
 #include "v_video.h"
-#include "m_alloc.h"
 #include "i_system.h"
-#include "r_main.h"		// For lighting constants
 #include "w_wad.h"
 #include "i_video.h"
 #include "c_dispatch.h"
 #include "g_level.h"
 #include "st_stuff.h"
 #include "gi.h"
+#include "x86.h"
+#include "colormatcher.h"
+#include "v_palette.h"
+#include "r_data/colormaps.h"
 
-extern "C" {
-FDynamicColormap NormalLight;
-}
 FPalette GPalette;
-BYTE *InvulnerabilityColormap;
-int Near255;
-
 FColorMatcher ColorMatcher;
 
 /* Current color blending values */
@@ -74,7 +71,7 @@ static int STACK_ARGS sortforremap2 (const void *a, const void *b);
 /* Gamma correction stuff */
 /**************************/
 
-byte newgamma[256];
+BYTE newgamma[256];
 CUSTOM_CVAR (Float, Gamma, 1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 {
 	if (self == 0.f)
@@ -89,19 +86,31 @@ CUSTOM_CVAR (Float, Gamma, 1.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 	}
 }
 
+CCMD (bumpgamma)
+{
+	// [RH] Gamma correction tables are now generated
+	// on the fly for *any* gamma level.
+	// Q: What are reasonable limits to use here?
+
+	float newgamma = Gamma + 0.1f;
+
+	if (newgamma > 3.0)
+		newgamma = 1.0;
+
+	Gamma = newgamma;
+	Printf ("Gamma correction level %g\n", *Gamma);
+}
+
 
 /****************************/
 /* Palette management stuff */
 /****************************/
 
-extern "C"
-{
-	byte BestColor_MMX (DWORD rgb, const DWORD *pal);
-}
+extern "C" BYTE BestColor_MMX (DWORD rgb, const DWORD *pal);
 
-int BestColor (const DWORD *pal_in, int r, int g, int b, int first, int num)
+int BestColor (const uint32 *pal_in, int r, int g, int b, int first, int num)
 {
-#ifdef USEASM
+#ifdef X86_ASM
 	if (CPU.bMMX)
 	{
 		int pre = 256 - num - first;
@@ -114,9 +123,10 @@ int BestColor (const DWORD *pal_in, int r, int g, int b, int first, int num)
 
 	for (int color = first; color < num; color++)
 	{
-		int dist = (r-pal[color].r)*(r-pal[color].r)+
-				   (g-pal[color].g)*(g-pal[color].g)+
-				   (b-pal[color].b)*(b-pal[color].b);
+		int x = r - pal[color].r;
+		int y = g - pal[color].g;
+		int z = b - pal[color].b;
+		int dist = x*x + y*y + z*z;
 		if (dist < bestdist)
 		{
 			if (dist == 0)
@@ -145,6 +155,12 @@ void FPalette::SetPalette (const BYTE *colors)
 		BaseColors[i] = PalEntry (colors[0], colors[1], colors[2]);
 		Remap[i] = i;
 	}
+
+	// Find white and black from the original palette so that they can be
+	// used to make an educated guess of the translucency % for a BOOM
+	// translucency map.
+	WhiteIndex = BestColor ((DWORD *)BaseColors, 255, 255, 255, 0, 255);
+	BlackIndex = BestColor ((DWORD *)BaseColors, 0, 0, 0, 0, 255);
 }
 
 // In ZDoom's new texture system, color 0 is used as the transparent color.
@@ -191,7 +207,7 @@ void FPalette::MakeGoodRemap ()
 				if (new0 > dup)
 				{
 					// Make the lower-numbered entry a copy of color 0. (Just because.)
-					swap (new0, dup);
+					swapvalues (new0, dup);
 				}
 				Remap[0] = new0;
 				Remap[new0] = dup;
@@ -276,7 +292,7 @@ void FPalette::MakeRemap (const DWORD *colors, BYTE *remap, const BYTE *useful, 
 			{
 				remap[workspace[i].PalEntry] = BestColor ((DWORD *)BaseColors,
 					RPART(workspace[i].Color), GPART(workspace[i].Color), BPART(workspace[i].Color),
-					0, 255);
+					1, 255);
 			}
 		}
 	}
@@ -297,48 +313,53 @@ static int STACK_ARGS sortforremap2 (const void *a, const void *b)
 	}
 }
 
-void InitPalette ()
+static bool FixBuildPalette (BYTE *opal, int lump, bool blood)
 {
-	BYTE pal[768];
-	BYTE *shade;
-	int c;
-	const char *buildPal;
-
-	buildPal = Args.CheckValue ("-bpal");
-	if (buildPal != NULL)
+	if (Wads.LumpLength (lump) < 768)
 	{
-		int f = open (buildPal, O_BINARY | O_RDONLY);
-		if (f >= 0 && read (f, pal, 768) == 768)
+		return false;
+	}
+
+	FMemLump data = Wads.ReadLump (lump);
+	const BYTE *ipal = (const BYTE *)data.GetMem();
+	
+	// Reverse the palette because BUILD used entry 255 as
+	// transparent, but we use 0 as transparent.
+
+	for (int c = 0; c < 768; c += 3)
+	{
+		if (!blood)
 		{
-			// Reverse the palette because BUILD used entry 255 as
-			// transparent, but we use 0 as transparent.
-			for (c = 0; c < 768/2; c += 3)
-			{
-				BYTE temp[3] =
-				{
-					(pal[c] << 2) | (pal[c] >> 4),
-					(pal[c+1] << 2) | (pal[c+1] >> 4),
-					(pal[c+2] << 2) | (pal[c+2] >> 4)
-				};
-				pal[c] = (pal[765-c] << 2) | (pal[765-c] >> 4);
-				pal[c+1] = (pal[766-c] << 2) | (pal[766-c] >> 4);
-				pal[c+2] = (pal[767-c] << 2) | (pal[767-c] >> 4);
-				pal[765-c] = temp[0];
-				pal[766-c] = temp[1];
-				pal[767-c] = temp[2];
-			}
+			opal[c] =	(ipal[765-c] << 2) | (ipal[765-c] >> 4);
+			opal[c+1] = (ipal[766-c] << 2) | (ipal[766-c] >> 4);
+			opal[c+2] = (ipal[767-c] << 2) | (ipal[767-c] >> 4);
 		}
 		else
 		{
-			buildPal = NULL;
-		}
-		if (f >= 0)
-		{
-			close (f);
+			opal[c] = ipal[765-c];
+			opal[c+1] = ipal[766-c];
+			opal[c+2] = ipal[767-c];
 		}
 	}
+	return true;
+}
 
-	if (buildPal == NULL)
+void InitPalette ()
+{
+	BYTE pal[768];
+	bool usingBuild = false;
+	int lump;
+
+	if ((lump = Wads.CheckNumForFullName ("palette.dat")) >= 0 && Wads.LumpLength (lump) >= 768)
+	{
+		usingBuild = FixBuildPalette (pal, lump, false);
+	}
+	else if ((lump = Wads.CheckNumForFullName ("blood.pal")) >= 0 && Wads.LumpLength (lump) >= 768)
+	{
+		usingBuild = FixBuildPalette (pal, lump, true);
+	}
+
+	if (!usingBuild)
 	{
 		FWadLump palump = Wads.OpenLumpName ("PLAYPAL");
 		palump.Read (pal, 768);
@@ -349,7 +370,7 @@ void InitPalette ()
 	ColorMatcher.SetPalette ((DWORD *)GPalette.BaseColors);
 
 	// The BUILD engine already has a transparent color, so it doesn't need any remapping.
-	if (buildPal == NULL)
+	if (!usingBuild)
 	{
 		if (GPalette.Remap[0] == 0)
 		{ // No duplicates, so settle for something close to color 0
@@ -358,49 +379,13 @@ void InitPalette ()
 		}
 	}
 
-// NormalLight.Maps will be set to realcolormaps no later than G_InitLevelLocals()
-// (which occurs before it is ever needed)
-//	NormalLight.Maps = (BYTE *)Z_Malloc (NUMCOLORMAPS*256+255, PU_STATIC, 0);
-//	NormalLight.Maps = (BYTE *)(((ptrdiff_t)NormalLight.Maps + 255) & ~0xff);
-	NormalLight.Color = PalEntry (255, 255, 255);
-	NormalLight.Fade = 0;
-
-	InvulnerabilityColormap = new BYTE[NUMCOLORMAPS*256];
-
-	// build special maps (e.g. invulnerability)
-	shade = InvulnerabilityColormap;
-	if (gameinfo.gametype & (GAME_Doom|GAME_Strife))
-	{ // Doom invulnerability is an inverted grayscale
-	  // Strife uses it when firing the Sigil
-		int grayint;
-		for (c = 0; c < 256; c++)
-		{
-			grayint = (65535 -
-				(GPalette.BaseColors[c].r * 77 +
-				 GPalette.BaseColors[c].g * 143 +
-				 GPalette.BaseColors[c].b * 37)) >> 8;
-			*shade++ = ColorMatcher.Pick (grayint, grayint, grayint);
-		}
-	}
-	else
-	{ // Heretic invulnerability is a golden shade
-		int intensity;
-
-		for (c = 0; c < 256; c++)
-		{
-			intensity = GPalette.BaseColors[c].r * 77 +
-						GPalette.BaseColors[c].g * 143 +
-						GPalette.BaseColors[c].b * 37;
-			*shade++ = ColorMatcher.Pick (
-				MIN (255, (intensity+intensity/2)>>8), intensity>>8, 0);
-		}
-	}
+	// Colormaps have to be initialized before actors are loaded,
+	// otherwise Powerup.Colormap will not work.
+	R_InitColormaps ();
 }
 
-extern "C"
-{
-	void STACK_ARGS DoBlending_MMX (const PalEntry *from, PalEntry *to, int count, int r, int g, int b, int a);
-}
+extern "C" void STACK_ARGS DoBlending_MMX (const PalEntry *from, PalEntry *to, int count, int r, int g, int b, int a);
+extern void DoBlending_SSE2 (const PalEntry *from, PalEntry *to, int count, int r, int g, int b, int a);
 
 void DoBlending (const PalEntry *from, PalEntry *to, int count, int r, int g, int b, int a)
 {
@@ -421,29 +406,53 @@ void DoBlending (const PalEntry *from, PalEntry *to, int count, int r, int g, in
 			to[i] = t;
 		}
 	}
-#ifdef USEASM
-	else if (CPU.bMMX && !(count & 1))
+#if defined(_M_X64) || defined(_M_IX86) || defined(__i386__) || defined(__amd64__)
+	else if (CPU.bSSE2)
 	{
-		DoBlending_MMX (from, to, count, r, g, b, a);
-	}
-#endif
-	else
-	{
-		int i, ia;
-
-		ia = 256 - a;
-		r *= a;
-		g *= a;
-		b *= a;
-
-		for (i = count; i > 0; i--, to++, from++)
+		if (count >= 4)
 		{
-			to->r = (r + from->r*ia) >> 8;
-			to->g = (g + from->g*ia) >> 8;
-			to->b = (b + from->b*ia) >> 8;
+			int not3count = count & ~3;
+			DoBlending_SSE2 (from, to, not3count, r, g, b, a);
+			count &= 3;
+			if (count <= 0)
+			{
+				return;
+			}
+			from += not3count;
+			to += not3count;
 		}
 	}
+#endif
+#ifdef X86_ASM
+	else if (CPU.bMMX)
+	{
+		if (count >= 4)
+		{
+			int not3count = count & ~3;
+			DoBlending_MMX (from, to, not3count, r, g, b, a);
+			count &= 3;
+			if (count <= 0)
+			{
+				return;
+			}
+			from += not3count;
+			to += not3count;
+		}
+	}
+#endif
+	int i, ia;
 
+	ia = 256 - a;
+	r *= a;
+	g *= a;
+	b *= a;
+
+	for (i = count; i > 0; i--, to++, from++)
+	{
+		to->r = (r + from->r * ia) >> 8;
+		to->g = (g + from->g * ia) >> 8;
+		to->b = (b + from->b * ia) >> 8;
+	}
 }
 
 void V_SetBlend (int blendr, int blendg, int blendb, int blenda)
@@ -471,7 +480,7 @@ void V_ForceBlend (int blendr, int blendg, int blendb, int blenda)
 
 CCMD (testblend)
 {
-	char *colorstring;
+	FString colorstring;
 	int color;
 	float amt;
 
@@ -481,10 +490,9 @@ CCMD (testblend)
 	}
 	else
 	{
-		if ( (colorstring = V_GetColorStringByName (argv[1])) )
+		if ( !(colorstring = V_GetColorStringByName (argv[1])).IsEmpty() )
 		{
 			color = V_GetColorFromString (NULL, colorstring);
-			delete[] colorstring;
 		}
 		else
 		{
@@ -504,7 +512,7 @@ CCMD (testblend)
 
 CCMD (testfade)
 {
-	char *colorstring;
+	FString colorstring;
 	DWORD color;
 
 	if (argv.argc() < 2)
@@ -513,10 +521,9 @@ CCMD (testfade)
 	}
 	else
 	{
-		if ( (colorstring = V_GetColorStringByName (argv[1])) )
+		if ( !(colorstring = V_GetColorStringByName (argv[1])).IsEmpty() )
 		{
 			color = V_GetColorFromString (NULL, colorstring);
-			delete[] colorstring;
 		}
 		else
 		{
@@ -602,139 +609,9 @@ void HSVtoRGB (float *r, float *g, float *b, float h, float s, float v)
 	}
 }
 
-/****** Colored Lighting Stuffs ******/
-
-FDynamicColormap *GetSpecialLights (PalEntry color, PalEntry fade, int desaturate)
-{
-	FDynamicColormap *colormap;
-
-	// If this colormap has already been created, just return it
-	for (colormap = &NormalLight; colormap != NULL; colormap = colormap->Next)
-	{
-		if (color == colormap->Color &&
-			fade == colormap->Fade &&
-			desaturate == colormap->Desaturate)
-		{
-			return colormap;
-		}
-	}
-
-	// Not found. Create it.
-	colormap = new FDynamicColormap;;
-	colormap->Maps = new BYTE[NUMCOLORMAPS*256];
-	colormap->Next = NormalLight.Next;
-	colormap->Color = color;
-	colormap->Fade = fade;
-	colormap->Desaturate = desaturate;
-	NormalLight.Next = colormap;
-
-	colormap->BuildLights ();
-
-	return colormap;
-}
-
-// Builds NUMCOLORMAPS colormaps lit with the specified color
-void FDynamicColormap::BuildLights ()
-{
-	int l, c;
-	int lr, lg, lb, ld, ild;
-	PalEntry colors[256], basecolors[256];
-	BYTE *shade;
-
-	if (Maps == NULL)
-		return;
-
-	// Scale light to the range 0-256, so we can avoid
-	// dividing by 255 in the bottom loop.
-	lr = Color.r*256/255;
-	lg = Color.g*256/255;
-	lb = Color.b*256/255;
-	ld = Desaturate*256/255;
-	if (ld < 0)	// No negative desaturations, please.
-	{
-		ld = -ld;
-	}
-	ild = 256-ld;
-
-	if (ld == 0)
-	{
-		memcpy (basecolors, GPalette.BaseColors, sizeof(basecolors));
-	}
-	else
-	{
-		// Desaturate the palette before lighting it.
-		for (c = 0; c < 256; c++)
-		{
-			int r = GPalette.BaseColors[c].r;
-			int g = GPalette.BaseColors[c].g;
-			int b = GPalette.BaseColors[c].b;
-			int intensity = ((r * 77 + g * 143 + b * 37) >> 8) * ld;
-			basecolors[c].r = (r*ild + intensity) >> 8;
-			basecolors[c].g = (g*ild + intensity) >> 8;
-			basecolors[c].b = (b*ild + intensity) >> 8;
-			basecolors[c].a = 0;
-		}
-	}
-
-	// build normal (but colored) light mappings
-	for (l = 0; l < NUMCOLORMAPS; l++)
-	{
-		DoBlending (basecolors, colors, 256,
-			Fade.r, Fade.g, Fade.b, l * (256 / NUMCOLORMAPS));
-
-		shade = Maps + 256*l;
-		if ((DWORD)Color == MAKERGB(255,255,255))
-		{ // White light, so we can just pick the colors directly
-			for (c = 0; c < 256; c++)
-			{
-				*shade++ = ColorMatcher.Pick (colors[c].r, colors[c].g, colors[c].b);
-			}
-		}
-		else
-		{ // Colored light, so do the slower thing
-			for (c = 0; c < 256; c++)
-			{
-				*shade++ = ColorMatcher.Pick (
-					(colors[c].r*lr)>>8,
-					(colors[c].g*lg)>>8,
-					(colors[c].b*lb)>>8);
-			}
-		}
-	}
-}
-
-void FDynamicColormap::ChangeColor (PalEntry lightcolor, int desaturate)
-{
-	if (lightcolor != Color || desaturate != Desaturate)
-	{
-		Color = lightcolor;
-		Desaturate = desaturate;
-		BuildLights ();
-	}
-}
-
-void FDynamicColormap::ChangeFade (PalEntry fadecolor)
-{
-	if (fadecolor != Fade)
-	{
-		Fade = fadecolor;
-		BuildLights ();
-	}
-}
-
-void FDynamicColormap::ChangeColorFade (PalEntry lightcolor, PalEntry fadecolor)
-{
-	if (lightcolor != Color || fadecolor != Fade)
-	{
-		Color = lightcolor;
-		Fade = fadecolor;
-		BuildLights ();
-	}
-}
-
 CCMD (testcolor)
 {
-	char *colorstring;
+	FString colorstring;
 	DWORD color;
 	int desaturate;
 
@@ -744,10 +621,9 @@ CCMD (testcolor)
 	}
 	else
 	{
-		if ( (colorstring = V_GetColorStringByName (argv[1])) )
+		if ( !(colorstring = V_GetColorStringByName (argv[1])).IsEmpty() )
 		{
 			color = V_GetColorFromString (NULL, colorstring);
-			delete[] colorstring;
 		}
 		else
 		{

@@ -3,17 +3,8 @@
 #ifndef __CMDLIB__
 #define __CMDLIB__
 
-#ifdef _MSC_VER
-#pragma warning(disable : 4244)     // MIPS
-#pragma warning(disable : 4136)     // X86
-#pragma warning(disable : 4051)     // ALPHA
-
-#pragma warning(disable : 4018)     // signed/unsigned mismatch
-#pragma warning(disable : 4305)     // truncate from double to float
-#endif
 
 #include "doomtype.h"
-#include "zstring.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -23,32 +14,52 @@
 #include <stdarg.h>
 
 // the dec offsetof macro doesnt work very well...
-#define myoffsetof(type,identifier) ((size_t)&((type *)0)->identifier)
+#define myoffsetof(type,identifier) ((size_t)&((type *)1)->identifier - 1)
 
 int		Q_filelength (FILE *f);
-BOOL FileExists (const char *filename);
+bool FileExists (const char *filename);
+bool DirEntryExists (const char *pathname);
 
-extern	char	progdir[1024];
+extern	FString progdir;
 
 void	FixPathSeperator (char *path);
+static void	inline FixPathSeperator (FString &path) { path.ReplaceChars('\\', '/'); }
 
 void 	DefaultExtension (char *path, const char *extension);
-void 	DefaultExtension (string &path, const char *extension);
+void 	DefaultExtension (FString &path, const char *extension);
 
-void	ExtractFilePath (const char *path, char *dest);
-void 	ExtractFileBase (const char *path, char *dest);
+FString	ExtractFilePath (const char *path);
+FString	ExtractFileBase (const char *path, bool keep_extension=false);
 
-int		ParseHex (char *str);
-int 	ParseNum (char *str);
-BOOL	IsNum (char *str);		// [RH] added
+int		ParseHex (const char *str);
+int 	ParseNum (const char *str);
+bool	IsNum (const char *str);		// [RH] added
 
 char	*copystring(const char *s);
+char	*ncopystring(const char *s);
 void	ReplaceString (char **ptr, const char *str);
 
 bool CheckWildcards (const char *pattern, const char *text);
 
-void FormatGUID (char *text, const GUID &guid);
+void FormatGUID (char *buffer, size_t buffsize, const GUID &guid);
 
-char *myasctime ();
+const char *myasctime ();
+
+int strbin (char *str);
+FString strbin1 (const char *start);
+char *CleanseString (char *str);
+
+void CreatePath(const char * fn);
+
+FString ExpandEnvVars(const char *searchpathstring);
+FString NicePath(const char *path);
+
+struct FFileList
+{
+	FString Filename;
+	bool isDirectory;
+};
+
+void ScanDirectory(TArray<FFileList> &list, const char *dirpath);
 
 #endif

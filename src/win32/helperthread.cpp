@@ -6,7 +6,7 @@
 ** helper thread.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -117,7 +117,7 @@ bool FHelperThread::LaunchThread ()
 				};
 				__try
 				{
-					RaiseException( 0x406D1388, 0, sizeof(info)/sizeof(DWORD), (DWORD*)&info );
+					RaiseException( 0x406D1388, 0, sizeof(info)/sizeof(DWORD), (ULONG_PTR *)&info );
 				}
 				__except(EXCEPTION_CONTINUE_EXECUTION)
 				{
@@ -290,6 +290,4 @@ DWORD FHelperThread::ThreadLoop ()
 			DefaultDispatch ();
 		}
 	}
-
-	return 0;
 }

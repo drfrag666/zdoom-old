@@ -29,8 +29,7 @@
 
 // Some global defines, that configure the game.
 #include "doomdef.h"
-
-
+#include "m_swap.h"
 
 //
 // Map level types.
@@ -55,23 +54,28 @@ enum
 	ML_BLOCKMAP,		// LUT, motion clipping, walls/grid element
 	ML_BEHAVIOR,		// [RH] Hexen-style scripts. If present, THINGS
 						//		and LINEDEFS are also Hexen-style.
+	ML_CONVERSATION,	// Strife dialog (only for TEXTMAP format)
+	ML_MAX,
 
 	// [RH] These are compressed (and extended) nodes. They combine the data from
 	// vertexes, segs, ssectors, and nodes into a single lump.
 	ML_ZNODES = ML_NODES,
-	ML_GLZNODES = ML_SSECTORS
+	ML_GLZNODES = ML_SSECTORS,
+
+	// for text map format
+	ML_TEXTMAP = ML_THINGS,
 };
 
 
 // A single Vertex.
-typedef struct
+struct mapvertex_t
 {
 	short x, y;
-} mapvertex_t;
+};
 
 // A SideDef, defining the visual appearance of a wall,
 // by setting textures and offsets.
-typedef struct
+struct mapsidedef_t
 {
 	short	textureoffset;
 	short	rowoffset;
@@ -79,10 +83,10 @@ typedef struct
 	char	bottomtexture[8];
 	char	midtexture[8];
 	short	sector;	// Front sector, towards viewer.
-} mapsidedef_t;
+};
 
 // A LineDef, as used for editing, and as input to the BSP builder.
-typedef struct
+struct maplinedef_t
 {
 	WORD	v1;
 	WORD	v2;
@@ -91,88 +95,117 @@ typedef struct
 	short	tag;
 	WORD	sidenum[2];	// sidenum[1] will be -1 if one sided
 
-} maplinedef_t;
+} ;
 
 // [RH] Hexen-compatible LineDef.
-typedef struct
+struct maplinedef2_t
 {
 	WORD	v1;
 	WORD	v2;
 	WORD	flags;
-	byte	special;
-	byte	args[5];
+	BYTE	special;
+	BYTE	args[5];
 	WORD	sidenum[2];
-} maplinedef2_t;
+} ;
 
 
 //
 // LineDef attributes.
 //
 
-#define ML_BLOCKING			0x0001	// solid, is an obstacle
-#define ML_BLOCKMONSTERS	0x0002	// blocks monsters only
-#define ML_TWOSIDED			0x0004	// backside will not be present at all if not two sided
+enum ELineFlags
+{
+	ML_BLOCKING					=0x00000001,	// solid, is an obstacle
+	ML_BLOCKMONSTERS			=0x00000002,	// blocks monsters only
+	ML_TWOSIDED					=0x00000004,	// backside will not be present at all if not two sided
 
-// If a texture is pegged, the texture will have
-// the end exposed to air held constant at the
-// top or bottom of the texture (stairs or pulled
-// down things) and will move with a height change
-// of one of the neighbor sectors.
-// Unpegged textures always have the first row of
-// the texture at the top pixel of the line for both
-// top and bottom textures (use next to windows).
+	// If a texture is pegged, the texture will have
+	// the end exposed to air held constant at the
+	// top or bottom of the texture (stairs or pulled
+	// down things) and will move with a height change
+	// of one of the neighbor sectors.
+	// Unpegged textures always have the first row of
+	// the texture at the top pixel of the line for both
+	// top and bottom textures (use next to windows).
 
-#define ML_DONTPEGTOP		0x0008	// upper texture unpegged
-#define ML_DONTPEGBOTTOM	0x0010	// lower texture unpegged
-#define ML_SECRET			0x0020	// don't map as two sided: IT'S A SECRET!
-#define ML_SOUNDBLOCK		0x0040	// don't let sound cross two of these
-#define ML_DONTDRAW 		0x0080	// don't draw on the automap
-#define ML_MAPPED			0x0100	// set if already drawn in automap
-#define ML_REPEAT_SPECIAL	0x0200	// special is repeatable
-#define ML_SPAC_SHIFT		10
-#define ML_SPAC_MASK		0x1c00
+	ML_DONTPEGTOP				= 0x00000008,	// upper texture unpegged
+	ML_DONTPEGBOTTOM			= 0x00000010,	// lower texture unpegged
+	ML_SECRET					= 0x00000020,	// don't map as two sided: IT'S A SECRET!
+	ML_SOUNDBLOCK				= 0x00000040,	// don't let sound cross two of these
+	ML_DONTDRAW 				= 0x00000080,	// don't draw on the automap
+	ML_MAPPED					= 0x00000100,	// set if already drawn in automap
+	ML_REPEAT_SPECIAL			= 0x00000200,	// special is repeatable
+
+	ML_ADDTRANS					= 0x00000400,	// additive translucency (can only be set internally)
+
+	// Extended flags
+	ML_MONSTERSCANACTIVATE		= 0x00002000,	// [RH] Monsters (as well as players) can activate the line
+	ML_BLOCK_PLAYERS			= 0x00004000,
+	ML_BLOCKEVERYTHING			= 0x00008000,	// [RH] Line blocks everything
+	ML_ZONEBOUNDARY				= 0x00010000,
+	ML_RAILING					= 0x00020000,
+	ML_BLOCK_FLOATERS			= 0x00040000,
+	ML_CLIP_MIDTEX				= 0x00080000,	// Automatic for every Strife line
+	ML_WRAP_MIDTEX				= 0x00100000,
+	ML_3DMIDTEX					= 0x00200000,
+	ML_CHECKSWITCHRANGE			= 0x00400000,
+	ML_FIRSTSIDEONLY			= 0x00800000,	// activated only when crossed from front side
+	ML_BLOCKPROJECTILE			= 0x01000000,
+	ML_BLOCKUSE					= 0x02000000,	// blocks all use actions through this line
+	ML_BLOCKSIGHT				= 0x04000000,	// blocks monster line of sight
+};
+
+
+// Special activation types
+enum SPAC
+{
+	SPAC_Cross = 1<<0,		// when player crosses line
+	SPAC_Use = 1<<1,		// when player uses line
+	SPAC_MCross = 1<<2,		// when monster crosses line
+	SPAC_Impact = 1<<3,		// when projectile hits line
+	SPAC_Push = 1<<4,		// when player pushes line	
+	SPAC_PCross = 1<<5,		// when projectile crosses line
+	SPAC_UseThrough = 1<<6,	// when player uses line (doesn't block)
+	// SPAC_PTOUCH is mapped to SPAC_PCross|SPAC_Impact
+	SPAC_AnyCross = 1<<7,	// when anything without the MF2_TELEPORT flag crosses the line
+	SPAC_MUse = 1<<8,		// monsters can use
+	SPAC_MPush = 1<<9,		// monsters can push
+	SPAC_UseBack = 1<<10,	// Can be used from the backside
+
+	SPAC_PlayerActivate = (SPAC_Cross|SPAC_Use|SPAC_Impact|SPAC_Push|SPAC_AnyCross|SPAC_UseThrough|SPAC_UseBack),
+};
+
+enum EMapLineFlags	// These are flags that use different values internally
+{
+	// For Hexen format maps
+	ML_SPAC_SHIFT				= 10,
+	ML_SPAC_MASK				= 0x1c00,	// Hexen's activator mask.
+
+	// [RH] BOOM's ML_PASSUSE flag (conflicts with ML_REPEATSPECIAL)
+	ML_PASSUSE_BOOM				= 0x0200,
+	ML_3DMIDTEX_ETERNITY		= 0x0400,
+
+	// If this bit is set, then all non-original-Doom bits are cleared when
+	// translating the line. Only applies when playing Doom with Doom-format maps.
+	// Hexen format maps and the other games are not affected by this.
+	ML_RESERVED_ETERNITY		= 0x0800,
+
+	// [RH] Extra flags for Strife
+	ML_TRANSLUCENT_STRIFE		= 0x1000,
+	ML_RAILING_STRIFE			= 0x0200,
+	ML_BLOCK_FLOATERS_STRIFE	= 0x0400,
+};
+
+
 static inline int GET_SPAC (int flags)
 {
 	return (flags&ML_SPAC_MASK) >> ML_SPAC_SHIFT;
 }
 
-// Special activation types
-#define SPAC_CROSS		0	// when player crosses line
-#define SPAC_USE		1	// when player uses line
-#define SPAC_MCROSS		2	// when monster crosses line
-#define SPAC_IMPACT		3	// when projectile hits line
-#define SPAC_PUSH		4	// when player/monster pushes line
-#define SPAC_PCROSS		5	// when projectile crosses line
-#define SPAC_USETHROUGH	6	// SPAC_USE, but passes it through
-#define SPAC_PTOUCH		7	// when a projectiles crosses or hits line
 
-#define SPAC_OTHERCROSS	8	// [RH] Not a real activation type. Here for compatibility.
-
-// [RH] Monsters (as well as players) can active the line
-#define ML_MONSTERSCANACTIVATE		0x2000
-
-// [RH] BOOM's ML_PASSUSE flag (conflicts with ML_REPEATSPECIAL)
-#define ML_PASSUSE_BOOM				0x0200
-
-// [RH] In case I feel like it, here it is...
-#define ML_3DMIDTEX_ETERNITY		0x0400
-
-// [RH] Line blocks everything
-#define ML_BLOCKEVERYTHING			0x8000
-
-// [RH] Extra flags for Strife compatibility
-// The first set are as they exist in Strife maps.
-// The second set are what they get translated into.
-#define ML_TRANSLUCENT_STRIFE		0x1000
-#define ML_RAILING_STRIFE			0x0200
-#define ML_BLOCK_FLOATERS_STRIFE	0x0400
-
-#define ML_RAILING					0x20000
-#define ML_BLOCK_FLOATERS			0x40000
-#define ML_CLIP_MIDTEX				0x80000	// Automatic for every Strife line
 
 // Sector definition, from editing
-typedef struct
+struct mapsector_t
 {
 	short	floorheight;
 	short	ceilingheight;
@@ -181,178 +214,211 @@ typedef struct
 	short	lightlevel;
 	short	special;
 	short	tag;
-} mapsector_t;
+};
 
 // SubSector, as generated by BSP
-typedef struct
+struct mapsubsector_t
 {
 	WORD	numsegs;
 	WORD	firstseg;	// index of first one, segs are stored sequentially
-} mapsubsector_t;
+};
 
+#pragma pack(1)
+struct mapsubsector4_t
+{
+	WORD	numsegs;
+	DWORD	firstseg;	// index of first one, segs are stored sequentially
+};
+#pragma pack()
 
 // LineSeg, generated by splitting LineDefs
 // using partition lines selected by BSP builder.
-typedef struct
+struct mapseg_t
 {
 	WORD	v1;
 	WORD	v2;
-	short	angle;
+	SWORD	angle;
 	WORD	linedef;
-	short	side;
-	short	offset;
-} mapseg_t;
+	SWORD	side;
+	SWORD	offset;
+
+	int V1() { return LittleShort(v1); }
+	int V2() { return LittleShort(v2); }
+};
+
+struct mapseg4_t 
+{
+	SDWORD v1;
+	SDWORD v2;
+	SWORD angle;
+	WORD linedef;
+	SWORD side;
+	SWORD offset;
+
+	int V1() { return LittleLong(v1); }
+	int V2() { return LittleLong(v2); }
+};
 
 
 
 // BSP node structure.
 
 // Indicate a leaf.
-#define NF_SUBSECTOR	0x8000
 
-typedef struct
+struct mapnode_t
 {
-	short 	x,y,dx,dy;	// partition line
-	short 	bbox[2][4];	// bounding box for each child
+	enum
+	{
+		NF_SUBSECTOR = 0x8000,
+		NF_LUMPOFFSET = 0
+	};
+	SWORD 	x,y,dx,dy;	// partition line
+	SWORD 	bbox[2][4];	// bounding box for each child
 	// If NF_SUBSECTOR is or'ed in, it's a subsector,
 	// else it's a node of another subtree.
-	unsigned short children[2];
-} mapnode_t;
+	WORD 	children[2];
 
+	DWORD Child(int num) { return LittleShort(children[num]); }
+};
+
+
+struct mapnode4_t
+{
+	enum
+	{
+		NF_SUBSECTOR = 0x80000000,
+		NF_LUMPOFFSET = 8
+	};
+	SWORD 	x,y,dx,dy;	// partition line
+	SWORD 	bbox[2][4];	// bounding box for each child
+	// If NF_SUBSECTOR is or'ed in, it's a subsector,
+	// else it's a node of another subtree.
+	DWORD 	children[2];
+
+	DWORD Child(int num) { return LittleLong(children[num]); }
+};
 
 
 
 // Thing definition, position, orientation and type,
 // plus skill/visibility flags and attributes.
-typedef struct
+struct mapthing_t
 {
-	short		x;
-	short		y;
-	short		angle;
-	short		type;
-	short		options;
-} mapthing_t;
+	SWORD		x;
+	SWORD		y;
+	SWORD		angle;
+	SWORD		type;
+	SWORD		options;
+};
 
 // [RH] Hexen-compatible MapThing.
-typedef struct MapThing
+struct mapthinghexen_t
 {
-	unsigned short thingid;
-	short		x;
-	short		y;
-	short		z;
+	SWORD 		thingid;
+	SWORD		x;
+	SWORD		y;
+	SWORD		z;
+	SWORD		angle;
+	SWORD		type;
+	SWORD		flags;
+	BYTE		special;
+	BYTE		args[5];
+};
+
+class FArchive;
+
+// Internal representation of a mapthing
+struct FMapThing
+{
+	int			thingid;
+	fixed_t		x;
+	fixed_t		y;
+	fixed_t		z;
 	short		angle;
 	short		type;
-	short		flags;
-	byte		special;
-	byte		args[5];
+	WORD		SkillFilter;
+	WORD		ClassFilter;
+	DWORD		flags;
+	int			special;
+	int			args[5];
+	int			Conversation;
 
 	void Serialize (FArchive &);
-} mapthing2_t;
+};
 
 
 // [RH] MapThing flags.
 
-/*
-#define MTF_EASY			0x0001	// Thing will appear on easy skill setting
-#define MTF_MEDIUM			0x0002	// Thing will appear on medium skill setting
-#define MTF_HARD			0x0004	// Thing will appear on hard skill setting
-#define MTF_AMBUSH			0x0008	// Thing is deaf
-*/
-#define MTF_DORMANT			0x0010	// Thing is dormant (use Thing_Activate)
-#define MTF_FIGHTER			0x0020
-#define MTF_CLERIC			0x0040
-#define MTF_MAGE			0x0080
-#define MTF_SINGLE			0x0100	// Thing appears in single-player games
-#define MTF_COOPERATIVE		0x0200	// Thing appears in cooperative games
-#define MTF_DEATHMATCH		0x0400	// Thing appears in deathmatch games
-
-#define MTF_SHADOW			0x0800
-#define MTF_ALTSHADOW		0x1000
-#define MTF_FRIENDLY		0x2000
-#define MTF_STANDSTILL		0x4000
-#define MTF_STRIFESOMETHING	0x8000
-
-// BOOM and DOOM compatible versions of some of the above
-
-#define BTF_NOTSINGLE		0x0010	// (TF_COOPERATIVE|TF_DEATHMATCH)
-#define BTF_NOTDEATHMATCH	0x0020	// (TF_SINGLE|TF_COOPERATIVE)
-#define BTF_NOTCOOPERATIVE	0x0040	// (TF_SINGLE|TF_DEATHMATCH)
-#define BTF_FRIENDLY		0x0080	// MBF friendly monsters
-#define BTF_BADEDITORCHECK	0x0100	// for detecting bad (Mac) editors
-
-// Strife thing flags
-
-#define STF_STANDSTILL		0x0008
-#define STF_AMBUSH			0x0020
-#define STF_FRIENDLY		0x0040
-#define STF_SHADOW			0x0100
-#define STF_ALTSHADOW		0x0200
-
-//--------------------------------------------------------------------------
-//
-// Texture definition
-//
-//--------------------------------------------------------------------------
-
-//
-// Each texture is composed of one or more patches, with patches being lumps
-// stored in the WAD. The lumps are referenced by number, and patched into
-// the rectangular texture space using origin and possibly other attributes.
-//
-typedef struct
+enum EMapThingFlags
 {
-	short	originx;
-	short	originy;
-	short	patch;
-	short	stepdir;
-	short	colormap;
-} mappatch_t;
+	/*
+	MTF_EASY			= 0x0001,	// The skill flags are no longer used directly.
+	MTF_MEDIUM			= 0x0002,
+	MTF_HARD			= 0x0004,
+	*/
 
-//
-// A wall texture is a list of patches which are to be combined in a
-// predefined order.
-//
-typedef struct
+	MTF_SKILLMASK		= 0x0007,
+	MTF_SKILLSHIFT		= 1,		// Skill bits will be shifted 1 bit to the left to make room
+									// for a bit representing the lowest skill (sk_baby)
+
+	MTF_AMBUSH			= 0x0008,	// Thing is deaf
+	MTF_DORMANT			= 0x0010,	// Thing is dormant (use Thing_Activate)
+	/*
+	MTF_FIGHTER			= 0x0020,	// The class flags are no longer used directly.
+	MTF_CLERIC			= 0x0040,
+	MTF_MAGE			= 0x0080,
+	*/
+	MTF_CLASS_MASK		= 0x00e0,
+	MTF_CLASS_SHIFT		= 5,
+
+	MTF_SINGLE			= 0x0100,	// Thing appears in single-player games
+	MTF_COOPERATIVE		= 0x0200,	// Thing appears in cooperative games
+	MTF_DEATHMATCH		= 0x0400,	// Thing appears in deathmatch games
+
+	MTF_SHADOW			= 0x0800,
+	MTF_ALTSHADOW		= 0x1000,
+	MTF_FRIENDLY		= 0x2000,
+	MTF_STANDSTILL		= 0x4000,
+	MTF_STRIFESOMETHING	= 0x8000,
+
+	MTF_SECRET			= 0x080000,	// Secret pickup
+	MTF_NOINFIGHTING	= 0x100000,
+	// BOOM and DOOM compatible versions of some of the above
+
+	BTF_NOTSINGLE		= 0x0010,	// (TF_COOPERATIVE|TF_DEATHMATCH)
+	BTF_NOTDEATHMATCH	= 0x0020,	// (TF_SINGLE|TF_COOPERATIVE)
+	BTF_NOTCOOPERATIVE	= 0x0040,	// (TF_SINGLE|TF_DEATHMATCH)
+	BTF_FRIENDLY		= 0x0080,	// MBF friendly monsters
+	BTF_BADEDITORCHECK	= 0x0100,	// for detecting bad (Mac) editors
+
+	// Strife thing flags
+
+	STF_STANDSTILL		= 0x0008,
+	STF_AMBUSH			= 0x0020,
+	STF_FRIENDLY		= 0x0040,
+	STF_SHADOW			= 0x0100,
+	STF_ALTSHADOW		= 0x0200,
+};
+
+// A simplified mapthing for player starts
+struct FPlayerStart
 {
-	char		name[8];
-	WORD		Flags;				// [RH] Was unused
-	BYTE		ScaleX;				// [RH] Scaling (8 is normal)
-	BYTE		ScaleY;				// [RH] Same as above
-	short		width;
-	short		height;
-	byte		columndirectory[4];	// OBSOLETE
-	short		patchcount;
-	mappatch_t	patches[1];
-} maptexture_t;
+	fixed_t x, y, z;
+	short angle, type;
 
-#define MAPTEXF_WORLDPANNING	0x8000
+	FPlayerStart() { }
+	FPlayerStart(const FMapThing *mthing)
+	: x(mthing->x), y(mthing->y), z(mthing->z),
+	  angle(mthing->angle),
+	  type(mthing->type)
+	{ }
+};
+// Player spawn spots for deathmatch.
+extern TArray<FPlayerStart> deathmatchstarts;
 
-// [RH] Just for documentation purposes, here's what I think the
-// Strife versions of the above two structures are:
-
-typedef struct
-{
-	short	originx;
-	short	originy;
-	short	patch;
-} strifemappatch_t;
-
-//
-// A wall texture is a list of patches which are to be combined in a
-// predefined order.
-//
-typedef struct
-{
-	char		name[8];
-	WORD		Flags;				// [RH] Was nused
-	BYTE		ScaleX;				// [RH] Scaling (8 is normal)
-	BYTE		ScaleY;				// [RH] Same as above
-	short		width;
-	short		height;
-	short		patchcount;
-	strifemappatch_t	patches[1];
-} strifemaptexture_t;
-
+// Player spawn spots.
+extern FPlayerStart playerstarts[MAXPLAYERS];
+extern TArray<FPlayerStart> AllPlayerStarts;
 
 
 #endif					// __DOOMDATA__

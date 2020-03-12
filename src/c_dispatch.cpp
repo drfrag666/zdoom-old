@@ -3,7 +3,7 @@
 ** Functions for executing console commands and aliases
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2007 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,6 +32,8 @@
 **
 */
 
+// HEADER FILES ------------------------------------------------------------
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,30 +47,17 @@
 #include "c_dispatch.h"
 #include "m_argv.h"
 #include "doomstat.h"
-#include "m_alloc.h"
 #include "d_player.h"
 #include "configfile.h"
 #include "m_crc32.h"
 #include "v_text.h"
+#include "d_net.h"
+#include "d_main.h"
+#include "farchive.h"
 
-bool ParsingKeyConf;
+// MACROS ------------------------------------------------------------------
 
-static const char *KeyConfCommands[] =
-{
-	"alias",
-	"defaultbind",
-	"addkeysection",
-	"addmenukey",
-	"addslotdefault",
-	"weaponsection",
-	"setslot"
-};
-
-
-
-static long ParseCommandLine (const char *args, int *argc, char **argv);
-
-CVAR (Bool, lookspring, true, CVAR_ARCHIVE);	// Generate centerview when -mlook encountered?
+// TYPES -------------------------------------------------------------------
 
 class DWaitingCommand : public DThinker
 {
@@ -108,48 +97,95 @@ struct FActionMap
 	char			Name[12];
 };
 
+// EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
+
+// PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
+
+// PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
+
+static long ParseCommandLine (const char *args, int *argc, char **argv, bool no_escapes);
 static FConsoleCommand *FindNameInHashTable (FConsoleCommand **table, const char *name, size_t namelen);
 static FConsoleCommand *ScanChainForName (FConsoleCommand *start, const char *name, size_t namelen, FConsoleCommand **prev);
 
-FConsoleCommand *Commands[FConsoleCommand::HASH_SIZE];
+// EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
+// PUBLIC DATA DEFINITIONS -------------------------------------------------
+
+CVAR (Bool, lookspring, true, CVAR_ARCHIVE);	// Generate centerview when -mlook encountered?
+
+FConsoleCommand *Commands[FConsoleCommand::HASH_SIZE];
 FButtonStatus Button_Mlook, Button_Klook, Button_Use, Button_AltAttack,
 	Button_Attack, Button_Speed, Button_MoveRight, Button_MoveLeft,
 	Button_Strafe, Button_LookDown, Button_LookUp, Button_Back,
 	Button_Forward, Button_Right, Button_Left, Button_MoveDown,
-	Button_MoveUp, Button_Jump, Button_ShowScores;
+	Button_MoveUp, Button_Jump, Button_ShowScores, Button_Crouch,
+	Button_Zoom, Button_Reload,
+	Button_User1, Button_User2, Button_User3, Button_User4,
+	Button_AM_PanLeft, Button_AM_PanRight, Button_AM_PanDown, Button_AM_PanUp,
+	Button_AM_ZoomIn, Button_AM_ZoomOut;
+
+bool ParsingKeyConf;
 
 // To add new actions, go to the console and type "key <action name>".
 // This will give you the key value to use in the first column. Then
 // insert your new action into this list so that the keys remain sorted
 // in ascending order. No two keys can be identical. If yours matches
-// an existing key, either modify MakeKey(), or (preferably) change the
-// name of your action.
+// an existing key, change the name of your action.
 
 FActionMap ActionMaps[] =
 {
-	{ 0x0f26fef6, &Button_Speed,		"speed" },
-	{ 0x1ccf57bf, &Button_MoveUp,		"moveup" },
-	{ 0x22beba5f, &Button_Klook,		"klook" },
-	{ 0x47c02d3b, &Button_Attack,		"attack" },
-	{ 0x6dcec137, &Button_Back,			"back" },
-	{ 0x7a67e768, &Button_Left,			"left" },
-	{ 0x84b8789a, &Button_MoveLeft,		"moveleft" },
-	{ 0x8fd9bf1e, &Button_ShowScores,	"showscores" },
-	{ 0x94b1cc4b, &Button_Use,			"use" },
-	{ 0xa7b30616, &Button_Jump,			"jump" },
-	{ 0xadfe4fff, &Button_Mlook,		"mlook" },
-	{ 0xb4ca7514, &Button_Right,		"right" },
-	{ 0xb563e265, &Button_LookDown,		"lookdown" },
-	{ 0xb67a0835, &Button_Strafe,		"strafe" },
-	{ 0xc4704c1d, &Button_AltAttack,	"altattack" },
-	{ 0xe2200fc9, &Button_MoveDown,		"movedown" },
-	{ 0xe78739bb, &Button_MoveRight,	"moveright" },
-	{ 0xe7912f86, &Button_Forward,		"forward" },
-	{ 0xf01cb105, &Button_LookUp,		"lookup" },
+	{ 0x0d52d67b, &Button_AM_PanLeft,	"am_panleft"},
+	{ 0x125f5226, &Button_User2,		"user2" },
+	{ 0x1eefa611, &Button_Jump,			"jump" },
+	{ 0x201f1c55, &Button_Right,		"right" },
+	{ 0x20ccc4d5, &Button_Zoom,			"zoom" },
+	{ 0x23a99cd7, &Button_Back,			"back" },
+	{ 0x41df90c2, &Button_AM_ZoomIn,	"am_zoomin"},
+	{ 0x426b69e7, &Button_Reload,		"reload" },
+	{ 0x4463f43a, &Button_LookDown,		"lookdown" },
+	{ 0x51f7a334, &Button_AM_ZoomOut,	"am_zoomout"},
+	{ 0x534c30ee, &Button_User4,		"user4" },
+	{ 0x5622bf42, &Button_Attack,		"attack" },
+	{ 0x577712d0, &Button_User1,		"user1" },
+	{ 0x57c25cb2, &Button_Klook,		"klook" },
+	{ 0x59f3e907, &Button_Forward,		"forward" },
+	{ 0x6167ce99, &Button_MoveDown,		"movedown" },
+	{ 0x676885b8, &Button_AltAttack,	"altattack" },
+	{ 0x6fa41b84, &Button_MoveLeft,		"moveleft" },
+	{ 0x818f08e6, &Button_MoveRight,	"moveright" },
+	{ 0x8197097b, &Button_AM_PanRight,	"am_panright"},
+	{ 0x8d89955e, &Button_AM_PanUp,		"am_panup"} ,
+	{ 0xa2b62d8b, &Button_Mlook,		"mlook" },
+	{ 0xab2c3e71, &Button_Crouch,		"crouch" },
+	{ 0xb000b483, &Button_Left,			"left" },
+	{ 0xb62b1e49, &Button_LookUp,		"lookup" },
+	{ 0xb6f8fe92, &Button_User3,		"user3" },
+	{ 0xb7e6a54b, &Button_Strafe,		"strafe" },
+	{ 0xce301c81, &Button_AM_PanDown,	"am_pandown"},
+	{ 0xd5897c73, &Button_ShowScores,	"showscores" },
+	{ 0xe0ccb317, &Button_Speed,		"speed" },
+	{ 0xe0cfc260, &Button_Use,			"use" },
+	{ 0xfdd701c7, &Button_MoveUp,		"moveup" },
+};
+#define NUM_ACTIONS countof(ActionMaps)
+
+
+// PRIVATE DATA DEFINITIONS ------------------------------------------------
+
+static const char *KeyConfCommands[] =
+{
+	"alias",
+	"defaultbind",
+	"addkeysection",
+	"addmenukey",
+	"addslotdefault",
+	"weaponsection",
+	"setslot",
+	"addplayerclass",
+	"clearplayerclasses"
 };
 
-#define NUM_ACTIONS (sizeof(ActionMaps)/sizeof(FActionMap))
+// CODE --------------------------------------------------------------------
 
 IMPLEMENT_CLASS (DWaitingCommand)
 
@@ -229,13 +265,13 @@ static int ListActionCommands (const char *pattern)
 	for (i = 0; i < NUM_ACTIONS; ++i)
 	{
 		if (pattern == NULL || CheckWildcards (pattern,
-			(sprintf (matcher, "+%s", ActionMaps[i].Name), matcher)))
+			(mysnprintf (matcher, countof(matcher), "+%s", ActionMaps[i].Name), matcher)))
 		{
 			Printf ("+%s\n", ActionMaps[i].Name);
 			count++;
 		}
 		if (pattern == NULL || CheckWildcards (pattern,
-			(sprintf (matcher, "-%s", ActionMaps[i].Name), matcher)))
+			(mysnprintf (matcher, countof(matcher), "-%s", ActionMaps[i].Name), matcher)))
 		{
 			Printf ("-%s\n", ActionMaps[i].Name);
 			count++;
@@ -244,39 +280,141 @@ static int ListActionCommands (const char *pattern)
 	return count;
 }
 
+/* ======================================================================== */
+
+/* By Paul Hsieh (C) 2004, 2005.  Covered under the Paul Hsieh derivative 
+   license. See: 
+   http://www.azillionmonkeys.com/qed/weblicense.html for license details.
+
+   http://www.azillionmonkeys.com/qed/hash.html */
+
+#undef get16bits
+#if (defined(__GNUC__) && defined(__i386__)) || defined(__WATCOMC__) \
+  || defined(_MSC_VER) || defined (__BORLANDC__) || defined (__TURBOC__)
+#define get16bits(d) (*((const WORD *) (d)))
+#endif
+
+#if !defined (get16bits)
+#define get16bits(d) ((((DWORD)(((const BYTE *)(d))[1])) << 8)\
+                       +(DWORD)(((const BYTE *)(d))[0]) )
+#endif
+
+DWORD SuperFastHash (const char *data, size_t len)
+{
+	DWORD hash = 0, tmp;
+	size_t rem;
+
+	if (len == 0 || data == NULL) return 0;
+
+	rem = len & 3;
+	len >>= 2;
+
+	/* Main loop */
+	for (;len > 0; len--)
+	{
+		hash  += get16bits (data);
+		tmp    = (get16bits (data+2) << 11) ^ hash;
+		hash   = (hash << 16) ^ tmp;
+		data  += 2*sizeof (WORD);
+		hash  += hash >> 11;
+	}
+
+	/* Handle end cases */
+	switch (rem)
+	{
+		case 3:	hash += get16bits (data);
+				hash ^= hash << 16;
+				hash ^= data[sizeof (WORD)] << 18;
+				hash += hash >> 11;
+				break;
+		case 2:	hash += get16bits (data);
+				hash ^= hash << 11;
+				hash += hash >> 17;
+				break;
+		case 1: hash += *data;
+				hash ^= hash << 10;
+				hash += hash >> 1;
+	}
+
+	/* Force "avalanching" of final 127 bits */
+	hash ^= hash << 3;
+	hash += hash >> 5;
+	hash ^= hash << 4;
+	hash += hash >> 17;
+	hash ^= hash << 25;
+	hash += hash >> 6;
+
+	return hash;
+}
+
+/* A modified version to do a case-insensitive hash */
+
+#undef get16bits
+#define get16bits(d) ((((DWORD)tolower(((const BYTE *)(d))[1])) << 8)\
+                       +(DWORD)tolower(((const BYTE *)(d))[0]) )
+
+DWORD SuperFastHashI (const char *data, size_t len)
+{
+	DWORD hash = 0, tmp;
+	size_t rem;
+
+	if (len <= 0 || data == NULL) return 0;
+
+	rem = len & 3;
+	len >>= 2;
+
+	/* Main loop */
+	for (;len > 0; len--)
+	{
+		hash  += get16bits (data);
+		tmp    = (get16bits (data+2) << 11) ^ hash;
+		hash   = (hash << 16) ^ tmp;
+		data  += 2*sizeof (WORD);
+		hash  += hash >> 11;
+	}
+
+	/* Handle end cases */
+	switch (rem)
+	{
+		case 3:	hash += get16bits (data);
+				hash ^= hash << 16;
+				hash ^= tolower(data[sizeof (WORD)]) << 18;
+				hash += hash >> 11;
+				break;
+		case 2:	hash += get16bits (data);
+				hash ^= hash << 11;
+				hash += hash >> 17;
+				break;
+		case 1: hash += tolower(*data);
+				hash ^= hash << 10;
+				hash += hash >> 1;
+	}
+
+	/* Force "avalanching" of final 127 bits */
+	hash ^= hash << 3;
+	hash += hash >> 5;
+	hash ^= hash << 4;
+	hash += hash >> 17;
+	hash ^= hash << 25;
+	hash += hash >> 6;
+
+	return hash;
+}
+
+/* ======================================================================== */
+
 unsigned int MakeKey (const char *s)
 {
 	if (s == NULL)
 	{
-		return 0xffffffff;
+		return 0;
 	}
-
-	DWORD key = 0xffffffff;
-	const DWORD *table = GetCRCTable ();
-
-	while (*s)
-	{
-		key = CRC1 (key, tolower (*s++), table);
-	}
-	return key ^ 0xffffffff;
+	return SuperFastHashI (s, strlen (s));
 }
 
 unsigned int MakeKey (const char *s, size_t len)
 {
-	if (len == 0 || s == NULL)
-	{
-		return 0xffffffff;
-	}
-
-	DWORD key = 0xffffffff;
-	const DWORD *table = GetCRCTable ();
-
-	while (len > 0)
-	{
-		key = CRC1 (key, tolower(*s++), table);
-		--len;
-	}
-	return key ^ 0xffffffff;
+	return SuperFastHashI (s, len);
 }
 
 // FindButton scans through the actionbits[] array
@@ -293,7 +431,7 @@ FButtonStatus *FindButton (unsigned int key)
 	return bit ? bit->Button : NULL;
 }
 
-void FButtonStatus::PressKey (int keynum)
+bool FButtonStatus::PressKey (int keynum)
 {
 	int i, open;
 
@@ -317,22 +455,26 @@ void FButtonStatus::PressKey (int keynum)
 			}
 			else if (Keys[i] == keynum)
 			{ // Key is already down; do nothing
-				return;
+				return false;
 			}
 		}
 		if (open < 0)
 		{ // No free key slots, so do nothing
 			Printf ("More than %u keys pressed for a single action!\n", MAX_KEYS);
-			return;
+			return false;
 		}
 		Keys[open] = keynum;
 	}
+	BYTE wasdown = bDown;
 	bDown = bWentDown = true;
+	// Returns true if this key caused the button to go down.
+	return !wasdown;
 }
 
-void FButtonStatus::ReleaseKey (int keynum)
+bool FButtonStatus::ReleaseKey (int keynum)
 {
 	int i, numdown, match;
+	BYTE wasdown = bDown;
 
 	keynum &= KEY_DBLCLICKED-1;
 
@@ -360,7 +502,7 @@ void FButtonStatus::ReleaseKey (int keynum)
 		}
 		if (match < 0)
 		{ // Key was not down; do nothing
-			return;
+			return false;
 		}
 		Keys[match] = 0;
 		bWentUp = true;
@@ -369,6 +511,8 @@ void FButtonStatus::ReleaseKey (int keynum)
 			bDown = false;
 		}
 	}
+	// Returns true if releasing this key caused the button to go up.
+	return wasdown && !bDown;
 }
 
 void ResetButtonTriggers ()
@@ -416,13 +560,13 @@ void C_DoCommand (const char *cmd, int keynum)
 			;
 	}
 
-	const int len = end - beg;
+	const size_t len = end - beg;
 
 	if (ParsingKeyConf)
 	{
 		int i;
 
-		for (i = sizeof(KeyConfCommands)/sizeof(KeyConfCommands[0])-1; i >= 0; --i)
+		for (i = countof(KeyConfCommands)-1; i >= 0; --i)
 		{
 			if (strnicmp (beg, KeyConfCommands[i], len) == 0 &&
 				KeyConfCommands[i][len] == 0)
@@ -488,7 +632,7 @@ void C_DoCommand (const char *cmd, int keynum)
 	}
 	else
 	{ // Check for any console vars that match the command
-		FBaseCVar *var = FindCVarSub (beg, len);
+		FBaseCVar *var = FindCVarSub (beg, int(len));
 
 		if (var != NULL)
 		{
@@ -507,7 +651,7 @@ void C_DoCommand (const char *cmd, int keynum)
 		else
 		{ // We don't know how to handle this command
 			char cmdname[64];
-			int minlen = MIN (len, 63);
+			size_t minlen = MIN<size_t> (len, 63);
 
 			memcpy (cmdname, beg, minlen);
 			cmdname[len] = 0;
@@ -599,10 +743,13 @@ void AddCommandString (char *cmd, int keynum)
 // to point to a buffer large enough to hold all the arguments. The
 // return value is the necessary size of this buffer.
 //
-// Special processing: Inside quoted strings, \" becomes just "
-// $<cvar> is replaced by the contents of <cvar>
+// Special processing:
+//   Inside quoted strings, \" becomes just "
+//                          \\ becomes just a single backslash          
+//							\c becomes just TEXTCOLOR_ESCAPE
+//   $<cvar> is replaced by the contents of <cvar>
 
-static long ParseCommandLine (const char *args, int *argc, char **argv)
+static long ParseCommandLine (const char *args, int *argc, char **argv, bool no_escapes)
 {
 	int count;
 	char *buffplace;
@@ -636,9 +783,17 @@ static long ParseCommandLine (const char *args, int *argc, char **argv)
 			do
 			{
 				stuff = *args++;
-				if (stuff == '\\' && *args == '\"')
+				if (!no_escapes && stuff == '\\' && *args == '\"')
 				{
 					stuff = '\"', args++;
+				}
+				else if (!no_escapes && stuff == '\\' && *args == '\\')
+				{
+					args++;
+				}
+				else if (!no_escapes && stuff == '\\' && *args == 'c')
+				{
+					stuff = TEXTCOLOR_ESCAPE, args++;
 				}
 				else if (stuff == '\"')
 				{
@@ -663,7 +818,7 @@ static long ParseCommandLine (const char *args, int *argc, char **argv)
 
 			while (*args && *args > ' ' && *args != '\"')
 				args++;
-			if (*start == '$' && (var = FindCVarSub (start+1, args-start-1)))
+			if (*start == '$' && (var = FindCVarSub (start+1, int(args-start-1))))
 			{
 				val = var->GetGenericRep (CVAR_String);
 				start = val.String;
@@ -694,11 +849,12 @@ static long ParseCommandLine (const char *args, int *argc, char **argv)
 	return (long)(buffplace - (char *)0);
 }
 
-FCommandLine::FCommandLine (const char *commandline)
+FCommandLine::FCommandLine (const char *commandline, bool no_escapes)
 {
 	cmd = commandline;
 	_argc = -1;
 	_argv = NULL;
+	noescapes = no_escapes;
 }
 
 FCommandLine::~FCommandLine ()
@@ -709,11 +865,20 @@ FCommandLine::~FCommandLine ()
 	}
 }
 
+void FCommandLine::Shift()
+{
+	// Only valid after _argv has been filled.
+	for (int i = 1; i < _argc; ++i)
+	{
+		_argv[i - 1] = _argv[i];
+	}
+}
+
 int FCommandLine::argc ()
 {
 	if (_argc == -1)
 	{
-		argsize = ParseCommandLine (cmd, &_argc, NULL);
+		argsize = ParseCommandLine (cmd, &_argc, NULL, noescapes);
 	}
 	return _argc;
 }
@@ -725,7 +890,7 @@ char *FCommandLine::operator[] (int i)
 		int count = argc();
 		_argv = new char *[count + (argsize+sizeof(char*)-1)/sizeof(char*)];
 		_argv[0] = (char *)_argv + count*sizeof(char *);
-		ParseCommandLine (cmd, NULL, _argv);
+		ParseCommandLine (cmd, NULL, _argv, noescapes);
 	}
 	return _argv[i];
 }
@@ -760,9 +925,6 @@ bool FConsoleCommand::AddToHash (FConsoleCommand **table)
 {
 	unsigned int key;
 	FConsoleCommand *insert, **bucket;
-
-	if (!stricmp (m_Name, "toggle"))
-		key = 1;
 
 	key = MakeKey (m_Name);
 	bucket = &table[key % HASH_SIZE];
@@ -836,61 +998,141 @@ FConsoleCommand::~FConsoleCommand ()
 	delete[] m_Name;
 }
 
-void FConsoleCommand::Run (FCommandLine &argv, AActor *instigator, int key)
+void FConsoleCommand::Run (FCommandLine &argv, APlayerPawn *who, int key)
 {
-	m_RunFunc (argv, instigator, key);
+	m_RunFunc (argv, who, key);
 }
 
 FConsoleAlias::FConsoleAlias (const char *name, const char *command, bool noSave)
 	: FConsoleCommand (name, NULL),
-	  bRunning (false), bKill (false)
+	  bRunning(false), bKill(false)
 {
-	m_Command[noSave] = copystring (command);
-	m_Command[!noSave] = NULL;
+	m_Command[noSave] = command;
+	m_Command[!noSave] = FString();
+	// If the command contains % characters, assume they are parameter markers
+	// for substitution when the command is executed.
+	bDoSubstitution = (strchr (command, '%') != NULL);
 }
 
 FConsoleAlias::~FConsoleAlias ()
 {
-	for (int i = 0; i < 2; ++i)
-	{
-		if (m_Command[i] != NULL)
-		{
-			delete[] m_Command[i];
-			m_Command[i] = NULL;
-		}
-	}
+	m_Command[1] = m_Command[0] = FString();
 }
 
-char *BuildString (int argc, char **argv)
+// Given an argument vector, reconstitute the command line it could have been produced from.
+FString BuildString (int argc, FString *argv)
 {
-	char temp[1024];
-	char *cur;
-	int arg;
-
 	if (argc == 1)
 	{
-		return copystring (*argv);
+		return *argv;
 	}
 	else
 	{
-		cur = temp;
+		FString buf;
+		int arg;
+
 		for (arg = 0; arg < argc; arg++)
 		{
-			if (strchr (argv[arg], ' '))
-			{
-				cur += sprintf (cur, "\"%s\" ", argv[arg]);
+			if (strchr(argv[arg], '"'))
+			{ // If it contains one or more quotes, we need to escape them.
+				buf << '"';
+				long substr_start = 0, quotepos;
+				while ((quotepos = argv[arg].IndexOf('"', substr_start)) >= 0)
+				{
+					if (substr_start < quotepos)
+					{
+						buf << argv[arg].Mid(substr_start, quotepos - substr_start);
+					}
+					buf << "\\\"";
+					substr_start = quotepos + 1;
+				}
+				buf << argv[arg].Mid(substr_start) << "\" ";
+			}
+			else if (strchr(argv[arg], ' '))
+			{ // If it contains a space, it needs to be quoted.
+				buf << '"' << argv[arg] << "\" ";
 			}
 			else
 			{
-				cur += sprintf (cur, "%s ", argv[arg]);
+				buf << argv[arg] << ' ';
 			}
 		}
-		temp[strlen (temp) - 1] = 0;
-		return copystring (temp);
+		return buf;
 	}
 }
 
-static int DumpHash (FConsoleCommand **table, BOOL aliases, const char *pattern=NULL)
+//===========================================================================
+//
+// SubstituteAliasParams
+//
+// Given an command line and a set of arguments, replace instances of
+// %x or %{x} in the command line with argument x. If argument x does not
+// exist, then the empty string is substituted in its place.
+//
+// Substitution is not done inside of quoted strings.
+//
+// To avoid a substitution, use %%. The %% will be replaced by a single %.
+//
+//===========================================================================
+
+FString SubstituteAliasParams (FString &command, FCommandLine &args)
+{
+	// Do substitution by replacing %x with the argument x.
+	// If there is no argument x, then %x is simply removed.
+
+	// For some reason, strtoul's stop parameter is non-const.
+	char *p = command.LockBuffer(), *start = p;
+	unsigned long argnum;
+	FString buf;
+
+	while (*p != '\0')
+	{
+		if (*p == '%' && ((p[1] >= '0' && p[1] <= '9') || p[1] == '{' || p[1] == '%'))
+		{
+			if (p[1] == '%')
+			{
+				// Do not substitute. Just collapse to a single %.
+				buf.AppendCStrPart (start, p - start + 1);
+				start = p = p + 2;
+				continue;
+			}
+
+			// Do a substitution. Output what came before this.
+			buf.AppendCStrPart (start, p - start);
+
+			// Extract the argument number and substitute the corresponding argument.
+			argnum = strtoul (p + 1 + (p[1] == '{'), &start, 10);
+			if ((p[1] != '{' || *start == '}') && argnum < (unsigned long)args.argc())
+			{
+				buf += args[argnum];
+			}
+			p = (start += (p[1] == '{' && *start == '}'));
+		}
+		else if (*p == '"')
+		{
+			// Don't substitute inside quoted strings.
+			p++;
+			while (*p != '\0' && (*p != '"' || *(p-1) == '\\'))
+				p++;
+			if (*p != '\0')
+				p++;
+		}
+		else
+		{
+			p++;
+		}
+	}
+	// Return whatever was after the final substitution.
+	if (p > start)
+	{
+		buf.AppendCStrPart (start, p - start);
+	}
+	command.UnlockBuffer();
+
+	return buf;
+}
+
+static int DumpHash (FConsoleCommand **table, bool aliases, const char *pattern=NULL)
 {
 	int bucket, count;
 	FConsoleCommand *cmd;
@@ -926,17 +1168,17 @@ void FConsoleAlias::PrintAlias ()
 {
 	if (m_Command[0])
 	{
-		Printf (TEXTCOLOR_YELLOW "%s : %s\n", m_Name, m_Command[0]);
+		Printf (TEXTCOLOR_YELLOW "%s : %s\n", m_Name, m_Command[0].GetChars());
 	}
 	if (m_Command[1])
 	{
-		Printf (TEXTCOLOR_ORANGE "%s : %s\n", m_Name, m_Command[1]);
+		Printf (TEXTCOLOR_ORANGE "%s : %s\n", m_Name, m_Command[1].GetChars());
 	}
 }
 
 void FConsoleAlias::Archive (FConfigFile *f)
 {
-	if (f != NULL && m_Command[0] != NULL)
+	if (f != NULL && !m_Command[0].IsEmpty())
 	{
 		f->SetValueForKey ("Name", m_Name, true);
 		f->SetValueForKey ("Command", m_Command[0], true);
@@ -959,6 +1201,30 @@ void C_ArchiveAliases (FConfigFile *f)
 		}
 	}
 }
+
+void C_ClearAliases ()
+{
+	int bucket;
+	FConsoleCommand *alias;
+
+	for (bucket = 0; bucket < FConsoleCommand::HASH_SIZE; bucket++)
+	{
+		alias = Commands[bucket];
+		while (alias)
+		{
+			FConsoleCommand *next = alias->m_Next;
+			if (alias->IsAlias())
+				static_cast<FConsoleAlias *>(alias)->SafeDelete();
+			alias = next;
+		}
+	}
+}
+
+CCMD(clearaliases)
+{
+	C_ClearAliases();
+}
+
 
 // This is called only by the ini parser.
 void C_SetAlias (const char *name, const char *cmd)
@@ -1059,26 +1325,26 @@ CCMD (key)
 // These all begin with '+' as opposed to '-'.
 void C_ExecCmdLineParams ()
 {
-	for (int currArg = 1; currArg < Args.NumArgs(); )
+	for (int currArg = 1; currArg < Args->NumArgs(); )
 	{
-		if (*Args.GetArg (currArg++) == '+')
+		if (*Args->GetArg (currArg++) == '+')
 		{
-			char *cmdString;
+			FString cmdString;
 			int cmdlen = 1;
 			int argstart = currArg - 1;
 
-			while (currArg < Args.NumArgs())
+			while (currArg < Args->NumArgs())
 			{
-				if (*Args.GetArg (currArg) == '-' || *Args.GetArg (currArg) == '+')
+				if (*Args->GetArg (currArg) == '-' || *Args->GetArg (currArg) == '+')
 					break;
 				currArg++;
 				cmdlen++;
 			}
 
-			if ( (cmdString = BuildString (cmdlen, Args.GetArgList (argstart))) )
+			cmdString = BuildString (cmdlen, Args->GetArgList (argstart));
+			if (!cmdString.IsEmpty())
 			{
-				C_DoCommand (cmdString + 1);
-				delete[] cmdString;
+				C_DoCommand (&cmdString[1]);
 			}
 		}
 	}
@@ -1094,7 +1360,7 @@ bool FConsoleAlias::IsAlias ()
 	return true;
 }
 
-void FConsoleAlias::Run (FCommandLine &args, AActor *m_Instigator, int key)
+void FConsoleAlias::Run (FCommandLine &args, APlayerPawn *who, int key)
 {
 	if (bRunning)
 	{
@@ -1102,19 +1368,29 @@ void FConsoleAlias::Run (FCommandLine &args, AActor *m_Instigator, int key)
 		return;
 	}
 
-	int index = m_Command[1] != NULL;
-	char *mycommand = m_Command[index];
-	m_Command[index] = NULL;
-	bRunning = true;
-	AddCommandString (mycommand, key);
-	bRunning = false;
-	if (m_Command[index] != NULL)
-	{ // The alias realiased itself, so delete the memory used by this command.
-		delete[] mycommand;
+	int index = !m_Command[1].IsEmpty();
+	FString savedcommand = m_Command[index], mycommand;
+	m_Command[index] = FString();
+
+	if (bDoSubstitution)
+	{
+		mycommand = SubstituteAliasParams (savedcommand, args);
 	}
 	else
+	{
+		mycommand = savedcommand;
+	}
+
+	bRunning = true;
+	AddCommandString (mycommand.LockBuffer(), key);
+	mycommand.UnlockBuffer();
+	bRunning = false;
+	if (m_Command[index].IsEmpty())
 	{ // The alias is unchanged, so put the command back so it can be used again.
-		m_Command[index] = mycommand;
+	  // If the command had been non-empty, then that means that executing this
+	  // alias caused it to realias itself, so the old command will be forgotten
+	  // once this function returns.
+		m_Command[index] = savedcommand;
 	}
 	if (bKill)
 	{ // The alias wants to remove itself
@@ -1124,15 +1400,15 @@ void FConsoleAlias::Run (FCommandLine &args, AActor *m_Instigator, int key)
 
 void FConsoleAlias::Realias (const char *command, bool noSave)
 {
-	if (m_Command[1] != NULL)
+	if (!noSave && !m_Command[1].IsEmpty())
 	{
 		noSave = true;
 	}
-	if (m_Command[noSave] != NULL)
-	{
-		delete[] m_Command[noSave];
-	}
-	m_Command[noSave] = copystring (command);
+	m_Command[noSave] = command;
+
+	// If the command contains % characters, assume they are parameter markers
+	// for substitution when the command is executed.
+	bDoSubstitution = (strchr (command, '%') != NULL);
 	bKill = false;
 }
 
@@ -1148,9 +1424,9 @@ void FConsoleAlias::SafeDelete ()
 	}
 }
 
-extern void D_AddFile (const char *file);
-static byte PullinBad = 2;
+static BYTE PullinBad = 2;
 static const char *PullinFile;
+extern TArray<FString> allwads;
 
 int C_ExecFile (const char *file, bool usePullin)
 {
@@ -1267,7 +1543,7 @@ CCMD (pullin)
 						FixPathSeperator (path);
 					}
 				}
-				D_AddFile (path);
+				D_AddFile (allwads, path);
 				if (path != argv[i])
 				{
 					delete[] path;
@@ -1280,3 +1556,4 @@ CCMD (pullin)
 		}
 	}
 }
+

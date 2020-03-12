@@ -5,7 +5,7 @@
 * bot need to work             *
 *******************************/
 
-#include <malloc.h>
+#include <stdlib.h>
 
 #include "doomtype.h"
 #include "doomdef.h"
@@ -15,108 +15,95 @@
 #include "g_game.h"
 #include "m_random.h"
 #include "r_sky.h"
-#include "r_main.h"
 #include "st_stuff.h"
 #include "stats.h"
 #include "i_system.h"
 #include "s_sound.h"
-#include "vectors.h"
-#include "a_doomglobal.h"
+#include "d_event.h"
 
 static FRandom pr_botdofire ("BotDoFire");
 
-//Used with Reachable().
-static AActor *looker;
-static AActor *rtarget;
-static bool reachable;
-static fixed_t last_z;
-static sector_t *last_s;
-static fixed_t estimated_dist;
 
-static int PTR_Reachable (intercept_t *in)
+//Checks TRUE reachability from
+//one looker to another. First mobj (looker) is looker.
+bool FCajunMaster::Reachable (AActor *looker, AActor *rtarget)
 {
-	fixed_t hitx, hity;
-	fixed_t frac;
-	line_t *line;
-	AActor *thing;
-	fixed_t dist;
-	sector_t *s;
+	if (looker == rtarget)
+		return false;
 
-	frac = in->frac - FixedDiv (4*FRACUNIT, MAX_TRAVERSE_DIST);
-	dist = FixedMul (frac, MAX_TRAVERSE_DIST);
+	if ((rtarget->Sector->ceilingplane.ZatPoint (rtarget->x, rtarget->y) -
+		 rtarget->Sector->floorplane.ZatPoint (rtarget->x, rtarget->y))
+		< looker->height) //Where rtarget is, looker can't be.
+		return false;
 
-	hitx = trace.x + FixedMul (looker->momx, frac);
-	hity = trace.y + FixedMul (looker->momy, frac);
+	sector_t *last_s = looker->Sector;
+	fixed_t last_z = last_s->floorplane.ZatPoint (looker->x, looker->y);
+	fixed_t estimated_dist = P_AproxDistance (looker->x - rtarget->x, looker->y - rtarget->y);
+	bool reachable = true;
 
-	if (in->isaline)
+	FPathTraverse it(looker->x+looker->velx, looker->y+looker->vely, rtarget->x, rtarget->y, PT_ADDLINES|PT_ADDTHINGS);
+	intercept_t *in;
+	while ((in = it.Next()))
 	{
-		line = in->d.line;
+		fixed_t hitx, hity;
+		fixed_t frac;
+		line_t *line;
+		AActor *thing;
+		fixed_t dist;
+		sector_t *s;
 
-		if (!(line->flags & ML_TWOSIDED) || (line->flags & ML_BLOCKING))
-		{
-			return (reachable = false); //Cannot continue.
-		}
-		else
-		{
-			//Determine if going to use backsector/frontsector.
-			s = (line->backsector == last_s) ? line->frontsector : line->backsector;
-			fixed_t ceilingheight = s->ceilingplane.ZatPoint (hitx, hity);
-			fixed_t floorheight = s->floorplane.ZatPoint (hitx, hity);
+		frac = in->frac - FixedDiv (4*FRACUNIT, MAX_TRAVERSE_DIST);
+		dist = FixedMul (frac, MAX_TRAVERSE_DIST);
 
-			if (!bglobal.IsDangerous (s) &&		//Any nukage/lava?
-				(floorheight <= (last_z+MAXMOVEHEIGHT)
-				&& ((ceilingheight == floorheight && line->special)
-					|| (ceilingheight - floorheight) >= looker->height))) //Does it fit?
+		hitx = it.Trace().x + FixedMul (looker->velx, frac);
+		hity = it.Trace().y + FixedMul (looker->vely, frac);
+
+		if (in->isaline)
+		{
+			line = in->d.line;
+
+			if (!(line->flags & ML_TWOSIDED) || (line->flags & (ML_BLOCKING|ML_BLOCKEVERYTHING|ML_BLOCK_PLAYERS)))
 			{
-				last_z = floorheight;
-				last_s = s;
-				return true;
+				return false; //Cannot continue.
 			}
 			else
 			{
-				return (reachable = false);
+				//Determine if going to use backsector/frontsector.
+				s = (line->backsector == last_s) ? line->frontsector : line->backsector;
+				fixed_t ceilingheight = s->ceilingplane.ZatPoint (hitx, hity);
+				fixed_t floorheight = s->floorplane.ZatPoint (hitx, hity);
+
+				if (!bglobal.IsDangerous (s) &&		//Any nukage/lava?
+					(floorheight <= (last_z+MAXMOVEHEIGHT)
+					&& ((ceilingheight == floorheight && line->special)
+						|| (ceilingheight - floorheight) >= looker->height))) //Does it fit?
+				{
+					last_z = floorheight;
+					last_s = s;
+					continue;
+				}
+				else
+				{
+					return false;
+				}
 			}
 		}
+
+		if (dist > estimated_dist)
+		{
+			return true;
+		}
+
+		thing = in->d.thing;
+		if (thing == looker) //Can't reach self in this case.
+			continue;
+		if (thing == rtarget && (rtarget->Sector->floorplane.ZatPoint (rtarget->x, rtarget->y) <= (last_z+MAXMOVEHEIGHT)))
+		{
+			return true;
+		}
+
+		reachable = false;
 	}
-
-	if (dist > estimated_dist)
-	{
-		reachable = true;
-		return false; //Don't need to continue.
-	}
-
-	thing = in->d.thing;
-	if (thing == looker) //Can't reach self in this case.
-		return true;
-	if (thing == rtarget && (rtarget->Sector->floorplane.ZatPoint (rtarget->x, rtarget->y) <= (last_z+MAXMOVEHEIGHT)))
-	{
-		reachable = true;
-		return false;
-	}
-
-	reachable = false;
-	return true;
-}
-
-//Checks TRUE reachability from
-//one actor to another. First mobj (actor) is looker.
-bool DCajunMaster::Reachable (AActor *actor, AActor *target)
-{
-	if (actor == target)
-		return false;
-
-	if ((target->Sector->ceilingplane.ZatPoint (target->x, target->y) -
-		 target->Sector->floorplane.ZatPoint (target->x, target->y))
-		< actor->height) //Where target is, looker can't be.
-		return false;
-
-	looker = actor;
-	rtarget = target;
-	last_s = actor->Sector;
-	last_z = last_s->floorplane.ZatPoint (actor->x, actor->y);
-	reachable = true;
-	estimated_dist = P_AproxDistance (actor->x - target->x, actor->y - target->y);
-	P_PathTraverse (actor->x+actor->momx, actor->y+actor->momy, target->x, target->y, PT_ADDLINES|PT_ADDTHINGS, PTR_Reachable);
 	return reachable;
 }
 
@@ -128,16 +115,16 @@ bool DCajunMaster::Reachable (AActor *actor, AActor *target)
 //if these conditions are true, the function returns true.
 //GOOD TO KNOW is that the player's view angle
 //in doom is 90 degrees infront.
-bool DCajunMaster::Check_LOS (AActor *from, AActor *to, angle_t vangle)
+bool FCajunMaster::Check_LOS (AActor *from, AActor *to, angle_t vangle)
 {
-	if (!P_CheckSight (from, to, 2))
+	if (!P_CheckSight (from, to, SF_SEEPASTBLOCKEVERYTHING))
 		return false; // out of sight
 	if (vangle == ANGLE_MAX)
 		return true;
 	if (vangle == 0)
 		return false; //Looker seems to be blind.
 
-	return abs (R_PointToAngle2 (from->x, from->y, to->x, to->y) - from->angle) <= vangle/2;
+	return (angle_t)abs (R_PointToAngle2 (from->x, from->y, to->x, to->y) - from->angle) <= vangle/2;
 }
 
 //-------------------------------------
@@ -145,7 +132,7 @@ bool DCajunMaster::Check_LOS (AActor *from, AActor *to, angle_t vangle)
 //-------------------------------------
 //The bot will check if it's time to fire
 //and do so if that is the case.
-void DCajunMaster::Dofire (AActor *actor, ticcmd_t *cmd)
+void FCajunMaster::Dofire (AActor *actor, ticcmd_t *cmd)
 {
 	bool no_fire; //used to prevent bot from pumping rockets into nearby walls.
 	int aiming_penalty=0; //For shooting at shading target, if screen is red, MAKEME: When screen red.
@@ -183,11 +170,11 @@ void DCajunMaster::Dofire (AActor *actor, ticcmd_t *cmd)
 	no_fire = true;
 	//actor->player->angle = R_PointToAngle2(actor->x, actor->y, actor->player->enemy->x, actor->player->enemy->y);
 	//Distance to enemy.
-	dist = P_AproxDistance ((actor->x + actor->momx) - (enemy->x + enemy->momx),
-		(actor->y + actor->momy) - (enemy->y + enemy->momy));
+	dist = P_AproxDistance ((actor->x + actor->velx) - (enemy->x + enemy->velx),
+		(actor->y + actor->vely) - (enemy->y + enemy->vely));
 
 	//FIRE EACH TYPE OF WEAPON DIFFERENT: Here should all the different weapons go.
-	if (actor->player->ReadyWeapon->WeaponFlags & WIF_BOT_MELEE)
+	if (actor->player->ReadyWeapon->WeaponFlags & WIF_MELEEWEAPON)
 	{
 		if ((actor->player->ReadyWeapon->ProjectileType != NULL))
 		{
@@ -237,7 +224,7 @@ void DCajunMaster::Dofire (AActor *actor, ticcmd_t *cmd)
 shootmissile:
 		dist = P_AproxDistance (actor->x - enemy->x, actor->y - enemy->y);
 		m = dist / GetDefaultByType (actor->player->ReadyWeapon->ProjectileType)->Speed;
-		SetBodyAt (enemy->x + enemy->momx*m*2, enemy->y + enemy->momy*m*2, enemy->z, 1);
+		SetBodyAt (enemy->x + enemy->velx*m*2, enemy->y + enemy->vely*m*2, enemy->z, 1);
 		actor->player->angle = R_PointToAngle2 (actor->x, actor->y, body1->x, body1->y);
 		if (Check_LOS (actor, enemy, SHOOTFOV))
 			no_fire = false;
@@ -288,7 +275,7 @@ shootmissile:
 //This function is called every
 //tick (for each bot) to set
 //the mate (teammate coop mate).
-AActor *DCajunMaster::Choose_Mate (AActor *bot)
+AActor *FCajunMaster::Choose_Mate (AActor *bot)
 {
 	int count;
 	int count2;
@@ -351,7 +338,7 @@ AActor *DCajunMaster::Choose_Mate (AActor *bot)
 			&& !p_leader[count]) //taken?
 		{
 
-			if (P_CheckSight (bot, client->mo, 1))
+			if (P_CheckSight (bot, client->mo, SF_IGNOREVISIBILITY))
 			{
 				test = P_AproxDistance (client->mo->x - bot->x,
 										client->mo->y - bot->y);
@@ -385,7 +372,7 @@ AActor *DCajunMaster::Choose_Mate (AActor *bot)
 }
 
 //MAKEME: Make this a smart decision
-AActor *DCajunMaster::Find_enemy (AActor *bot)
+AActor *FCajunMaster::Find_enemy (AActor *bot)
 {
 	int count;
 	fixed_t closest_dist, temp; //To target.
@@ -429,8 +416,8 @@ AActor *DCajunMaster::Find_enemy (AActor *bot)
 
 				//Too dark?
 				if (temp > DARK_DIST &&
-					client->mo->Sector->lightlevel < WHATS_DARK &&
-					bot->player->Powers & PW_INFRARED)
+					client->mo->Sector->lightlevel < WHATS_DARK /*&&
+					bot->player->Powers & PW_INFRARED*/)
 					continue;
 
 				if (temp < closest_dist)
@@ -446,32 +433,31 @@ AActor *DCajunMaster::Find_enemy (AActor *bot)
 }
 
 
-class ACajunBodyNode : public AActor
-{
-	DECLARE_STATELESS_ACTOR (ACajunBodyNode, AActor)
-};
-
-IMPLEMENT_STATELESS_ACTOR (ACajunBodyNode, Any, -1, 0)
-	PROP_Flags (MF_NOSECTOR | MF_NOGRAVITY)
-	PROP_RenderFlags (RF_INVISIBLE)
-END_DEFAULTS
 
 //Creates a temporary mobj (invisible) at the given location.
-void DCajunMaster::SetBodyAt (fixed_t x, fixed_t y, fixed_t z, int hostnum)
+void FCajunMaster::SetBodyAt (fixed_t x, fixed_t y, fixed_t z, int hostnum)
 {
 	if (hostnum == 1)
 	{
 		if (body1)
+		{
 			body1->SetOrigin (x, y, z);
+		}
 		else
-			body1 = Spawn<ACajunBodyNode> (x, y, z);
+		{
+			body1 = Spawn ("CajunBodyNode", x, y, z, NO_REPLACE);
+		}
 	}
 	else if (hostnum == 2)
 	{
 		if (body2)
+		{
 			body2->SetOrigin (x, y, z);
+		}
 		else
-			body2 = Spawn<ACajunBodyNode> (x, y, z);
+		{
+			body2 = Spawn ("CajunBodyNode", x, y, z, NO_REPLACE);
+		}
 	}
 }
 
@@ -483,43 +469,31 @@ void DCajunMaster::SetBodyAt (fixed_t x, fixed_t y, fixed_t z, int hostnum)
 //This function assumes actor->player->angle
 //has been set an is the main aiming angle.
 
-class ACajunTrace : public AActor
-{
-	DECLARE_STATELESS_ACTOR (ACajunTrace, AActor)
-};
-
-IMPLEMENT_STATELESS_ACTOR (ACajunTrace, Any, -1, 0)
-	PROP_SpeedFixed (12)
-	PROP_RadiusFixed (6)
-	PROP_HeightFixed (8)
-	PROP_Flags (MF_NOBLOCKMAP|MF_DROPOFF|MF_MISSILE|MF_NOGRAVITY)
-	PROP_Flags2 (MF2_NOTELEPORT)
-END_DEFAULTS
 
 //Emulates missile travel. Returns distance travelled.
-fixed_t DCajunMaster::FakeFire (AActor *source, AActor *dest, ticcmd_t *cmd)
+fixed_t FCajunMaster::FakeFire (AActor *source, AActor *dest, ticcmd_t *cmd)
 {
-	AActor *th = Spawn<ACajunTrace> (source->x, source->y, source->z + 4*8*FRACUNIT);
+	AActor *th = Spawn ("CajunTrace", source->x, source->y, source->z + 4*8*FRACUNIT, NO_REPLACE);
 	
 	th->target = source;		// where it came from
 
-	vec3_t velocity;
 	float speed = (float)th->Speed;
 
+	FVector3 velocity;
 	velocity[0] = FIXED2FLOAT(dest->x - source->x);
 	velocity[1] = FIXED2FLOAT(dest->y - source->y);
 	velocity[2] = FIXED2FLOAT(dest->z - source->z);
-	VectorNormalize (velocity);
-	th->momx = FLOAT2FIXED(velocity[0] * speed);
-	th->momy = FLOAT2FIXED(velocity[1] * speed);
-	th->momz = FLOAT2FIXED(velocity[2] * speed);
+	velocity.MakeUnit();
+	th->velx = FLOAT2FIXED(velocity[0] * speed);
+	th->vely = FLOAT2FIXED(velocity[1] * speed);
+	th->velz = FLOAT2FIXED(velocity[2] * speed);
 
 	fixed_t dist = 0;
 
 	while (dist < SAFE_SELF_MISDIST)
 	{
 		dist += th->Speed;
-		th->SetOrigin (th->x + th->momx, th->y + th->momy, th->z + th->momz);
+		th->SetOrigin (th->x + th->velx, th->y + th->vely, th->z + th->velz);
 		if (!CleanAhead (th, th->x, th->y, cmd))
 			break;
 	}
@@ -527,15 +501,15 @@ fixed_t DCajunMaster::FakeFire (AActor *source, AActor *dest, ticcmd_t *cmd)
 	return dist;
 }
 
-angle_t DCajunMaster::FireRox (AActor *bot, AActor *enemy, ticcmd_t *cmd)
+angle_t FCajunMaster::FireRox (AActor *bot, AActor *enemy, ticcmd_t *cmd)
 {
 	fixed_t dist;
 	angle_t ang;
 	AActor *actor;
 	int m;
 
-	SetBodyAt (bot->x + FixedMul(bot->momx, 5*FRACUNIT),
-			   bot->y + FixedMul(bot->momy, 5*FRACUNIT),
+	SetBodyAt (bot->x + FixedMul(bot->velx, 5*FRACUNIT),
+			   bot->y + FixedMul(bot->vely, 5*FRACUNIT),
 			   bot->z + (bot->height / 2), 2);
 
 	actor = bglobal.body2;
@@ -544,15 +518,16 @@ angle_t DCajunMaster::FireRox (AActor *bot, AActor *enemy, ticcmd_t *cmd)
 	if (dist < SAFE_SELF_MISDIST)
 		return 0;
 	//Predict.
-	m = (((dist+1)/FRACUNIT) / GetDefault<ARocket>()->Speed);
+	m = (((dist+1)/FRACUNIT) / GetDefaultByName("Rocket")->Speed);
 
-	SetBodyAt (enemy->x + FixedMul (enemy->momx, (m+2*FRACUNIT)),
-			   enemy->y + FixedMul(enemy->momy, (m+2*FRACUNIT)), ONFLOORZ, 1);
+	SetBodyAt (enemy->x + FixedMul(enemy->velx, (m+2*FRACUNIT)),
+			   enemy->y + FixedMul(enemy->vely, (m+2*FRACUNIT)), ONFLOORZ, 1);
 	dist = P_AproxDistance(actor->x-bglobal.body1->x, actor->y-bglobal.body1->y);
 	//try the predicted location
-	if (P_CheckSight (actor, bglobal.body1, 1)) //See the predicted location, so give a test missile
+	if (P_CheckSight (actor, bglobal.body1, SF_IGNOREVISIBILITY)) //See the predicted location, so give a test missile
 	{
-		if (SafeCheckPosition (bot, actor->x, actor->y))
+		FCheckPosition tm;
+		if (SafeCheckPosition (bot, actor->x, actor->y, tm))
 		{
 			if (FakeFire (actor, bglobal.body1, cmd) >= SAFE_SELF_MISDIST)
 			{
@@ -576,11 +551,11 @@ angle_t DCajunMaster::FireRox (AActor *bot, AActor *enemy, ticcmd_t *cmd)
 // [RH] We absolutely do not want to pick things up here. The bot code is
 // executed apart from all the other simulation code, so we don't want it
 // creating side-effects during gameplay.
-bool DCajunMaster::SafeCheckPosition (AActor *actor, fixed_t x, fixed_t y)
+bool FCajunMaster::SafeCheckPosition (AActor *actor, fixed_t x, fixed_t y, FCheckPosition &tm)
 {
 	int savedFlags = actor->flags;
 	actor->flags &= ~MF_PICKUP;
-	bool res = P_CheckPosition (actor, x, y) ? true : false;
+	bool res = P_CheckPosition (actor, x, y, tm);
 	actor->flags = savedFlags;
 	return res;
 }

@@ -2,7 +2,7 @@
 ** c_dispatch.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,9 +34,12 @@
 #ifndef __C_DISPATCH_H__
 #define __C_DISPATCH_H__
 
-#include "dobject.h"
+#include "doomtype.h"
 
 class FConfigFile;
+class APlayerPawn;
+
+extern bool CheckCheatmode (bool printmsg = true);
 
 void C_ExecCmdLineParams ();
 
@@ -55,28 +58,31 @@ int C_ExecFile (const char *cmd, bool usePullin);
 void C_ArchiveAliases (FConfigFile *f);
 
 void C_SetAlias (const char *name, const char *cmd);
+void C_ClearAliases ();
 
 // build a single string out of multiple strings
-char *BuildString (int argc, char **argv);
+FString BuildString (int argc, FString *argv);
 
 // Class that can parse command lines
 class FCommandLine
 {
 public:
-	FCommandLine (const char *commandline);
+	FCommandLine (const char *commandline, bool no_escapes = false);
 	~FCommandLine ();
 	int argc ();
 	char *operator[] (int i);
 	const char *args () { return cmd; }
+	void Shift();
 
 private:
 	const char *cmd;
 	int _argc;
 	char **_argv;
 	long argsize;
+	bool noescapes;
 };
 
-typedef void (*CCmdRun) (FCommandLine &argv, AActor *instigator, int key);
+typedef void (*CCmdRun) (FCommandLine &argv, APlayerPawn *instigator, int key);
 
 class FConsoleCommand
 {
@@ -86,7 +92,7 @@ public:
 	virtual bool IsAlias ();
 	void PrintCommand () { Printf ("%s\n", m_Name); }
 
-	virtual void Run (FCommandLine &args, AActor *instigator, int key);
+	virtual void Run (FCommandLine &args, APlayerPawn *instigator, int key);
 
 	FConsoleCommand *m_Next, **m_Prev;
 	char *m_Name;
@@ -102,9 +108,9 @@ protected:
 };
 
 #define CCMD(n) \
-	void Cmd_##n (FCommandLine &, AActor *, int key); \
-	FConsoleCommand Cmd_##n##_ (#n, Cmd_##n); \
-	void Cmd_##n (FCommandLine &argv, AActor *m_Instigator, int key)
+	void Cmd_##n (FCommandLine &, APlayerPawn *, int key); \
+	FConsoleCommand Cmd_##n##_Ref (#n, Cmd_##n); \
+	void Cmd_##n (FCommandLine &argv, APlayerPawn *who, int key)
 
 const int KEY_DBLCLICKED = 0x8000;
 
@@ -113,14 +119,15 @@ class FConsoleAlias : public FConsoleCommand
 public:
 	FConsoleAlias (const char *name, const char *command, bool noSave);
 	~FConsoleAlias ();
-	void Run (FCommandLine &args, AActor *Instigator, int key);
+	void Run (FCommandLine &args, APlayerPawn *Instigator, int key);
 	bool IsAlias ();
 	void PrintAlias ();
 	void Archive (FConfigFile *f);
 	void Realias (const char *command, bool noSave);
 	void SafeDelete ();
 protected:
-	char *m_Command[2];
+	FString m_Command[2];	// Slot 0 is saved to the ini, slot 1 is not.
+	bool bDoSubstitution;
 	bool bRunning;
 	bool bKill;
 };
@@ -136,16 +143,21 @@ struct FButtonStatus
 	BYTE bWentUp;			// Button went up this tic
 	BYTE padTo16Bytes;
 
-	void PressKey (int keynum);
-	void ReleaseKey (int keynum);
+	bool PressKey (int keynum);		// Returns true if this key caused the button to be pressed.
+	bool ReleaseKey (int keynum);	// Returns true if this key is no longer pressed.
 	void ResetTriggers () { bWentDown = bWentUp = false; }
+	void Reset () { bDown = bWentDown = bWentUp = false; }
 };
 
 extern FButtonStatus Button_Mlook, Button_Klook, Button_Use, Button_AltAttack,
 	Button_Attack, Button_Speed, Button_MoveRight, Button_MoveLeft,
 	Button_Strafe, Button_LookDown, Button_LookUp, Button_Back,
 	Button_Forward, Button_Right, Button_Left, Button_MoveDown,
-	Button_MoveUp, Button_Jump, Button_ShowScores;
+	Button_MoveUp, Button_Jump, Button_ShowScores, Button_Crouch,
+	Button_Zoom, Button_Reload,
+	Button_User1, Button_User2, Button_User3, Button_User4,
+	Button_AM_PanLeft, Button_AM_PanRight, Button_AM_PanDown, Button_AM_PanUp,
+	Button_AM_ZoomIn, Button_AM_ZoomOut;
 extern bool ParsingKeyConf;
 
 void ResetButtonTriggers ();	// Call ResetTriggers for all buttons
@@ -153,5 +165,6 @@ void ResetButtonStates ();		// Same as above, but also clear bDown
 
 extern unsigned int MakeKey (const char *s);
 extern unsigned int MakeKey (const char *s, size_t len);
+extern unsigned int SuperFastHash (const char *data, size_t len);
 
 #endif //__C_DISPATCH_H__

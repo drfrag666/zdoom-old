@@ -2,7 +2,7 @@
 ** s_playlist.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -51,12 +51,10 @@ public:
 	const char *GetSong (int position) const;
 
 private:
-	static bool NextLine (FILE *file, char *buffer, int n);
+	static FString NextLine (FILE *file);
 
-	int Position;
-	int NumSongs;
-	char **Songs;		// Pointers into SongList
-	char *SongList;
+	unsigned int Position;
+	TArray<FString> Songs;
 };
 
 #endif //__S_PLAYLIST_H__

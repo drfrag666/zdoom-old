@@ -3,7 +3,7 @@
 ** An .ini parser specifically for zdoom.ini
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -26,7 +26,7 @@
 ** NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
 ** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 ** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OFf
 ** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **---------------------------------------------------------------------------
 **
@@ -35,12 +35,17 @@
 #include <stdio.h>
 #include <time.h>
 
+#ifdef __APPLE__
+#include <CoreServices/CoreServices.h>
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <lmcons.h>
 #include <shlobj.h>
 extern HWND Window;
+#define USE_WINDOWS_DWORD
 #endif
 
 #include "doomdef.h"
@@ -57,10 +62,10 @@ extern HWND Window;
 #include "a_pickups.h"
 #include "doomstat.h"
 #include "i_system.h"
+#include "gi.h"
 
 EXTERN_CVAR (Bool, con_centernotify)
 EXTERN_CVAR (Int, msg0color)
-EXTERN_CVAR (Color, dimcolor)
 EXTERN_CVAR (Color, color)
 EXTERN_CVAR (Float, dimamount)
 EXTERN_CVAR (Int, msgmidcolor)
@@ -69,14 +74,19 @@ EXTERN_CVAR (Bool, snd_pitched)
 EXTERN_CVAR (Color, am_wallcolor)
 EXTERN_CVAR (Color, am_fdwallcolor)
 EXTERN_CVAR (Color, am_cdwallcolor)
-
-char *WeaponSection;
+EXTERN_CVAR (Float, spc_amp)
+EXTERN_CVAR (Bool, wi_percents)
 
 FGameConfigFile::FGameConfigFile ()
 {
-	string pathname;
-	
+#ifdef __APPLE__
+	FString user_docs, user_app_support, local_app_support;
+#endif
+	FString pathname;
+
+	OkayToWrite = false;	// Do not allow saving of the config before DoGameSetup()
 	bMigrating = false;
+	bModSetup = false;
 	pathname = GetConfigPath (true);
 	ChangePathName (pathname);
 	LoadConfigFile (MigrateStub, NULL);
@@ -98,11 +108,38 @@ FGameConfigFile::FGameConfigFile ()
 		SetSection ("IWADSearch.Directories", true);
 		SetValueForKey ("Path", ".", true);
 		SetValueForKey ("Path", "$DOOMWADDIR", true);
-#ifndef unix
+#ifdef __APPLE__
+		char cpath[PATH_MAX];
+		FSRef folder;
+		
+		if (noErr == FSFindFolder(kUserDomain, kDocumentsFolderType, kCreateFolder, &folder) &&
+			noErr == FSRefMakePath(&folder, (UInt8*)cpath, PATH_MAX))
+		{
+			user_docs << cpath << "/" GAME_DIR;
+			SetValueForKey("Path", user_docs, true);
+		}
+		else
+		{
+			SetValueForKey("Path", "~/" GAME_DIR, true);
+		}
+		if (noErr == FSFindFolder(kUserDomain, kApplicationSupportFolderType, kCreateFolder, &folder) &&
+			noErr == FSRefMakePath(&folder, (UInt8*)cpath, PATH_MAX))
+		{
+			user_app_support << cpath << "/" GAME_DIR;
+			SetValueForKey("Path", user_app_support, true);
+		}
+		SetValueForKey ("Path", "$PROGDIR", true);
+		if (noErr == FSFindFolder(kLocalDomain, kApplicationSupportFolderType, kCreateFolder, &folder) &&
+			noErr == FSRefMakePath(&folder, (UInt8*)cpath, PATH_MAX))
+		{
+			local_app_support << cpath << "/" GAME_DIR;
+			SetValueForKey("Path", local_app_support, true);
+		}
+#elif !defined(unix)
 		SetValueForKey ("Path", "$HOME", true);
 		SetValueForKey ("Path", "$PROGDIR", true);
 #else
-		SetValueForKey ("Path", "~/.zdoom", true);
+		SetValueForKey ("Path", "~/" GAME_DIR, true);
 		SetValueForKey ("Path", SHARE_DIR, true);
 #endif
 	}
@@ -111,13 +148,75 @@ FGameConfigFile::FGameConfigFile ()
 	if (!SetSection ("FileSearch.Directories"))
 	{
 		SetSection ("FileSearch.Directories", true);
-#ifndef unix
+#ifdef __APPLE__
+		SetValueForKey ("Path", user_docs, true);
+		SetValueForKey ("Path", user_app_support, true);
+		SetValueForKey ("Path", "$PROGDIR", true);
+		SetValueForKey ("Path", local_app_support, true);
+#elif !defined(unix)
 		SetValueForKey ("Path", "$PROGDIR", true);
 #else
+		SetValueForKey ("Path", "~/" GAME_DIR, true);
 		SetValueForKey ("Path", SHARE_DIR, true);
 #endif
 		SetValueForKey ("Path", "$DOOMWADDIR", true);
 	}
+
+	// Create auto-load sections, so users know what's available.
+	// Note that this totem pole is the reverse of the order that
+	// they will appear in the file.
+	CreateSectionAtStart("Harmony.Autoload");
+	CreateSectionAtStart("UrbanBrawl.Autoload");
+	CreateSectionAtStart("Chex3.Autoload");
+	CreateSectionAtStart("Chex.Autoload");
+	CreateSectionAtStart("Strife.Autoload");
+	CreateSectionAtStart("HexenDemo.Autoload");
+	CreateSectionAtStart("HexenDK.Autoload");
+	CreateSectionAtStart("Hexen.Autoload");
+	CreateSectionAtStart("Heretic.Autoload");
+	CreateSectionAtStart("FreeDM.Autoload");
+	CreateSectionAtStart("Freedoom1.Autoload");
+	CreateSectionAtStart("Freedoom.Autoload");
+	CreateSectionAtStart("Plutonia.Autoload");
+	CreateSectionAtStart("TNT.Autoload");
+	CreateSectionAtStart("Doom2.Autoload");
+	CreateSectionAtStart("Doom1.Autoload");
+	CreateSectionAtStart("Doom.Autoload");
+	CreateSectionAtStart("Global.Autoload");
+
+	// The same goes for auto-exec files.
+	CreateStandardAutoExec("Chex.AutoExec", true);
+	CreateStandardAutoExec("Strife.AutoExec", true);
+	CreateStandardAutoExec("Hexen.AutoExec", true);
+	CreateStandardAutoExec("Heretic.AutoExec", true);
+	CreateStandardAutoExec("Doom.AutoExec", true);
+
+	// Move search paths back to the top.
+	MoveSectionToStart("FileSearch.Directories");
+	MoveSectionToStart("IWADSearch.Directories");
+
+	// Add some self-documentation.
+	SetSectionNote("IWADSearch.Directories",
+		"# These are the directories to automatically search for IWADs.\n"
+		"# Each directory should be on a separate line, preceded by Path=\n");
+	SetSectionNote("FileSearch.Directories",
+		"# These are the directories to search for wads added with the -file\n"
+		"# command line parameter, if they cannot be found with the path\n"
+		"# as-is. Layout is the same as for IWADSearch.Directories\n");
+	SetSectionNote("Doom.AutoExec",
+		"# Files to automatically execute when running the corresponding game.\n"
+		"# Each file should be on its own line, preceded by Path=\n\n");
+	SetSectionNote("Global.Autoload",
+		"# WAD files to always load. These are loaded after the IWAD but before\n"
+		"# any files added with -file. Place each file on its own line, preceded\n"
+		"# by Path=\n");
+	SetSectionNote("Doom.Autoload",
+		"# Wad files to automatically load depending on the game and IWAD you are\n"
+		"# playing.  You may have have files that are loaded for all similar IWADs\n"
+		"# (the game) and files that are only loaded for particular IWADs. For example,\n"
+		"# any files listed under Doom.Autoload will be loaded for any version of Doom,\n"
+		"# but files listed under Doom2.Autoload will only load when you are\n"
+		"# playing Doom 2.\n\n");
 }
 
 FGameConfigFile::~FGameConfigFile ()
@@ -126,8 +225,7 @@ FGameConfigFile::~FGameConfigFile ()
 
 void FGameConfigFile::WriteCommentHeader (FILE *file) const
 {
-	fprintf (file, "# This file was generated by ZDOOM " DOTVERSIONSTR " on %s"
-				   "# It is not really meant to be modified outside of ZDoom, nyo.\n\n", myasctime ());
+	fprintf (file, "# This file was generated by " GAMENAME " " DOTVERSIONSTR " on %s\n", myasctime());
 }
 
 void FGameConfigFile::MigrateStub (const char *pathname, FConfigFile *config, void *userdata)
@@ -140,100 +238,6 @@ void FGameConfigFile::MigrateOldConfig ()
 	// Set default key bindings. These will be overridden
 	// by the bindings in the config file if it exists.
 	C_SetDefaultBindings ();
-
-#if 0	// Disabled for now, maybe forever.
-	int i;
-	char *execcommand;
-
-	i = strlen (GetPathName ()) + 8;
-	execcommand = new char[i];
-	sprintf (execcommand, "exec \"%s\"", GetPathName ());
-	execcommand[i-5] = 'c';
-	execcommand[i-4] = 'f';
-	execcommand[i-3] = 'g';
-	cvar_defflags = CVAR_ARCHIVE;
-	C_DoCommand (execcommand);
-	cvar_defflags = 0;
-	delete[] execcommand;
-
-	FBaseCVar *configver = FindCVar ("configver", NULL);
-	if (configver != NULL)
-	{
-		UCVarValue oldver = configver->GetGenericRep (CVAR_Float);
-
-		if (oldver.Float < 118.f)
-		{
-			C_DoCommand ("alias idclip noclip");
-			C_DoCommand ("alias idspispopd noclip");
-
-			if (oldver.Float < 117.2f)
-			{
-				dimamount = *dimamount * 0.25f;
-				if (oldver.Float <= 113.f)
-				{
-					C_DoCommand ("bind t messagemode; bind \\ +showscores;"
-								 "bind f12 spynext; bind sysrq screenshot");
-					if (C_GetBinding (KEY_F5) && !stricmp (C_GetBinding (KEY_F5), "menu_video"))
-					{
-						C_ChangeBinding ("menu_display", KEY_F5);
-					}
-				}
-			}
-		}
-		delete configver;
-	}
-	// Change all impulses to slot commands
-	for (i = 0; i < NUM_KEYS; i++)
-	{
-		char slotcmd[8] = "slot ";
-		char *bind, *numpart;
-
-		bind = C_GetBinding (i);
-		if (bind != NULL && strnicmp (bind, "impulse ", 8) == 0)
-		{
-			numpart = strchr (bind, ' ');
-			if (numpart != NULL && strlen (numpart) < 4)
-			{
-				strcpy (slotcmd + 5, numpart);
-				C_ChangeBinding (slotcmd, i);
-			}
-		}
-	}
-
-	// Migrate and delete some obsolete cvars
-	FBaseCVar *oldvar;
-	UCVarValue oldval;
-
-	oldvar = FindCVar ("autoexec", NULL);
-	if (oldvar != NULL)
-	{
-		oldval = oldvar->GetGenericRep (CVAR_String);
-		if (oldval.String[0])
-		{
-			SetSection ("Doom.AutoExec", true);
-			SetValueForKey ("Path", oldval.String, true);
-		}
-		delete oldvar;
-	}
-
-	oldvar = FindCVar ("def_patch", NULL);
-	if (oldvar != NULL)
-	{
-		oldval = oldvar->GetGenericRep (CVAR_String);
-		if (oldval.String[0])
-		{
-			SetSection ("Doom.DefaultDehacked", true);
-			SetValueForKey ("Path", oldval.String, true);
-		}
-		delete oldvar;
-	}
-
-	oldvar = FindCVar ("vid_noptc", NULL);
-	if (oldvar != NULL)
-	{
-		delete oldvar;
-	}
-#endif
 }
 
 void FGameConfigFile::DoGlobalSetup ()
@@ -260,16 +264,6 @@ void FGameConfigFile::DoGlobalSetup ()
 					noblitter->ResetToDefault ();
 				}
 			}
-			if (last < 201)
-			{
-				// Be sure the Hexen fourth weapons are assigned to slot 4
-				// If this section does not already exist, then they will be
-				// assigned by SetupWeaponList().
-				if (SetSection ("Hexen.WeaponSlots"))
-				{
-					SetValueForKey ("Slot[4]", "FWeapQuietus CWeapWraithverge MWeapBloodscourge");
-				}
-			}
 			if (last < 202)
 			{
 				// Make sure the Hexen hotkeys are accessible by default.
@@ -281,8 +275,8 @@ void FGameConfigFile::DoGlobalSetup ()
 					SetValueForKey ("9", "use ArtiBlastRadius");
 					SetValueForKey ("8", "use ArtiTeleport");
 					SetValueForKey ("7", "use ArtiTeleportOther");
-					SetValueForKey ("6", "use ArtiEgg");
-					SetValueForKey ("5", "use ArtiInvulnerability");
+					SetValueForKey ("6", "use ArtiPork");
+					SetValueForKey ("5", "use ArtiInvulnerability2");
 				}
 			}
 			if (last < 204)
@@ -294,6 +288,61 @@ void FGameConfigFile::DoGlobalSetup ()
 					vsync->ResetToDefault ();
 				}
 			}
+			if (last < 206)
+			{ // spc_amp is now a float, not an int.
+				if (spc_amp > 16)
+				{
+					spc_amp = spc_amp / 16.f;
+				}
+			}
+			if (last < 207)
+			{ // Now that snd_midiprecache works again, you probably don't want it on.
+				FBaseCVar *precache = FindCVar ("snd_midiprecache", NULL);
+				if (precache != NULL)
+				{
+					precache->ResetToDefault();
+				}
+			}
+			if (last < 208)
+			{ // Weapon sections are no longer used, so tidy up the config by deleting them.
+				const char *name;
+				size_t namelen;
+				bool more;
+
+				more = SetFirstSection();
+				while (more)
+				{
+					name = GetCurrentSection();
+					if (name != NULL && 
+						(namelen = strlen(name)) > 12 &&
+						strcmp(name + namelen - 12, ".WeaponSlots") == 0)
+					{
+						more = DeleteCurrentSection();
+					}
+					else
+					{
+						more = SetNextSection();
+					}
+				}
+			}
+			if (last < 209)
+			{
+				// menu dimming is now a gameinfo option so switch user override off
+				FBaseCVar *dim = FindCVar ("dimamount", NULL);
+				if (dim != NULL)
+				{
+					dim->ResetToDefault ();
+				}
+			}
+			if (last < 210)
+			{
+				if (SetSection ("Hexen.Bindings"))
+				{
+					// These 2 were misnamed in earlier versions
+					SetValueForKey ("6", "use ArtiPork");
+					SetValueForKey ("5", "use ArtiInvulnerability2");
+				}
+			}
 		}
 	}
 }
@@ -302,81 +351,82 @@ void FGameConfigFile::DoGameSetup (const char *gamename)
 {
 	const char *key;
 	const char *value;
-	enum { Doom, Heretic, Hexen, Strife } game;
-
-	if (strcmp (gamename, "Heretic") == 0)
-		game = Heretic;
-	else if (strcmp (gamename, "Hexen") == 0)
-		game = Hexen;
-	else if (strcmp (gamename, "Strife") == 0)
-		game = Strife;
-	else
-		game = Doom;
 
 	if (bMigrating)
 	{
 		MigrateOldConfig ();
 	}
-	subsection = section + sprintf (section, "%s.", gamename);
+	sublen = countof(section) - 1 - mysnprintf (section, countof(section), "%s.", gamename);
+	subsection = section + countof(section) - sublen - 1;
+	section[countof(section) - 1] = '\0';
 	
-	strcpy (subsection, "UnknownConsoleVariables");
+	strncpy (subsection, "UnknownConsoleVariables", sublen);
 	if (SetSection (section))
 	{
 		ReadCVars (0);
 	}
 
-	strcpy (subsection, "ConsoleVariables");
+	strncpy (subsection, "ConsoleVariables", sublen);
 	if (SetSection (section))
 	{
 		ReadCVars (0);
 	}
 
-	if (game != Doom && game != Strife)
+	if (gameinfo.gametype & GAME_Raven)
 	{
-		SetRavenDefaults (game == Hexen);
+		SetRavenDefaults (gameinfo.gametype == GAME_Hexen);
 	}
 
-	// The NetServerInfo section will be read when it's determined that
-	// a netgame is being played.
-	strcpy (subsection, "LocalServerInfo");
+	// The NetServerInfo section will be read and override anything loaded
+	// here when it's determined that a netgame is being played.
+	strncpy (subsection, "LocalServerInfo", sublen);
 	if (SetSection (section))
 	{
 		ReadCVars (0);
 	}
 
-	strcpy (subsection, "Player");
+	strncpy (subsection, "Player", sublen);
 	if (SetSection (section))
 	{
 		ReadCVars (0);
 	}
 
-	strcpy (subsection, "Bindings");
-	if (!SetSection (section))
-	{ // Config has no bindings for the given game
-		if (!bMigrating)
-		{
-			C_SetDefaultBindings ();
-		}
-	}
-	else
+	if (!bMigrating)
 	{
-		C_UnbindAll ();
+		C_SetDefaultBindings ();
+	}
+
+	strncpy (subsection, "Bindings", sublen);
+	if (SetSection (section))
+	{
+		Bindings.UnbindAll();
 		while (NextInSection (key, value))
 		{
-			C_DoBind (key, value, false);
+			Bindings.DoBind (key, value);
 		}
 	}
 
-	strcpy (subsection, "DoubleBindings");
+	strncpy (subsection, "DoubleBindings", sublen);
 	if (SetSection (section))
 	{
+		DoubleBindings.UnbindAll();
 		while (NextInSection (key, value))
 		{
-			C_DoBind (key, value, true);
+			DoubleBindings.DoBind (key, value);
 		}
 	}
 
-	strcpy (subsection, "ConsoleAliases");
+	strncpy (subsection, "AutomapBindings", sublen);
+	if (SetSection (section))
+	{
+		AutomapBindings.UnbindAll();
+		while (NextInSection (key, value))
+		{
+			AutomapBindings.DoBind (key, value);
+		}
+	}
+
+	strncpy (subsection, "ConsoleAliases", sublen);
 	if (SetSection (section))
 	{
 		const char *name = NULL;
@@ -393,40 +443,59 @@ void FGameConfigFile::DoGameSetup (const char *gamename)
 			}
 		}
 	}
+	OkayToWrite = true;
+}
 
-	strcpy (subsection, "WeaponSlots");
+// Like DoGameSetup(), but for mod-specific cvars.
+// Called after CVARINFO has been parsed.
+void FGameConfigFile::DoModSetup(const char *gamename)
+{
+	mysnprintf(section, countof(section), "%s.Player.Mod", gamename);
+	if (SetSection(section))
+	{
+		ReadCVars(CVAR_MOD|CVAR_USERINFO|CVAR_IGNORE);
+	}
+	mysnprintf(section, countof(section), "%s.LocalServerInfo.Mod", gamename);
 	if (SetSection (section))
 	{
-		LocalWeapons.RestoreSlots (*this);
+		ReadCVars (CVAR_MOD|CVAR_SERVERINFO|CVAR_IGNORE);
 	}
-	else
-	{
-		SetupWeaponList (gamename);
-	}
+	// Signal that these sections should be rewritten when saving the config.
+	bModSetup = true;
 }
 
 void FGameConfigFile::ReadNetVars ()
 {
-	strcpy (subsection, "NetServerInfo");
+	strncpy (subsection, "NetServerInfo", sublen);
 	if (SetSection (section))
 	{
 		ReadCVars (0);
 	}
+	if (bModSetup)
+	{
+		mysnprintf(subsection, sublen, "NetServerInfo.Mod");
+		if (SetSection(section))
+		{
+			ReadCVars(CVAR_MOD|CVAR_SERVERINFO|CVAR_IGNORE);
+		}
+	}
 }
 
+// Read cvars from a cvar section of the ini. Flags are the flags to give
+// to newly-created cvars that were not already defined.
 void FGameConfigFile::ReadCVars (DWORD flags)
 {
 	const char *key, *value;
 	FBaseCVar *cvar;
 	UCVarValue val;
 
+	flags |= CVAR_ARCHIVE|CVAR_UNSETTABLE|CVAR_AUTO;
 	while (NextInSection (key, value))
 	{
 		cvar = FindCVar (key, NULL);
 		if (cvar == NULL)
 		{
-			cvar = new FStringCVar (key, NULL,
-				CVAR_AUTO|CVAR_UNSETTABLE|CVAR_ARCHIVE|flags);
+			cvar = new FStringCVar (key, NULL, flags);
 		}
 		val.String = const_cast<char *>(value);
 		cvar->SetGenericRep (val, CVAR_String);
@@ -437,92 +506,101 @@ void FGameConfigFile::ArchiveGameData (const char *gamename)
 {
 	char section[32*3], *subsection;
 
-	subsection = section + sprintf (section, "%s.", gamename);
+	sublen = countof(section) - 1 - mysnprintf (section, countof(section), "%s.", gamename);
+	subsection = section + countof(section) - 1 - sublen;
 
-	strcpy (subsection, "Player");
+	strncpy (subsection, "Player", sublen);
 	SetSection (section, true);
 	ClearCurrentSection ();
-	C_ArchiveCVars (this, 4);
+	C_ArchiveCVars (this, CVAR_ARCHIVE|CVAR_USERINFO);
 
-	strcpy (subsection, "ConsoleVariables");
-	SetSection (section, true);
-	ClearCurrentSection ();
-	C_ArchiveCVars (this, 0);
-
-	strcpy (subsection, netgame ? "NetServerInfo" : "LocalServerInfo");
-	if (!netgame || consoleplayer == 0)
-	{ // Do not overwrite this section if playing a netgame, and
-	  // this machine was not the initial host.
+	if (bModSetup)
+	{
+		strncpy (subsection + 6, ".Mod", sublen - 6);
 		SetSection (section, true);
 		ClearCurrentSection ();
-		C_ArchiveCVars (this, 5);
+		C_ArchiveCVars (this, CVAR_MOD|CVAR_ARCHIVE|CVAR_AUTO|CVAR_USERINFO);
 	}
 
-	strcpy (subsection, "UnknownConsoleVariables");
+	strncpy (subsection, "ConsoleVariables", sublen);
 	SetSection (section, true);
 	ClearCurrentSection ();
-	C_ArchiveCVars (this, 2);
+	C_ArchiveCVars (this, CVAR_ARCHIVE);
 
-	strcpy (subsection, "ConsoleAliases");
+	// Do not overwrite the serverinfo section if playing a netgame, and
+	// this machine was not the initial host.
+	if (!netgame || consoleplayer == 0)
+	{
+		strncpy (subsection, netgame ? "NetServerInfo" : "LocalServerInfo", sublen);
+		SetSection (section, true);
+		ClearCurrentSection ();
+		C_ArchiveCVars (this, CVAR_ARCHIVE|CVAR_SERVERINFO);
+
+		if (bModSetup)
+		{
+			strncpy (subsection, netgame ? "NetServerInfo.Mod" : "LocalServerInfo.Mod", sublen);
+			SetSection (section, true);
+			ClearCurrentSection ();
+			C_ArchiveCVars (this, CVAR_MOD|CVAR_ARCHIVE|CVAR_AUTO|CVAR_SERVERINFO);
+		}
+	}
+
+	strncpy (subsection, "UnknownConsoleVariables", sublen);
+	SetSection (section, true);
+	ClearCurrentSection ();
+	C_ArchiveCVars (this, CVAR_ARCHIVE|CVAR_AUTO);
+
+	strncpy (subsection, "ConsoleAliases", sublen);
 	SetSection (section, true);
 	ClearCurrentSection ();
 	C_ArchiveAliases (this);
 
-	M_SaveCustomKeys (this, section, subsection);
+	M_SaveCustomKeys (this, section, subsection, sublen);
 
 	strcpy (subsection, "Bindings");
 	SetSection (section, true);
-	ClearCurrentSection ();
-	C_ArchiveBindings (this, false);
+	Bindings.ArchiveBindings (this);
 
-	strcpy (subsection, "DoubleBindings");
+	strncpy (subsection, "DoubleBindings", sublen);
 	SetSection (section, true);
-	ClearCurrentSection ();
-	C_ArchiveBindings (this, true);
+	DoubleBindings.ArchiveBindings (this);
 
-	if (WeaponSection == NULL)
-	{
-		strcpy (subsection, "WeaponSlots");
-	}
-	else
-	{
-		sprintf (subsection, "%s.WeaponSlots", WeaponSection);
-	}
+	strncpy (subsection, "AutomapBindings", sublen);
 	SetSection (section, true);
-	ClearCurrentSection ();
-	LocalWeapons.SaveSlots (*this);
+	AutomapBindings.ArchiveBindings (this);
 }
 
 void FGameConfigFile::ArchiveGlobalData ()
 {
 	SetSection ("LastRun", true);
 	ClearCurrentSection ();
-	SetValueForKey ("Version", STRVERSION);
+	SetValueForKey ("Version", LASTRUNVERSION);
 
 	SetSection ("GlobalSettings", true);
 	ClearCurrentSection ();
-	C_ArchiveCVars (this, 1);
+	C_ArchiveCVars (this, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 
 	SetSection ("GlobalSettings.Unknown", true);
 	ClearCurrentSection ();
-	C_ArchiveCVars (this, 3);
+	C_ArchiveCVars (this, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_AUTO);
 }
 
-string FGameConfigFile::GetConfigPath (bool tryProg)
+FString FGameConfigFile::GetConfigPath (bool tryProg)
 {
-	char *pathval;
-	string path;
+	const char *pathval;
+	FString path;
 
-	pathval = Args.CheckValue ("-config");
+	pathval = Args->CheckValue ("-config");
 	if (pathval != NULL)
-		return string(pathval);
-
-#ifndef unix
+	{
+		return FString(pathval);
+	}
+#ifdef _WIN32
 	path = NULL;
 	HRESULT hr;
 
 	TCHAR uname[UNLEN+1];
-	DWORD unamelen = sizeof(uname);
+	DWORD unamelen = countof(uname);
 
 	// Because people complained, try for a user-specific .ini in the program directory first.
 	// If that is not writeable, use the one in the home directory instead.
@@ -566,16 +644,57 @@ string FGameConfigFile::GetConfigPath (bool tryProg)
 
 	if (path.IsEmpty())
 	{
-		if (Args.CheckParm ("-cdrom"))
-			return copystring ("c:\\zdoomdat\\zdoom.ini");
+		if (Args->CheckParm ("-cdrom"))
+			return CDROM_DIR "\\zdoom.ini";
 
 		path = progdir;
 		path += "zdoom.ini";
 	}
 	return path;
+#elif defined(__APPLE__)
+	char cpath[PATH_MAX];
+	FSRef folder;
+	
+	if (noErr == FSFindFolder(kUserDomain, kPreferencesFolderType, kCreateFolder, &folder) &&
+		noErr == FSRefMakePath(&folder, (UInt8*)cpath, PATH_MAX))
+	{
+		path = cpath;
+		path += "/zdoom.ini";
+		return path;
+	}
+	// Ungh.
+	return "zdoom.ini";
 #else
 	return GetUserFile ("zdoom.ini");
 #endif
+}
+
+void FGameConfigFile::CreateStandardAutoExec(const char *section, bool start)
+{
+	if (!SetSection(section))
+	{
+		FString path;
+#ifdef __APPLE__
+		char cpath[PATH_MAX];
+		FSRef folder;
+		
+		if (noErr == FSFindFolder(kUserDomain, kDocumentsFolderType, kCreateFolder, &folder) &&
+			noErr == FSRefMakePath(&folder, (UInt8*)cpath, PATH_MAX))
+		{
+			path << cpath << "/" GAME_DIR "/autoexec.cfg";
+		}
+#elif !defined(unix)
+		path = "$PROGDIR/autoexec.cfg";
+#else
+		path = GetUserFile ("autoexec.cfg");
+#endif
+		SetSection (section, true);
+		SetValueForKey ("Path", path.GetChars());
+	}
+	if (start)
+	{
+		MoveSectionToStart(section);
+	}
 }
 
 void FGameConfigFile::AddAutoexec (DArgs *list, const char *game)
@@ -584,7 +703,7 @@ void FGameConfigFile::AddAutoexec (DArgs *list, const char *game)
 	const char *key;
 	const char *value;
 
-	sprintf (section, "%s.AutoExec", game);
+	mysnprintf (section, countof(section), "%s.AutoExec", game);
 
 	if (bMigrating)
 	{
@@ -608,34 +727,19 @@ void FGameConfigFile::AddAutoexec (DArgs *list, const char *game)
 	{
 		// If <game>.AutoExec section does not exist, create it
 		// with a default autoexec.cfg file present.
-		if (!SetSection (section))
-		{
-			string path;
-			
-#ifndef unix
-			if (Args.CheckParm ("-cdrom"))
-			{
-				path = copystring ("c:\\zdoomdat\\autoexec.cfg");
-			}
-			else
-			{
-				path = progdir;
-				path += "autoexec.cfg";
-			}
-#else
-			path = GetUserFile ("autoexec.cfg");
-#endif
-			SetSection (section, true);
-			SetValueForKey ("Path", path.GetChars());
-		}
+		CreateStandardAutoExec(section, false);
 		// Run any files listed in the <game>.AutoExec section
-		if (SetSection (section))
+		if (!SectionIsEmpty())
 		{
 			while (NextInSection (key, value))
 			{
-				if (stricmp (key, "Path") == 0 && FileExists (value))
+				if (stricmp (key, "Path") == 0 && *value != '\0')
 				{
-					list->AppendArg (value);
+					FString expanded_path = ExpandEnvVars(value);
+					if (FileExists(expanded_path))
+					{
+						list->AppendArg (ExpandEnvVars(value));
+					}
 				}
 			}
 		}
@@ -650,17 +754,16 @@ void FGameConfigFile::SetRavenDefaults (bool isHexen)
 	{
 		con_centernotify.ResetToDefault ();
 		msg0color.ResetToDefault ();
-		dimcolor.ResetToDefault ();
 		color.ResetToDefault ();
 	}
 
+	val.Bool = false;
+	wi_percents.SetGenericRepDefault (val, CVAR_Bool);
 	val.Bool = true;
 	con_centernotify.SetGenericRepDefault (val, CVAR_Bool);
 	snd_pitched.SetGenericRepDefault (val, CVAR_Bool);
 	val.Int = 9;
 	msg0color.SetGenericRepDefault (val, CVAR_Int);
-	val.Int = 0x0000ff;
-	dimcolor.SetGenericRepDefault (val, CVAR_Int);
 	val.Int = CR_WHITE;
 	msgmidcolor.SetGenericRepDefault (val, CVAR_Int);
 	val.Int = CR_YELLOW;
@@ -689,69 +792,8 @@ void FGameConfigFile::SetRavenDefaults (bool isHexen)
 	}
 }
 
-void FGameConfigFile::SetupWeaponList (const char *gamename)
-{
-	for (int i = 0; i < NUM_WEAPON_SLOTS; ++i)
-	{
-		LocalWeapons.Slots[i].Clear ();
-	}
-
-	if (strcmp (gamename, "Heretic") == 0)
-	{
-		LocalWeapons.Slots[1].AddWeapon ("Staff");
-		LocalWeapons.Slots[1].AddWeapon ("Gauntlets");
-		LocalWeapons.Slots[2].AddWeapon ("GoldWand");
-		LocalWeapons.Slots[3].AddWeapon ("Crossbow");
-		LocalWeapons.Slots[4].AddWeapon ("Blaster");
-		LocalWeapons.Slots[5].AddWeapon ("SkullRod");
-		LocalWeapons.Slots[6].AddWeapon ("PhoenixRod");
-		LocalWeapons.Slots[7].AddWeapon ("Mace");
-	}
-	else if (strcmp (gamename, "Hexen") == 0)
-	{
-		LocalWeapons.Slots[1].AddWeapon ("FWeapFist");
-		LocalWeapons.Slots[2].AddWeapon ("FWeapAxe");
-		LocalWeapons.Slots[3].AddWeapon ("FWeapHammer");
-		LocalWeapons.Slots[4].AddWeapon ("FWeapQuietus");
-		LocalWeapons.Slots[1].AddWeapon ("CWeapMace");
-		LocalWeapons.Slots[2].AddWeapon ("CWeapStaff");
-		LocalWeapons.Slots[3].AddWeapon ("CWeapFlame");
-		LocalWeapons.Slots[4].AddWeapon ("CWeapWraithverge");
-		LocalWeapons.Slots[1].AddWeapon ("MWeapWand");
-		LocalWeapons.Slots[2].AddWeapon ("MWeapFrost");
-		LocalWeapons.Slots[3].AddWeapon ("MWeapLightning");
-		LocalWeapons.Slots[4].AddWeapon ("MWeapBloodscourge");
-	}
-	else if (strcmp (gamename, "Strife") == 0)
-	{
-		LocalWeapons.Slots[1].AddWeapon ("PunchDagger");
-		LocalWeapons.Slots[2].AddWeapon ("StrifeCrossbow2");
-		LocalWeapons.Slots[2].AddWeapon ("StrifeCrossbow");
-		LocalWeapons.Slots[3].AddWeapon ("AssaultGun");
-		LocalWeapons.Slots[4].AddWeapon ("MiniMissileLauncher");
-		LocalWeapons.Slots[5].AddWeapon ("StrifeGrenadeLauncher2");
-		LocalWeapons.Slots[5].AddWeapon ("StrifeGrenadeLauncher");
-		LocalWeapons.Slots[6].AddWeapon ("FlameThrower");
-		LocalWeapons.Slots[7].AddWeapon ("Mauler2");
-		LocalWeapons.Slots[7].AddWeapon ("Mauler");
-		LocalWeapons.Slots[8].AddWeapon ("Sigil");
-	}
-	else // Doom
-	{
-		LocalWeapons.Slots[1].AddWeapon ("Fist");
-		LocalWeapons.Slots[1].AddWeapon ("Chainsaw");
-		LocalWeapons.Slots[2].AddWeapon ("Pistol");
-		LocalWeapons.Slots[3].AddWeapon ("Shotgun");
-		LocalWeapons.Slots[3].AddWeapon ("SuperShotgun");
-		LocalWeapons.Slots[4].AddWeapon ("Chaingun");
-		LocalWeapons.Slots[5].AddWeapon ("RocketLauncher");
-		LocalWeapons.Slots[6].AddWeapon ("PlasmaRifle");
-		LocalWeapons.Slots[7].AddWeapon ("BFG9000");
-	}
-}
-
 CCMD (whereisini)
 {
-	string path = GameConfig->GetConfigPath (false);
+	FString path = GameConfig->GetConfigPath (false);
 	Printf ("%s\n", path.GetChars());
 }

@@ -3,7 +3,7 @@
 ** Defines all the different console variable types
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -40,7 +40,6 @@
 #include "configfile.h"
 #include "c_console.h"
 #include "c_dispatch.h"
-#include "m_alloc.h"
 
 #include "doomstat.h"
 #include "c_cvars.h"
@@ -51,6 +50,7 @@
 #include "i_system.h"
 #include "v_palette.h"
 #include "v_video.h"
+#include "colormatcher.h"
 
 struct FLatchedValue
 {
@@ -127,14 +127,15 @@ FBaseCVar::~FBaseCVar ()
 			else
 				CVars = m_Next;
 		}
+		C_RemoveTabCommand(Name);
 		delete[] Name;
 	}
 }
 
-void FBaseCVar::ForceSet (UCVarValue value, ECVarType type)
+void FBaseCVar::ForceSet (UCVarValue value, ECVarType type, bool nouserinfosend)
 {
 	DoSet (value, type);
-	if (Flags & CVAR_USERINFO)
+	if ((Flags & CVAR_USERINFO) && !nouserinfosend && !(Flags & CVAR_IGNORE))
 		D_UserInfoChanged (this);
 	if (m_UseCallback)
 		Callback ();
@@ -162,9 +163,9 @@ void FBaseCVar::SetGenericRep (UCVarValue value, ECVarType type)
 	}
 	else if ((Flags & CVAR_SERVERINFO) && gamestate != GS_STARTUP && !demoplayback)
 	{
-		if (netgame && consoleplayer != Net_Arbitrator)
+		if (netgame && !players[consoleplayer].settings_controller)
 		{
-			Printf ("Only player %d can change %s\n", Net_Arbitrator+1, Name);
+			Printf ("Only setting controllers can change %s\n", Name);
 			return;
 		}
 		D_SendServerInfoChange (this, value, type);
@@ -220,7 +221,16 @@ int FBaseCVar::ToInt (UCVarValue value, ECVarType type)
 #else
 	case CVAR_Float:		res = (int)value.Float; break;
 #endif
-	case CVAR_String:		res = strtol (value.String, NULL, 0); break;
+	case CVAR_String:		
+		{
+			if (stricmp (value.String, "true") == 0)
+				res = 1;
+			else if (stricmp (value.String, "false") == 0)
+				res = 0;
+			else
+				res = strtol (value.String, NULL, 0); 
+			break;
+		}
 	case CVAR_GUID:			res = 0; break;
 	default:				res = 0; break;
 	}
@@ -241,7 +251,7 @@ float FBaseCVar::ToFloat (UCVarValue value, ECVarType type)
 		return value.Float;
 
 	case CVAR_String:
-		return strtod (value.String, NULL);
+		return (float)strtod (value.String, NULL);
 
 	case CVAR_GUID:
 		return 0.f;
@@ -256,7 +266,7 @@ static GUID cGUID;
 static char truestr[] = "true";
 static char falsestr[] = "false";
 
-char *FBaseCVar::ToString (UCVarValue value, ECVarType type)
+const char *FBaseCVar::ToString (UCVarValue value, ECVarType type)
 {
 	switch (type)
 	{
@@ -267,15 +277,15 @@ char *FBaseCVar::ToString (UCVarValue value, ECVarType type)
 		return value.String;
 
 	case CVAR_Int:
-		sprintf (cstrbuf, "%i", value.Int);
+		mysnprintf (cstrbuf, countof(cstrbuf), "%i", value.Int);
 		break;
 
 	case CVAR_Float:
-		sprintf (cstrbuf, "%g", value.Float);
+		mysnprintf (cstrbuf, countof(cstrbuf), "%g", value.Float);
 		break;
 
 	case CVAR_GUID:
-		FormatGUID (cstrbuf, *value.pGUID);
+		FormatGUID (cstrbuf, countof(cstrbuf), *value.pGUID);
 		break;
 
 	default:
@@ -355,7 +365,7 @@ UCVarValue FBaseCVar::FromInt (int value, ECVarType type)
 		break;
 
 	case CVAR_String:
-		sprintf (cstrbuf, "%i", value);
+		mysnprintf (cstrbuf, countof(cstrbuf), "%i", value);
 		ret.String = cstrbuf;
 		break;
 
@@ -389,7 +399,7 @@ UCVarValue FBaseCVar::FromFloat (float value, ECVarType type)
 		break;
 
 	case CVAR_String:
-		sprintf (cstrbuf, "%g", value);
+		mysnprintf (cstrbuf, countof(cstrbuf), "%g", value);
 		ret.String = cstrbuf;
 		break;
 
@@ -443,7 +453,12 @@ UCVarValue FBaseCVar::FromString (const char *value, ECVarType type)
 		break;
 
 	case CVAR_Int:
-		ret.Int = strtol (value, NULL, 0);
+		if (stricmp (value, "true") == 0)
+			ret.Int = 1;
+		else if (stricmp (value, "false") == 0)
+			ret.Int = 0;
+		else
+			ret.Int = strtol (value, NULL, 0);
 		break;
 
 	case CVAR_Float:
@@ -497,8 +512,8 @@ UCVarValue FBaseCVar::FromString (const char *value, ECVarType type)
 		if (i == 38 && value[i] == 0)
 		{
 			cGUID.Data1 = strtoul (value + 1, NULL, 16);
-			cGUID.Data2 = strtoul (value + 10, NULL, 16);
-			cGUID.Data3 = strtoul (value + 15, NULL, 16);
+			cGUID.Data2 = (WORD)strtoul (value + 10, NULL, 16);
+			cGUID.Data3 = (WORD)strtoul (value + 15, NULL, 16);
 			cGUID.Data4[0] = HexToByte (value + 20);
 			cGUID.Data4[1] = HexToByte (value + 22);
 			cGUID.Data4[2] = HexToByte (value + 25);
@@ -597,6 +612,11 @@ void FBaseCVar::EnableCallbacks ()
 		}
 		cvar = cvar->m_Next;
 	}
+}
+
+void FBaseCVar::DisableCallbacks ()
+{
+	m_UseCallback = false;
 }
 
 //
@@ -783,6 +803,17 @@ FStringCVar::FStringCVar (const char *name, const char *def, DWORD flags, void (
 	DefaultValue = copystring (def);
 	if (Flags & CVAR_ISDEFAULT)
 		Value = copystring (def);
+	else
+		Value = NULL;
+}
+
+FStringCVar::~FStringCVar ()
+{
+	if (Value != NULL)
+	{
+		delete[] Value;
+	}
+	delete[] DefaultValue;
 }
 
 ECVarType FStringCVar::GetRealType () const
@@ -799,7 +830,7 @@ UCVarValue FStringCVar::GetFavoriteRep (ECVarType *type) const
 {
 	UCVarValue ret;
 	*type = CVAR_String;
-	ret.String = copystring (Value);
+	ret.String = Value;
 	return ret;
 }
 
@@ -812,15 +843,13 @@ UCVarValue FStringCVar::GetFavoriteRepDefault (ECVarType *type) const
 {
 	UCVarValue ret;
 	*type = CVAR_String;
-	ret.String = copystring (DefaultValue);
+	ret.String = DefaultValue;
 	return ret;
 }
 
 void FStringCVar::SetGenericRepDefault (UCVarValue value, ECVarType type)
 {
-	if (DefaultValue)
-		delete[] DefaultValue;
-	DefaultValue = ToString (value, type);
+	ReplaceString(&DefaultValue, ToString(value, type));
 	if (Flags & CVAR_ISDEFAULT)
 	{
 		SetGenericRep (value, type);
@@ -879,11 +908,9 @@ UCVarValue FColorCVar::FromInt2 (int value, ECVarType type)
 	if (type == CVAR_String)
 	{
 		UCVarValue ret;
-		char work[9];
-
-		sprintf (work, "%02x %02x %02x",
+		mysnprintf (cstrbuf, countof(cstrbuf), "%02x %02x %02x",
 			RPART(value), GPART(value), BPART(value));
-		ret.String = copystring (work);
+		ret.String = cstrbuf;
 		return ret;
 	}
 	return FromInt (value, type);
@@ -895,15 +922,14 @@ int FColorCVar::ToInt2 (UCVarValue value, ECVarType type)
 
 	if (type == CVAR_String)
 	{
-		char *string;
+		FString string;
 		// Only allow named colors after the screen exists (i.e. after
 		// we've got some lumps loaded, so X11R6RGB can be read). Since
 		// the only time this might be called before that is when loading
-		// zdoom.cfg, this shouldn't be a problem.
-		if (screen && (string = V_GetColorStringByName (value.String)) )
+		// zdoom.ini, this shouldn't be a problem.
+		if (screen && !(string = V_GetColorStringByName (value.String)).IsEmpty() )
 		{
 			ret = V_GetColorFromString (NULL, string);
-			delete[] string;
 		}
 		else
 		{
@@ -1110,11 +1136,11 @@ void FFlagCVar::DoSet (UCVarValue value, ECVarType type)
 	// exec scripts because all flags will base their changes off of the value of
 	// the "master" cvar at the time the script was run, overriding any changes
 	// another flag might have made to the same cvar earlier in the script.
-	if ((ValueVar.Flags & CVAR_SERVERINFO) && gamestate != GS_STARTUP && !demoplayback)
+	if ((ValueVar.GetFlags() & CVAR_SERVERINFO) && gamestate != GS_STARTUP && !demoplayback)
 	{
-		if (netgame && consoleplayer != Net_Arbitrator)
+		if (netgame && !players[consoleplayer].settings_controller)
 		{
-			Printf ("Only player %d can change %s\n", Net_Arbitrator+1, Name);
+			Printf ("Only setting controllers can change %s\n", Name);
 			return;
 		}
 		D_SendServerFlagChange (&ValueVar, BitNum, newval);
@@ -1130,6 +1156,114 @@ void FFlagCVar::DoSet (UCVarValue value, ECVarType type)
 	}
 }
 
+//
+// Mask cvar implementation
+//
+// Similar to FFlagCVar but can have multiple bits
+//
+
+FMaskCVar::FMaskCVar (const char *name, FIntCVar &realvar, DWORD bitval)
+: FBaseCVar (name, 0, NULL),
+ValueVar (realvar),
+BitVal (bitval)
+{
+	int bit;
+
+	Flags &= ~CVAR_ISDEFAULT;
+
+	assert (bitval != 0);
+
+	bit = 0;
+	while ((bitval & 1) == 0)
+	{
+		++bit;
+		bitval >>= 1;
+	}
+	BitNum = bit;
+}
+
+ECVarType FMaskCVar::GetRealType () const
+{
+	return CVAR_Dummy;
+}
+
+UCVarValue FMaskCVar::GetGenericRep (ECVarType type) const
+{
+	return FromInt ((ValueVar & BitVal) >> BitNum, type);
+}
+
+UCVarValue FMaskCVar::GetFavoriteRep (ECVarType *type) const
+{
+	UCVarValue ret;
+	*type = CVAR_Int;
+	ret.Int = (ValueVar & BitVal) >> BitNum;
+	return ret;
+}
+
+UCVarValue FMaskCVar::GetGenericRepDefault (ECVarType type) const
+{
+	ECVarType dummy;
+	UCVarValue def;
+	def = ValueVar.GetFavoriteRepDefault (&dummy);
+	return FromInt ((def.Int & BitVal) >> BitNum, type);
+}
+
+UCVarValue FMaskCVar::GetFavoriteRepDefault (ECVarType *type) const
+{
+	ECVarType dummy;
+	UCVarValue def;
+	def = ValueVar.GetFavoriteRepDefault (&dummy);
+	def.Int = (def.Int & BitVal) >> BitNum;
+	*type = CVAR_Int;
+	return def;
+}
+
+void FMaskCVar::SetGenericRepDefault (UCVarValue value, ECVarType type)
+{
+	int val = ToInt(value, type) << BitNum;
+	ECVarType dummy;
+	UCVarValue def;
+	def = ValueVar.GetFavoriteRepDefault (&dummy);
+	def.Int &= ~BitVal;
+	def.Int |= val;
+	ValueVar.SetGenericRepDefault (def, CVAR_Int);
+}
+
+void FMaskCVar::DoSet (UCVarValue value, ECVarType type)
+{
+	int val = ToInt(value, type) << BitNum;
+
+	// Server cvars that get changed by this need to use a special message, because
+	// changes are not processed until the next net update. This is a problem with
+	// exec scripts because all flags will base their changes off of the value of
+	// the "master" cvar at the time the script was run, overriding any changes
+	// another flag might have made to the same cvar earlier in the script.
+	if ((ValueVar.GetFlags() & CVAR_SERVERINFO) && gamestate != GS_STARTUP && !demoplayback)
+	{
+		if (netgame && !players[consoleplayer].settings_controller)
+		{
+			Printf ("Only setting controllers can change %s\n", Name);
+			return;
+		}
+		// Ugh...
+		for(int i = 0; i < 32; i++)
+		{
+			if (BitVal & (1<<i))
+			{
+				D_SendServerFlagChange (&ValueVar, i, !!(val & (1<<i)));
+			}
+		}
+	}
+	else
+	{
+		int vval = *ValueVar;
+		vval &= ~BitVal;
+		vval |= val;
+		ValueVar = vval;
+	}
+}
+
+
 ////////////////////////////////////////////////////////////////////////
 static int STACK_ARGS sortcvars (const void *a, const void *b)
 {
@@ -1138,55 +1272,59 @@ static int STACK_ARGS sortcvars (const void *a, const void *b)
 
 void FilterCompactCVars (TArray<FBaseCVar *> &cvars, DWORD filter)
 {
-	FBaseCVar *cvar = CVars;
-	while (cvar)
+	// Accumulate all cvars that match the filter flags.
+	for (FBaseCVar *cvar = CVars; cvar != NULL; cvar = cvar->m_Next)
 	{
-		if (cvar->Flags & filter)
-			cvars.Push (cvar);
-		cvar = cvar->m_Next;
+		if ((cvar->Flags & filter) && !(cvar->Flags & CVAR_IGNORE))
+			cvars.Push(cvar);
 	}
-	if (cvars.Size () > 0)
+	// Now sort them, so they're in a deterministic order and not whatever
+	// order the linker put them in.
+	if (cvars.Size() > 0)
 	{
-		cvars.ShrinkToFit ();
-		qsort (&cvars[0], cvars.Size(), sizeof(FBaseCVar *), sortcvars);
+		qsort(&cvars[0], cvars.Size(), sizeof(FBaseCVar *), sortcvars);
 	}
 }
 
-void C_WriteCVars (byte **demo_p, DWORD filter, bool compact)
+void C_WriteCVars (BYTE **demo_p, DWORD filter, bool compact)
 {
-	FBaseCVar *cvar = CVars;
-	byte *ptr = *demo_p;
+	FString dump = C_GetMassCVarString(filter, compact);
+	size_t dumplen = dump.Len() + 1;	// include terminating \0
+	memcpy(*demo_p, dump.GetChars(), dumplen);
+	*demo_p += dumplen;
+}
+
+FString C_GetMassCVarString (DWORD filter, bool compact)
+{
+	FBaseCVar *cvar;
+	FString dump;
 
 	if (compact)
 	{
 		TArray<FBaseCVar *> cvars;
-		ptr += sprintf ((char *)ptr, "\\\\%lux", filter);
-		FilterCompactCVars (cvars, filter);
+		dump.AppendFormat("\\\\%ux", filter);
+		FilterCompactCVars(cvars, filter);
 		while (cvars.Pop (cvar))
 		{
-			UCVarValue val = cvar->GetGenericRep (CVAR_String);
-			ptr += sprintf ((char *)ptr, "\\%s", val.String);
+			UCVarValue val = cvar->GetGenericRep(CVAR_String);
+			dump << '\\' << val.String;
 		}
 	}
 	else
 	{
-		cvar = CVars;
-		while (cvar)
+		for (cvar = CVars; cvar != NULL; cvar = cvar->m_Next)
 		{
-			if ((cvar->Flags & filter) && !(cvar->Flags & CVAR_NOSAVE))
+			if ((cvar->Flags & filter) && !(cvar->Flags & (CVAR_NOSAVE|CVAR_IGNORE)))
 			{
-				UCVarValue val = cvar->GetGenericRep (CVAR_String);
-				ptr += sprintf ((char *)ptr, "\\%s\\%s",
-					cvar->GetName (), val.String);
+				UCVarValue val = cvar->GetGenericRep(CVAR_String);
+				dump << '\\' << cvar->GetName() << '\\' << val.String;
 			}
-			cvar = cvar->m_Next;
 		}
 	}
-
-	*demo_p = ptr + 1;
+	return dump;
 }
 
-void C_ReadCVars (byte **demo_p)
+void C_ReadCVars (BYTE **demo_p)
 {
 	char *ptr = *((char **)demo_p);
 	char *breakpt;
@@ -1254,47 +1392,42 @@ void C_ReadCVars (byte **demo_p)
 	*demo_p += strlen (*((char **)demo_p)) + 1;
 }
 
-static struct backup_s
+struct FCVarBackup
 {
-	char *name, *string;
-} CVarBackups[MAX_DEMOCVARS];
-
-static int numbackedup = 0;
+	FString Name, String;
+};
+static TArray<FCVarBackup> CVarBackups;
 
 void C_BackupCVars (void)
 {
-	struct backup_s *backup = CVarBackups;
-	FBaseCVar *cvar = CVars;
+	assert(CVarBackups.Size() == 0);
+	CVarBackups.Clear();
 
-	while (cvar)
+	FCVarBackup backup;
+
+	for (FBaseCVar *cvar = CVars; cvar != NULL; cvar = cvar->m_Next)
 	{
-		if ((cvar->Flags & (CVAR_SERVERINFO|CVAR_DEMOSAVE))
-			&& !(cvar->Flags & CVAR_LATCH))
+		if ((cvar->Flags & (CVAR_SERVERINFO|CVAR_DEMOSAVE)) && !(cvar->Flags & CVAR_LATCH))
 		{
-			if (backup == &CVarBackups[MAX_DEMOCVARS])
-				I_Error ("C_BackupDemoCVars: Too many cvars to save (%d)", MAX_DEMOCVARS);
-			backup->name = copystring (cvar->GetName());
-			backup->string = copystring (cvar->GetGenericRep (CVAR_String).String);
-			backup++;
+			backup.Name = cvar->GetName();
+			backup.String = cvar->GetGenericRep(CVAR_String).String;
+			CVarBackups.Push(backup);
 		}
-		cvar = cvar->m_Next;
 	}
-	numbackedup = backup - CVarBackups;
 }
 
 void C_RestoreCVars (void)
 {
-	struct backup_s *backup = CVarBackups;
-	int i;
-
-	for (i = numbackedup; i; i--, backup++)
+	for (unsigned int i = 0; i < CVarBackups.Size(); ++i)
 	{
-		cvar_set (backup->name, backup->string);
-		delete[] backup->name;
-		delete[] backup->string;
-		backup->name = backup->string = NULL;
+		cvar_set(CVarBackups[i].Name, CVarBackups[i].String);
 	}
-	numbackedup = 0;
+	C_ForgetCVars();
+}
+
+void C_ForgetCVars (void)
+{
+	CVarBackups.Clear();
 }
 
 FBaseCVar *FindCVar (const char *var_name, FBaseCVar **prev)
@@ -1342,6 +1475,30 @@ FBaseCVar *FindCVarSub (const char *var_name, int namelen)
 	return var;
 }
 
+//===========================================================================
+//
+// C_CreateCVar
+//
+// Create a new cvar with the specified name and type. It should not already
+// exist.
+//
+//===========================================================================
+
+FBaseCVar *C_CreateCVar(const char *var_name, ECVarType var_type, DWORD flags)
+{
+	assert(FindCVar(var_name, NULL) == NULL);
+	flags |= CVAR_AUTO;
+	switch (var_type)
+	{
+	case CVAR_Bool:		return new FBoolCVar(var_name, 0, flags);
+	case CVAR_Int:		return new FIntCVar(var_name, 0, flags);
+	case CVAR_Float:	return new FFloatCVar(var_name, 0, flags);
+	case CVAR_String:	return new FStringCVar(var_name, NULL, flags);
+	case CVAR_Color:	return new FColorCVar(var_name, 0, flags);
+	default:			return NULL;
+	}
+}
+
 void UnlatchCVars (void)
 {
 	FLatchedValue var;
@@ -1375,33 +1532,14 @@ void C_SetCVarsToDefaults (void)
 	}
 }
 
-void C_ArchiveCVars (FConfigFile *f, int type)
+void C_ArchiveCVars (FConfigFile *f, uint32 filter)
 {
-	// type 0: Game-specific cvars
-	// type 1: Global cvars
-	// type 2: Unknown cvars
-	// type 3: Unknown global cvars
-	// type 4: User info cvars
-	// type 5: Server info cvars
-	static const DWORD filters[6] =
-	{
-		CVAR_ARCHIVE,
-		CVAR_ARCHIVE|CVAR_GLOBALCONFIG,
-		CVAR_ARCHIVE|CVAR_AUTO,
-		CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_AUTO,
-		CVAR_ARCHIVE|CVAR_USERINFO,
-		CVAR_ARCHIVE|CVAR_SERVERINFO
-	};
-
 	FBaseCVar *cvar = CVars;
-	DWORD filter;
-
-	filter = filters[type];
 
 	while (cvar)
 	{
 		if ((cvar->Flags &
-			(CVAR_GLOBALCONFIG|CVAR_ARCHIVE|CVAR_AUTO|CVAR_USERINFO|CVAR_SERVERINFO|CVAR_NOSAVE))
+			(CVAR_GLOBALCONFIG|CVAR_ARCHIVE|CVAR_MOD|CVAR_AUTO|CVAR_USERINFO|CVAR_SERVERINFO|CVAR_NOSAVE))
 			== filter)
 		{
 			UCVarValue val;
@@ -1532,14 +1670,16 @@ void FBaseCVar::ListVars (const char *filter, bool plain)
 			else
 			{
 				++count;
-				Printf ("%c%c%c %s : :%s\n",
+				Printf ("%c%c%c%c%c %s = %s\n",
 					flags & CVAR_ARCHIVE ? 'A' : ' ',
 					flags & CVAR_USERINFO ? 'U' :
-				flags & CVAR_SERVERINFO ? 'S' :
-				flags & CVAR_AUTO ? 'C' : ' ',
+						flags & CVAR_SERVERINFO ? 'S' :
+						flags & CVAR_AUTO ? 'C' : ' ',
 					flags & CVAR_NOSET ? '-' :
-				flags & CVAR_LATCH ? 'L' :
-				flags & CVAR_UNSETTABLE ? '*' : ' ',
+						flags & CVAR_LATCH ? 'L' :
+						flags & CVAR_UNSETTABLE ? '*' : ' ',
+					flags & CVAR_MOD ? 'M' : ' ',
+					flags & CVAR_IGNORE ? 'X' : ' ',
 					var->GetName(),
 					var->GetGenericRep (CVAR_String).String);
 			}

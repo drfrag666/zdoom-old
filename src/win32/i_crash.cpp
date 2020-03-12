@@ -3,7 +3,7 @@
 ** Gathers exception information when the program crashes.
 **
 **---------------------------------------------------------------------------
-** Copyright 2002-2005 Randy Heit
+** Copyright 2002-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,6 +32,8 @@
 **
 */
 
+// HEADER FILES ------------------------------------------------------------
+
 #define WIN32_LEAN_AND_MEAN
 #define _WIN32_WINNT 0x0501
 #include <windows.h>
@@ -39,7 +41,12 @@
 #include <richedit.h>
 #include <winuser.h>
 #include <tlhelp32.h>
+#ifndef _M_IX86
+#include <winternl.h>
+#endif
+#ifndef __GNUC__
 #include <dbghelp.h>
+#endif
 #include <commctrl.h>
 #include <commdlg.h>
 #include <winsock2.h>
@@ -49,8 +56,12 @@
 #include <shellapi.h>
 #include <uxtheme.h>
 #include <stddef.h>
+
+#define USE_WINDOWS_DWORD
+#include "doomtype.h"
 #include "resource.h"
 #include "version.h"
+#include "m_swap.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -58,18 +69,55 @@
 #include <time.h>
 #include <zlib.h>
 
-// Damn Microsoft for doing Get/SetWindowLongPtr half-assed. Instead of
-// giving them proper prototypes under Win32, they are just macros for
-// Get/SetWindowLong, meaning they take LONGs and not LONG_PTRs.
-#ifdef _WIN64
-typedef LONG_PTR WLONG_PTR;
-#else
-typedef LONG WLONG_PTR;
+#if defined(_WIN64) && defined(__GNUC__)
+struct KNONVOLATILE_CONTEXT_POINTERS {
+    union {
+        PDWORD64 IntegerContext[16];
+        struct {
+            PDWORD64 Rax;
+            PDWORD64 Rcx;
+            PDWORD64 Rdx;
+            PDWORD64 Rbx;
+            PDWORD64 Rsp;
+            PDWORD64 Rbp;
+            PDWORD64 Rsi;
+            PDWORD64 Rdi;
+            PDWORD64 R8;
+            PDWORD64 R9;
+            PDWORD64 R10;
+            PDWORD64 R11;
+            PDWORD64 R12;
+            PDWORD64 R13;
+            PDWORD64 R14;
+            PDWORD64 R15;
+        };
+    };
+};
+typedef
+EXCEPTION_DISPOSITION
+NTAPI
+EXCEPTION_ROUTINE (
+    struct _EXCEPTION_RECORD *ExceptionRecord,
+    PVOID EstablisherFrame,
+    struct _CONTEXT *ContextRecord,
+    PVOID DispatcherContext
+    );
+NTSYSAPI
+EXCEPTION_ROUTINE *
+NTAPI
+RtlVirtualUnwind (
+    DWORD HandlerType,
+    DWORD64 ImageBase,
+    DWORD64 ControlPc,
+    PRUNTIME_FUNCTION FunctionEntry,
+    PCONTEXT ContextRecord,
+    PVOID *HandlerData,
+    PDWORD64 EstablisherFrame,
+    KNONVOLATILE_CONTEXT_POINTERS *ContextPointers
+    );
 #endif
 
-HRESULT (__stdcall *pEnableThemeDialogTexture) (HWND hwnd, DWORD dwFlags);
-
-#define BUGS_FORUM_URL	"http://forum.zdoom.org/index.php?c=3"
+// MACROS ------------------------------------------------------------------
 
 #define REMOTE_HOST		"localhost"
 #define REMOTE_PORT		"80"
@@ -80,10 +128,192 @@ HRESULT (__stdcall *pEnableThemeDialogTexture) (HWND hwnd, DWORD dwFlags);
 // If you are working on your own modified version of ZDoom, change
 // the last part of the UPLOAD_AGENT (between parentheses) to your
 // own program's name. e.g. (Skulltag) or (ZDaemon) or (ZDoomFu)
-#define UPLOAD_AGENT	"ZDoom/" DOTVERSIONSTR " (ZDoom the Original)"
+#define UPLOAD_AGENT	"ZDoom/" DOTVERSIONSTR " (" GAMESIG ")"
 
 // Time, in milliseconds, to wait for a send() or recv() to complete.
 #define TIMEOUT			60000
+
+// Maximum number of files that might appear in a crash report.
+#define MAX_FILES 5
+
+#ifndef __BIG_ENDIAN__
+#define MAKE_ID(a,b,c,d)	((a)|((b)<<8)|((c)<<16)|((d)<<24))
+#else
+#define MAKE_ID(a,b,c,d)	((d)|((c)<<8)|((b)<<16)|((a)<<24))
+#endif
+
+#define ZIP_LOCALFILE	MAKE_ID('P','K',3,4)
+#define ZIP_CENTRALFILE	MAKE_ID('P','K',1,2)
+#define ZIP_ENDOFDIR	MAKE_ID('P','K',5,6)
+
+// DBGHELP.H ---------------------------------------------------------------
+
+// w32api does not include dbghelp.h, so if I don't include these here,
+// a person using GCC will need to download the Platform SDK, grab dbghelp.h
+// from it, and edit it so it works with GCC.
+#ifdef __GNUC__
+typedef enum _MINIDUMP_TYPE
+{
+    MiniDumpNormal
+	// Other types omitted.
+} MINIDUMP_TYPE;
+
+typedef struct _MINIDUMP_EXCEPTION_INFORMATION {
+    DWORD ThreadId;
+    PEXCEPTION_POINTERS ExceptionPointers;
+    BOOL ClientPointers;
+} MINIDUMP_EXCEPTION_INFORMATION, *PMINIDUMP_EXCEPTION_INFORMATION;
+
+typedef struct _MINIDUMP_USER_STREAM_INFORMATION {
+    ULONG UserStreamCount;
+    void *UserStreamArray;			// Not really void *
+} MINIDUMP_USER_STREAM_INFORMATION, *PMINIDUMP_USER_STREAM_INFORMATION;
+
+typedef BOOL (WINAPI * MINIDUMP_CALLBACK_ROUTINE) (
+    IN PVOID CallbackParam,
+    IN CONST void *CallbackInput,	// Not really void *
+    IN OUT void *CallbackOutput		// Not really void *
+    );
+
+typedef struct _MINIDUMP_CALLBACK_INFORMATION {
+    MINIDUMP_CALLBACK_ROUTINE CallbackRoutine;
+    PVOID CallbackParam;
+} MINIDUMP_CALLBACK_INFORMATION, *PMINIDUMP_CALLBACK_INFORMATION;
+#endif
+
+// Dbghelp.dll is loaded at runtime so we don't create any needless
+// dependencies on it.
+typedef BOOL (WINAPI *THREADWALK) (HANDLE, LPTHREADENTRY32);
+typedef BOOL (WINAPI *MODULEWALK) (HANDLE, LPMODULEENTRY32);
+typedef HANDLE (WINAPI *CREATESNAPSHOT) (DWORD, DWORD);
+typedef BOOL (WINAPI *WRITEDUMP) (HANDLE, DWORD, HANDLE, int,
+								  PMINIDUMP_EXCEPTION_INFORMATION,
+								  PMINIDUMP_USER_STREAM_INFORMATION,
+								  PMINIDUMP_CALLBACK_INFORMATION);
+
+// TYPES -------------------------------------------------------------------
+
+#ifdef _M_X64
+typedef PRUNTIME_FUNCTION (WINAPI *RTLLOOKUPFUNCTIONENTRY)
+	(ULONG64 ControlPc, PULONG64 ImageBase, void *HistoryTable);
+#endif
+
+// Damn Microsoft for doing Get/SetWindowLongPtr half-assed. Instead of
+// giving them proper prototypes under Win32, they are just macros for
+// Get/SetWindowLong, meaning they take LONGs and not LONG_PTRs.
+#ifdef _WIN64
+typedef LONG_PTR WLONG_PTR;
+#else
+typedef LONG WLONG_PTR;
+#endif
+
+namespace zip
+{
+#pragma pack(push,1)
+	struct LocalFileHeader
+	{
+		DWORD	Magic;						// 0
+		BYTE	VersionToExtract[2];		// 4
+		WORD	Flags;						// 6
+		WORD	Method;						// 8
+		WORD	ModTime;					// 10
+		WORD	ModDate;					// 12
+		DWORD	CRC32;						// 14
+		DWORD	CompressedSize;				// 18
+		DWORD	UncompressedSize;			// 22
+		WORD	NameLength;					// 26
+		WORD	ExtraLength;				// 28
+	};
+
+	struct CentralDirectoryEntry
+	{
+		DWORD	Magic;
+		BYTE	VersionMadeBy[2];
+		BYTE	VersionToExtract[2];
+		WORD	Flags;
+		WORD	Method;
+		WORD	ModTime;
+		WORD	ModDate;
+		DWORD	CRC32;
+		DWORD	CompressedSize;
+		DWORD	UncompressedSize;
+		WORD	NameLength;
+		WORD	ExtraLength;
+		WORD	CommentLength;
+		WORD	StartingDiskNumber;
+		WORD	InternalAttributes;
+		DWORD	ExternalAttributes;
+		DWORD	LocalHeaderOffset;
+	};
+
+	struct EndOfCentralDirectory
+	{
+		DWORD	Magic;
+		WORD	DiskNumber;
+		WORD	FirstDisk;
+		WORD	NumEntries;
+		WORD	NumEntriesOnAllDisks;
+		DWORD	DirectorySize;
+		DWORD	DirectoryOffset;
+		WORD	ZipCommentLength;
+	};
+#pragma pack(pop)
+}
+
+struct TarFile
+{
+	HANDLE		File;
+	const char *Filename;
+	int			ZipOffset;
+	DWORD		UncompressedSize;
+	DWORD		CompressedSize;
+	DWORD		CRC32;
+	bool		Deflated;
+};
+
+struct MiniDumpThreadData
+{
+	HANDLE							File;
+	WRITEDUMP						pMiniDumpWriteDump;
+	MINIDUMP_EXCEPTION_INFORMATION *Exceptor;
+};
+
+// EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
+
+// PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
+
+// PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
+
+static void AddFile (HANDLE file, const char *filename);
+static void CloseTarFiles ();
+static HANDLE MakeZip ();
+static void AddZipFile (HANDLE ziphandle, TarFile *whichfile, short dosdate, short dostime);
+static HANDLE CreateTempFile ();
+
+static void DumpBytes (HANDLE file, BYTE *address);
+static void AddStackInfo (HANDLE file, void *dumpaddress, DWORD code, CONTEXT *ctxt);
+static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack, DWORD *jump, CONTEXT *ctxt);
+static void AddToolHelp (HANDLE file);
+
+static HANDLE WriteTextReport ();
+static DWORD WINAPI WriteMiniDumpInAnotherThread (LPVOID lpParam);
+
+static INT_PTR CALLBACK DetailsDlgProc (HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+static void SetEditControl (HWND control, HWND sizedisplay, int filenum);
+
+static BOOL UploadReport (HANDLE report, bool gziped);
+
+// EXTERNAL DATA DECLARATIONS ----------------------------------------------
+
+extern HINSTANCE g_hInst;
+
+// PUBLIC DATA DEFINITIONS -------------------------------------------------
+
+EXCEPTION_POINTERS CrashPointers;
+
+// PRIVATE DATA DEFINITIONS ------------------------------------------------
+
+static HRESULT (__stdcall *pEnableThemeDialogTexture) (HWND hwnd, DWORD dwFlags);
 
 static const char PostHeader[] =
 "POST " UPLOAD_URI " HTTP/1.1\r\n"
@@ -132,69 +362,9 @@ static const char DbgHelpRequest[] =
 "User-Agent: " UPLOAD_AGENT "\r\n"
 "\r\n";
 
-
-namespace tar
-{
-	/*
-	* Standard Archive Format - Standard TAR - USTAR
-	*/
-	enum
-	{
-		RECORDSIZE =	512,
-		NAMSIZE	=		100,
-		TUNMLEN =		32,
-		TGNMLEN =		32
-	};
-
-	union record {
-		unsigned char charptr[RECORDSIZE];
-		struct {
-			char	name[NAMSIZE];
-			char	mode[8];
-			char	uid[8];
-			char	gid[8];
-			char	size[12];
-			char	mtime[12];
-			char	chksum[8];
-			char	linkflag;
-			char	linkname[NAMSIZE];
-			char	magic[8];
-			char	uname[TUNMLEN];
-			char	gname[TGNMLEN];
-			char	devmajor[8];
-			char	devminor[8];
-		} header;
-	};
-}
-
-#define MAX_FILES 5
-
-struct TarFile
-{
-	HANDLE File;
-	const char *Filename;
-};
 static TarFile TarFiles[MAX_FILES];
+
 static int NumFiles;
-
-static void AddFile (HANDLE file, const char *filename);
-static void CloseTarFiles ();
-static HANDLE MakeTar (bool &gzip);
-static HANDLE CreateTempFile ();
-
-typedef BOOL (WINAPI *THREADWALK) (HANDLE, LPTHREADENTRY32);
-typedef BOOL (WINAPI *MODULEWALK) (HANDLE, LPMODULEENTRY32);
-typedef HANDLE (WINAPI *CREATESNAPSHOT) (DWORD, DWORD);
-typedef BOOL (WINAPI *WRITEDUMP) (HANDLE, DWORD, HANDLE, MINIDUMP_TYPE,
-								  PMINIDUMP_EXCEPTION_INFORMATION,
-								  PMINIDUMP_USER_STREAM_INFORMATION,
-								  PMINIDUMP_CALLBACK_INFORMATION);
-
-extern HINSTANCE g_hInst;
-
-EXCEPTION_POINTERS CrashPointers;
-EXCEPTION_RECORD MyExceptionRecord;
-CONTEXT MyContextRecord;
 
 static HANDLE DbgProcess;
 static DWORD DbgProcessID;
@@ -204,17 +374,48 @@ static PVOID CrashAddress;
 static bool NeedDbgHelp;
 static char CrashSummary[256];
 
-static void DumpBytes (HANDLE file, BYTE *address);
-static void AddStackInfo (HANDLE file, void *dumpaddress);
-static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack);
-static void AddToolHelp (HANDLE file);
+static WNDPROC StdStaticProc;
 
-static HANDLE WriteTextReport ();
+// CODE --------------------------------------------------------------------
 
-static INT_PTR CALLBACK DetailsDlgProc (HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
-static void SetEditControl (HWND control, HWND sizedisplay, int filenum);
+//==========================================================================
+//
+// SafeReadMemory
+//
+// Returns true if the memory was succussfully read and false if not.
+//
+//==========================================================================
 
-static BOOL UploadReport (HANDLE report, bool gziped);
+static bool SafeReadMemory (const void *base, void *buffer, size_t len)
+{
+#ifdef __GNUC__
+	// GCC version: Test the memory beforehand and hope it doesn't become
+	// unreadable while we read it. GCC is the only Windows compiler (that
+	// I know of) that can't do SEH.
+
+	if (IsBadReadPtr (base, len))
+	{
+		return false;
+	}
+	memcpy (buffer, base, len);
+	return true;
+#else
+	// Non-GCC version: Use SEH to catch any bad reads immediately when
+	// they happen instead of trying to catch them beforehand.
+
+	bool success = false;
+
+	__try
+	{
+		memcpy (buffer, base, len);
+		success = true;
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER)
+	{
+	}
+	return success;
+#endif
+}
 
 //==========================================================================
 //
@@ -282,8 +483,28 @@ static HANDLE WriteMyMiniDump (void)
 		file = CreateTempFile ();
 		if (file != INVALID_HANDLE_VALUE)
 		{
-			good = pMiniDumpWriteDump (DbgProcess, DbgProcessID, file,
-				MiniDumpNormal, &exceptor, NULL, NULL);
+			if (CrashPointers.ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW)
+			{
+				good = pMiniDumpWriteDump (DbgProcess, DbgProcessID, file,
+#if 1
+					MiniDumpNormal
+#else
+					MiniDumpWithDataSegs|MiniDumpWithIndirectlyReferencedMemory|MiniDumpWithPrivateReadWriteMemory
+#endif
+					, &exceptor, NULL, NULL);
+			}
+			else
+			{
+				MiniDumpThreadData dumpdata = { file, pMiniDumpWriteDump, &exceptor };
+				DWORD id;
+				HANDLE thread = CreateThread (NULL, 0, WriteMiniDumpInAnotherThread,
+					&dumpdata, 0, &id);
+				WaitForSingleObject (thread, INFINITE);
+				if (GetExitCodeThread (thread, &id))
+				{
+					good = id;
+				}
+			}
 		}
 	}
 	else
@@ -291,6 +512,23 @@ static HANDLE WriteMyMiniDump (void)
 		NeedDbgHelp = true;
 	}
 	return good ? file : INVALID_HANDLE_VALUE;
+}
+
+//==========================================================================
+//
+// WriteMiniDumpInAnotherThread
+//
+// When a stack overflow occurs, there isn't enough room left on the stack
+// for MiniDumpWriteDump to do its thing, so we create a new thread with
+// a new stack to do the work.
+//
+//==========================================================================
+
+static DWORD WINAPI WriteMiniDumpInAnotherThread (LPVOID lpParam)
+{
+	MiniDumpThreadData *dumpdata = (MiniDumpThreadData *)lpParam;
+	return dumpdata->pMiniDumpWriteDump (DbgProcess, DbgProcessID,
+		dumpdata->File, MiniDumpNormal, dumpdata->Exceptor, NULL, NULL);
 }
 
 //==========================================================================
@@ -315,13 +553,78 @@ void __cdecl Writef (HANDLE file, const char *format, ...)
 
 //==========================================================================
 //
+// WriteLogFileStreamer
+//
+// The callback function to stream a Rich Edit's contents to a file.
+//
+//==========================================================================
+
+static DWORD CALLBACK WriteLogFileStreamer(DWORD_PTR cookie, LPBYTE buffer, LONG cb, LONG *pcb)
+{
+	DWORD didwrite;
+	LONG p, pp;
+
+	// Replace gray foreground color with black.
+	static const char *badfg = "\\red223\\green223\\blue223;";
+	//                           4321098 765432109 876543210
+	//                               2          1          0
+	for (p = pp = 0; p < cb; ++p)
+	{
+		if (buffer[p] == badfg[pp])
+		{
+			++pp;
+			if (pp == 25)
+			{
+				buffer[p - 1] = buffer[p - 2] = buffer[p - 3] =
+				buffer[p - 9] = buffer[p -10] = buffer[p -11] =
+				buffer[p -18] = buffer[p -19] = buffer[p -20] = '0';
+				break;
+			}
+		}
+		else
+		{
+			pp = 0;
+		}
+	}
+
+	if (!WriteFile((HANDLE)cookie, buffer, cb, &didwrite, NULL))
+	{
+		return 1;
+	}
+	*pcb = didwrite;
+	return 0;
+}
+
+//==========================================================================
+//
+// WriteLogFile
+//
+// Writes the contents of a Rich Edit control to a file.
+//
+//==========================================================================
+
+HANDLE WriteLogFile(HWND edit)
+{
+	HANDLE file;
+
+	file = CreateTempFile();
+	if (file != INVALID_HANDLE_VALUE)
+	{
+		EDITSTREAM streamer = { (DWORD_PTR)file, 0, WriteLogFileStreamer };
+		SendMessage(edit, EM_STREAMOUT, SF_RTF, (LPARAM)&streamer);
+	}
+	return file;
+}
+
+//==========================================================================
+//
 // CreateCrashLog
 //
 // Creates all the files needed for a crash report.
 //
 //==========================================================================
 
-void CreateCrashLog (HANDLE process, DWORD processID, DWORD threadID, LPEXCEPTION_POINTERS exceptionRecord, char *custominfo, DWORD customsize)
+void CreateCrashLog (char *custominfo, DWORD customsize, HWND richlog)
 {
 	// Do not collect information more than once.
 	if (NumFiles != 0)
@@ -329,60 +632,51 @@ void CreateCrashLog (HANDLE process, DWORD processID, DWORD threadID, LPEXCEPTIO
 		return;
 	}
 
-	DbgThreadID = threadID;
-	DbgProcessID = processID;
-	DbgProcess = process;
-	if (!ReadProcessMemory (DbgProcess, exceptionRecord, &CrashPointers, sizeof(CrashPointers), NULL) ||
-		!ReadProcessMemory (DbgProcess, CrashPointers.ExceptionRecord, &MyExceptionRecord, sizeof(EXCEPTION_RECORD), NULL) ||
-		!ReadProcessMemory (DbgProcess, CrashPointers.ContextRecord, &MyContextRecord, sizeof(CONTEXT), NULL))
+	DbgThreadID = GetCurrentThreadId();
+	DbgProcessID = GetCurrentProcessId();
+	DbgProcess = GetCurrentProcess();
+
+	CrashCode = CrashPointers.ExceptionRecord->ExceptionCode;
+	CrashAddress = CrashPointers.ExceptionRecord->ExceptionAddress;
+
+	AddFile (WriteTextReport(), "report.txt");
+	AddFile (WriteMyMiniDump(), "minidump.mdmp");
+
+	// Copy app-specific information out of the crashing process's memory
+	// and into a new temporary file.
+	if (customsize != 0)
 	{
 		HANDLE file = CreateTempFile();
+		DWORD wrote;
 
-		Writef (file, "Could not read process memory\n");
-		AddFile (file, "failed.txt");
-	}
-	else
-	{
-		CrashPointers.ExceptionRecord = &MyExceptionRecord;
-		CrashPointers.ContextRecord = &MyContextRecord;
-		CrashCode = CrashPointers.ExceptionRecord->ExceptionCode;
-		CrashAddress = CrashPointers.ExceptionRecord->ExceptionAddress;
-
-		AddFile (WriteTextReport(), "report.txt");
-		AddFile (WriteMyMiniDump(), "minidump.mdmp");
-
-		// Copy app-specific information out of the crashing process's memory
-		// and into a new temporary file.
-		if (customsize != 0)
+		if (file != INVALID_HANDLE_VALUE)
 		{
-			HANDLE file = CreateTempFile();
-			DWORD wrote;
+			BYTE buffer[512];
+			DWORD left;
 
-			if (file != INVALID_HANDLE_VALUE)
+			for (;; customsize -= left, custominfo += left)
 			{
-				BYTE buffer[512];
-				DWORD left;
-
-				for (;; customsize -= left, custominfo += left)
+				left = customsize > 512 ? 512 : customsize;
+				if (left == 0)
 				{
-					left = customsize > 512 ? 512 : customsize;
-					if (left == 0)
-					{
-						break;
-					}
-					if (ReadProcessMemory (DbgProcess, custominfo, buffer, left, NULL))
-					{
-						WriteFile (file, buffer, left, &wrote, NULL);
-					}
-					else
-					{
-						Writef (file, "Failed reading remaining %lu bytes\r\n", customsize);
-						break;
-					}
+					break;
 				}
-				AddFile (file, "local.txt");
+				if (SafeReadMemory (custominfo, buffer, left))
+				{
+					WriteFile (file, buffer, left, &wrote, NULL);
+				}
+				else
+				{
+					Writef (file, "Failed reading remaining %lu bytes\r\n", customsize);
+					break;
+				}
 			}
+			AddFile (file, "local.txt");
 		}
+	}
+	if (richlog != NULL)
+	{
+		AddFile (WriteLogFile(richlog), "log.rtf");
 	}
 	CloseHandle (DbgProcess);
 }
@@ -410,17 +704,17 @@ HANDLE WriteTextReport ()
 		{ EXCEPTION_ARRAY_BOUNDS_EXCEEDED, "Array Bounds Exceeded" },
 		{ EXCEPTION_BREAKPOINT, "Breakpoint" },
 		{ EXCEPTION_DATATYPE_MISALIGNMENT, "Data Type Misalignment" },
-		{ EXCEPTION_FLT_DENORMAL_OPERAND, "Float: Denormal Operand." },
-		{ EXCEPTION_FLT_DIVIDE_BY_ZERO, "Float: Divide By Zero" },
-		{ EXCEPTION_FLT_INEXACT_RESULT, "Float: Inexact Result" },
-		{ EXCEPTION_FLT_INVALID_OPERATION, "Float: Invalid Operation" },
-		{ EXCEPTION_FLT_OVERFLOW, "Float: Overflow" },
-		{ EXCEPTION_FLT_STACK_CHECK, "Float: Stack Check" },
-		{ EXCEPTION_FLT_UNDERFLOW, "Float: Underflow" },
+		{ EXCEPTION_FLT_DENORMAL_OPERAND, "Floating Point Denormal Operand." },
+		{ EXCEPTION_FLT_DIVIDE_BY_ZERO, "Floating Point Divide By Zero" },
+		{ EXCEPTION_FLT_INEXACT_RESULT, "Floating Point Inexact Result" },
+		{ EXCEPTION_FLT_INVALID_OPERATION, "Floating Point Invalid Operation" },
+		{ EXCEPTION_FLT_OVERFLOW, "Floating Point Overflow" },
+		{ EXCEPTION_FLT_STACK_CHECK, "Floating Point Stack Check" },
+		{ EXCEPTION_FLT_UNDERFLOW, "Floating Point Underflow" },
 		{ EXCEPTION_ILLEGAL_INSTRUCTION, "Illegal Instruction" },
 		{ EXCEPTION_IN_PAGE_ERROR, "In Page Error" },
-		{ EXCEPTION_INT_DIVIDE_BY_ZERO, "Int: Divide By Zero" },
-		{ EXCEPTION_INT_OVERFLOW, "Int: Overflow" },
+		{ EXCEPTION_INT_DIVIDE_BY_ZERO, "Integer Divide By Zero" },
+		{ EXCEPTION_INT_OVERFLOW, "Integer Overflow" },
 		{ EXCEPTION_INVALID_DISPOSITION, "Invalid Disposition" },
 		{ EXCEPTION_NONCONTINUABLE_EXCEPTION, "Noncontinuable Exception" },
 		{ EXCEPTION_PRIV_INSTRUCTION, "Priviledged Instruction" },
@@ -471,23 +765,24 @@ HANDLE WriteTextReport ()
 			break;
 		}
 	}
-	j = sprintf (CrashSummary, "Code: %08lX", CrashPointers.ExceptionRecord->ExceptionCode);
+	j = mysnprintf (CrashSummary, countof(CrashSummary), "Code: %08lX", CrashPointers.ExceptionRecord->ExceptionCode);
 	if ((size_t)i < sizeof(exceptions)/sizeof(exceptions[0]))
 	{
-		j += sprintf (CrashSummary + j, " (%s", exceptions[i].Text);
+		j += mysnprintf (CrashSummary + j, countof(CrashSummary) - j, " (%s", exceptions[i].Text);
 		if (CrashPointers.ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
 		{
 			// Pre-NT kernels do not seem to provide this information.
 			if (verinfo.dwPlatformId != VER_PLATFORM_WIN32_WINDOWS)
 			{
-				j += sprintf (CrashSummary + j, " - tried to %s address %08lX",
+				j += mysnprintf (CrashSummary + j, countof(CrashSummary) - j,
+					" - tried to %s address %p",
 					CrashPointers.ExceptionRecord->ExceptionInformation[0] ? "write" : "read",
-					CrashPointers.ExceptionRecord->ExceptionInformation[1]);
+					(void *)CrashPointers.ExceptionRecord->ExceptionInformation[1]);
 			}
 		}
 		CrashSummary[j++] = ')';
 	}
-	j += sprintf (CrashSummary + j, "\r\nAddress: %p", CrashPointers.ExceptionRecord->ExceptionAddress);
+	j += mysnprintf (CrashSummary + j, countof(CrashSummary) - j, "\r\nAddress: %p", CrashPointers.ExceptionRecord->ExceptionAddress);
 	Writef (file, "%s\r\nFlags: %08X\r\n\r\n", CrashSummary, CrashPointers.ExceptionRecord->ExceptionFlags);
 
 	Writef (file, "Windows %s %d.%d Build %d %s\r\n\r\n",
@@ -504,14 +799,29 @@ HANDLE WriteTextReport ()
 
 	if (ctxt->ContextFlags & CONTEXT_INTEGER)
 	{
+#ifndef _M_X64
 		Writef (file, "EAX=%08x  EBX=%08x  ECX=%08x  EDX=%08x\r\nESI=%08x  EDI=%08x\r\n",
 			ctxt->Eax, ctxt->Ebx, ctxt->Ecx, ctxt->Edx, ctxt->Esi, ctxt->Edi);
+#else
+		Writef (file, "RAX=%016I64x  RBX=%016I64x  RCX=%016I64x\r\n"
+					  "RDX=%016I64x  RSI=%016I64x  RDI=%016I64x\r\n"
+					  "RBP=%016I64x   R8=%016I64x   R9=%016I64x\r\n"
+					  "R10=%016I64x  R11=%016I64x  R12=%016I64x\r\n"
+					  "R13=%016I64x  R14=%016I64x  R15=%016I64x\r\n",
+			ctxt->Rax, ctxt->Rbx, ctxt->Rcx, ctxt->Rdx, ctxt->Rsi, ctxt->Rdi, ctxt->Rbp,
+			ctxt->R8, ctxt->R9, ctxt->R10, ctxt->R11, ctxt->R12, ctxt->R13, ctxt->R14, ctxt->R15);
+#endif
 	}
 
 	if (ctxt->ContextFlags & CONTEXT_CONTROL)
 	{
+#ifndef _M_X64
 		Writef (file, "EBP=%08x  EIP=%08x  ESP=%08x  CS=%04x  SS=%04x\r\nEFlags=%08x\r\n",
 			ctxt->Ebp, ctxt->Eip, ctxt->Esp, ctxt->SegCs, ctxt->SegSs, ctxt->EFlags);
+#else
+		Writef (file, "RIP=%016I64x  RSP=%016I64x\r\nCS=%04x  SS=%04x  EFlags=%08x\r\n",
+			ctxt->Rip, ctxt->Rsp, ctxt->SegCs, ctxt->SegSs, ctxt->EFlags);
+#endif
 
 		DWORD j;
 
@@ -528,6 +838,7 @@ HANDLE WriteTextReport ()
 
 	if (ctxt->ContextFlags & CONTEXT_FLOATING_POINT)
 	{
+#ifndef _M_X64
 		Writef (file,
 			"\r\nFPU State:\r\n ControlWord=%04x StatusWord=%04x TagWord=%04x\r\n"
 			" ErrorOffset=%08x\r\n ErrorSelector=%08x\r\n DataOffset=%08x\r\n DataSelector=%08x\r\n"
@@ -538,19 +849,41 @@ HANDLE WriteTextReport ()
 
 		for (i = 0; i < 8; ++i)
 		{
-			Writef (file, "MM%d=%08x%08x\r\n", i, *(DWORD *)(&ctxt->FloatSave.RegisterArea[20*i+4]),
-				*(DWORD *)(&ctxt->FloatSave.RegisterArea[20*i]));
+			DWORD d0, d1;
+			memcpy(&d0, &ctxt->FloatSave.RegisterArea[20*i+4], sizeof(DWORD));
+			memcpy(&d1, &ctxt->FloatSave.RegisterArea[20*i], sizeof(DWORD));
+			Writef (file, "MM%d=%08x%08x\r\n", i, d0, d1);
 		}
+#else
+		for (i = 0; i < 8; ++i)
+		{
+			Writef (file, "MM%d=%016I64x\r\n", i, ctxt->Legacy[i].Low);
+		}
+		for (i = 0; i < 16; ++i)
+		{
+			Writef (file, "XMM%d=%016I64x%016I64x\r\n", i, ctxt->FltSave.XmmRegisters[i].High, ctxt->FltSave.XmmRegisters[i].Low);
+		}
+#endif
 	}
 
 	AddToolHelp (file);
 
+#ifdef _M_IX86
 	Writef (file, "\r\nBytes near EIP:");
+#else
+	Writef (file, "\r\nBytes near RIP:");
+#endif
 	DumpBytes (file, (BYTE *)CrashPointers.ExceptionRecord->ExceptionAddress-16);
 
 	if (ctxt->ContextFlags & CONTEXT_CONTROL)
 	{
-		AddStackInfo (file, (void *)(size_t)CrashPointers.ContextRecord->Esp);
+#ifndef _M_X64
+		AddStackInfo (file, (void *)(size_t)CrashPointers.ContextRecord->Esp,
+			CrashPointers.ExceptionRecord->ExceptionCode, ctxt);
+#else
+		AddStackInfo (file, (void *)CrashPointers.ContextRecord->Rsp,
+			CrashPointers.ExceptionRecord->ExceptionCode, ctxt);
+#endif
 	}
 
 	return file;
@@ -612,7 +945,7 @@ static void AddToolHelp (HANDLE file)
 
 				if (thread.th32ThreadID == DbgThreadID)
 				{
-					Writef (file, " at %08x*", CrashAddress);
+					Writef (file, " at %p*", CrashAddress);
 				}
 				Writef (file, "\r\n");
 			}
@@ -627,7 +960,7 @@ static void AddToolHelp (HANDLE file)
 	{
 		do
 		{
-			Writef (file, "%08x - %08x %c%s\r\n",
+			Writef (file, "%p - %p %c%s\r\n",
 				module.modBaseAddr, module.modBaseAddr + module.modBaseSize - 1,
 				module.modBaseAddr <= CrashPointers.ExceptionRecord->ExceptionAddress &&
 				module.modBaseAddr + module.modBaseSize > CrashPointers.ExceptionRecord->ExceptionAddress
@@ -647,14 +980,28 @@ static void AddToolHelp (HANDLE file)
 //
 //==========================================================================
 
-static void AddStackInfo (HANDLE file, void *dumpaddress)
+static void AddStackInfo (HANDLE file, void *dumpaddress, DWORD code, CONTEXT *ctxt)
 {
-	DWORD *addr = (DWORD *)dumpaddress;
+	DWORD *addr = (DWORD *)dumpaddress, *jump;
 	DWORD *topOfStack = GetTopOfStack (dumpaddress);
 	BYTE peekb;
+#ifdef _M_IX86
 	DWORD peekd;
+#else
+	QWORD peekq;
+#endif
 
-	StackWalk (file, dumpaddress, topOfStack);
+	jump = topOfStack;
+	if (code == EXCEPTION_STACK_OVERFLOW)
+	{
+		// If the stack overflowed, only dump the first and last 16KB of it.
+		if (topOfStack - addr > 32768/4)
+		{
+			jump = addr + 16384/4;
+		}
+	}
+
+	StackWalk (file, dumpaddress, topOfStack, jump, ctxt);
 
 	Writef (file, "\r\nStack Contents:\r\n");
 	DWORD *scan;
@@ -663,6 +1010,14 @@ static void AddStackInfo (HANDLE file, void *dumpaddress)
 		int i;
 		ptrdiff_t max;
 
+		if (scan == jump)
+		{
+			scan = topOfStack - 16384/4;
+			Writef (file, "\r\n . . . Snip . . .\r\n\r\n");
+		}
+
+		Writef (file, "%p:", scan);
+#ifdef _M_IX86
 		if (topOfStack - scan < 4)
 		{
 			max = topOfStack - scan;
@@ -672,10 +1027,9 @@ static void AddStackInfo (HANDLE file, void *dumpaddress)
 			max = 4;
 		}
 
-		Writef (file, "%p:", scan);
 		for (i = 0; i < max; ++i)
 		{
-			if (!ReadProcessMemory (DbgProcess, &scan[i], &peekd, 4, NULL))
+			if (!SafeReadMemory (&scan[i], &peekd, 4))
 			{
 				break;
 			}
@@ -685,10 +1039,33 @@ static void AddStackInfo (HANDLE file, void *dumpaddress)
 		{
 			Writef (file, "         ");
 		}
-		Writef (file, "  ");
-		for (i = 0; i < max*4; ++i)
+#else
+		if ((QWORD *)topOfStack - (QWORD *)scan < 2)
 		{
-			if (!ReadProcessMemory (DbgProcess, (BYTE *)scan + i, &peekb, 1, NULL))
+			max = (QWORD *)topOfStack - (QWORD *)scan;
+		}
+		else
+		{
+			max = 2;
+		}
+
+		for (i = 0; i < max; ++i)
+		{
+			if (!SafeReadMemory (&scan[i], &peekq, 8))
+			{
+				break;
+			}
+			Writef (file, " %016x", peekq);
+		}
+		if (i < 2)
+		{
+			Writef (file, "                 ");
+		}
+#endif
+		Writef (file, "  ");
+		for (i = 0; i < int(max*sizeof(void*)); ++i)
+		{
+			if (!SafeReadMemory ((BYTE *)scan + i, &peekb, 1))
 			{
 				break;
 			}
@@ -698,9 +1075,12 @@ static void AddStackInfo (HANDLE file, void *dumpaddress)
 	}
 }
 
+#ifdef _M_IX86
+
 //==========================================================================
 //
 // StackWalk
+// Win32 version
 //
 // Lists a possible call trace for the crashing thread to the text report.
 // This is not very specific and just lists any pointers into the
@@ -708,7 +1088,7 @@ static void AddStackInfo (HANDLE file, void *dumpaddress)
 //
 //==========================================================================
 
-static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
+static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack, DWORD *jump, CONTEXT *ctxt)
 {
 	DWORD *addr = (DWORD *)dumpaddress;
 
@@ -721,11 +1101,17 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 	DWORD_PTR codeEnd = codeStart + pHeader->SizeOfCode;
 
 	Writef (file, "\r\nPossible call trace:\r\n %08x  BOOM", CrashAddress);
-	for (DWORD_PTR *scan = addr; scan < topOfStack; ++scan)
+	for (DWORD *scan = addr; scan < topOfStack; ++scan)
 	{
+		if (scan == jump)
+		{
+			scan = topOfStack - 16384/4;
+			Writef (file, "\r\n\r\n  . . . . Snip . . . .\r\n");
+		}
+
 		DWORD_PTR code;
 
-		if (ReadProcessMemory (DbgProcess, scan, &code, sizeof(code), NULL) &&
+		if (SafeReadMemory (scan, &code, sizeof(code)) &&
 			code >= codeStart && code < codeEnd)
 		{
 			static const char regNames[][4] =
@@ -737,18 +1123,18 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 			const BYTE *bytep = (BYTE *)code;
 			BYTE peekb;
 
-#define chkbyte(x,m,v) ReadProcessMemory(DbgProcess, x, &peekb, 1, NULL) && ((peekb & m) == v)
+#define chkbyte(x,m,v) (SafeReadMemory(x, &peekb, 1) && ((peekb & m) == v))
 
 			if (chkbyte(bytep - 5, 0xFF, 0xE8) || chkbyte(bytep - 5, 0xFF, 0xE9))
 			{
 				DWORD peekd;
-				if (ReadProcessMemory (DbgProcess, bytep - 4, &peekd, 4, NULL))
+				if (SafeReadMemory (bytep - 4, &peekd, 4))
 				{
 					DWORD_PTR jumpaddr = peekd + code;
 					Writef (file, "\r\n %p  %s %p", code - 5,
 						peekb == 0xE9 ? "jmp " : "call", jumpaddr);
 					if (chkbyte((LPCVOID)jumpaddr, 0xFF, 0xE9) &&
-						ReadProcessMemory (DbgProcess, (LPCVOID)(jumpaddr + 1), &peekd, 4, NULL))
+						SafeReadMemory ((LPCVOID)(jumpaddr + 1), &peekd, 4))
 					{
 						Writef (file," => jmp  %p", peekd + jumpaddr + 5);
 					}
@@ -785,7 +1171,7 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 
 					Writef (file, "\r\n %08x", bytep - i);
 					bytep -= i - 1;
-					ReadProcessMemory (DbgProcess, bytep, &peekb, 1, NULL);
+					SafeReadMemory (bytep, &peekb, 1);
 					mod = peekb >> 6;
 					rm = peekb & 7;
 					bytep++;
@@ -798,7 +1184,7 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 					{
 						int index, base;
 
-						ReadProcessMemory (DbgProcess, bytep, &peekb, 1, NULL);
+						SafeReadMemory (bytep, &peekb, 1);
 						scale = 1 << (peekb >> 6);
 						index = (peekb >> 3) & 7;
 						base = peekb & 7;
@@ -832,12 +1218,12 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 					if (mod == 1)
 					{
 						signed char miniofs;
-						ReadProcessMemory (DbgProcess, bytep++, &miniofs, 1, NULL);
+						SafeReadMemory (bytep++, &miniofs, 1);
 						offset = miniofs;
 					}
 					else
 					{
-						ReadProcessMemory (DbgProcess, bytep, &offset, 4, NULL);
+						SafeReadMemory (bytep, &offset, 4);
 						bytep += 4;
 					}
 					if ((DWORD_PTR)bytep == code)
@@ -885,6 +1271,129 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 	Writef (file, "\r\n");
 }
 
+#else
+
+//==========================================================================
+//
+// StackWalk
+// Win64 version
+//
+// Walks the stack for the crashing thread and dumps the trace to the text
+// report. Unlike the Win32 version, Win64 provides facilities for
+// doing a 100% exact walk.
+//
+// See http://www.nynaeve.net/?p=113 for more information, and
+// http://www.nynaeve.net/Code/StackWalk64.cpp in particular.
+//
+//==========================================================================
+
+static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack, DWORD *jump, CONTEXT *ctxt)
+{
+	RTLLOOKUPFUNCTIONENTRY RtlLookupFunctionEntry;
+	HMODULE kernel;
+	CONTEXT context;
+	KNONVOLATILE_CONTEXT_POINTERS nv_context;
+	PRUNTIME_FUNCTION function;
+	PVOID handler_data;
+	ULONG64 establisher_frame;
+	ULONG64 image_base;
+
+	Writef (file, "\r\nCall trace:\r\n  rip=%p  <- Here it dies.\r\n", CrashAddress);
+
+	kernel = GetModuleHandle("kernel32.dll");
+	if (kernel == NULL || NULL == (RtlLookupFunctionEntry =
+		(RTLLOOKUPFUNCTIONENTRY)GetProcAddress(kernel, "RtlLookupFunctionEntry")))
+	{
+		Writef (file, "  Unavailable: Could not get address of RtlLookupFunctionEntry\r\n");
+		return;
+	}
+	// Get the caller's context
+	context = *ctxt;
+
+	// This unwind loop intentionally skips the first call frame, as it
+	// shall correspond to the call to StackTrace64, which we aren't
+	// interested in.
+
+	for (ULONG frame = 0; ; ++frame)
+	{
+		// Try to look up unwind metadata for the current function.
+		function = RtlLookupFunctionEntry(context.Rip, &image_base, NULL);
+		memset(&nv_context, 0, sizeof(nv_context));
+		if (function == NULL)
+		{
+			// If we don't have a RUNTIME_FUNCTION, then we've encountered
+			// a leaf function. Adjust the stack appropriately.
+			context.Rip  = (ULONG64)(*(PULONG64)context.Rsp);
+			context.Rsp += 8;
+			Writef(file, "  Leaf function\r\n\r\n");
+		}
+		else
+		{
+			// Note that there is not a one-to-one correspondance between
+			// runtime functions and source functions. One source function
+			// may be broken into multiple runtime functions. This loop walks
+			// backward from the current runtime function for however many
+			// consecutive runtime functions precede it. There is a slight
+			// chance that this will walk across different source functions.
+			// (Or maybe not, depending on whether or not the compiler
+			// guarantees that there will be empty space between functions;
+			// it looks like VC++ might.) In practice, this seems to work
+			// quite well for identifying the exact address to search for in
+			// a map file to determine the function name.
+
+			PRUNTIME_FUNCTION function2 = function;
+			ULONG64 base = image_base;
+
+			while (function2 != NULL)
+			{
+				Writef(file, "  Function range: %p -> %p\r\n",
+					(void *)(base + function2->BeginAddress),
+					(void *)(base + function2->EndAddress));
+				function2 = RtlLookupFunctionEntry(base + function2->BeginAddress - 1, &base, NULL);
+			}
+			Writef(file, "\r\n");
+
+			// Use RtlVirtualUnwind to execute the unwind for us.
+			RtlVirtualUnwind(0/*UNW_FLAG_NHANDLER*/, image_base, context.Rip,
+				function, &context, &handler_data, &establisher_frame,
+				&nv_context);
+		}
+		// If we reach a RIP of zero, this means we've walked off the end of
+		// the call stack and are done.
+		if (context.Rip == 0)
+		{
+			break;
+		}
+
+		// Display the context. Note that we don't bother showing the XMM
+		// context, although we have the nonvolatile portion of it.
+		Writef(file, " FRAME %02d:\r\n  rip=%p rsp=%p rbp=%p\r\n",
+			frame, context.Rip, context.Rsp, context.Rbp);
+		Writef(file, "  r12=%p r13=%p r14=%p\r\n"
+					 "  rdi=%p rsi=%p rbx=%p\r\n",
+			context.R12, context.R13, context.R14,
+			context.Rdi, context.Rsi, context.Rbx);
+
+		static const char reg_names[16][4] =
+		{
+			"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+			"r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
+		};
+
+		// If we have stack-based register stores, then display them here.
+		for (int i = 0; i < 16; ++i)
+		{
+			if (nv_context.IntegerContext[i])
+			{
+				Writef(file, "   -> '%s' saved on stack at %p (=> %p)\r\n",
+					reg_names[i], nv_context.IntegerContext[i], *nv_context.IntegerContext[i]);
+			}
+		}
+	}
+}
+
+#endif
+
 //==========================================================================
 //
 // DumpBytes
@@ -895,7 +1404,7 @@ static void StackWalk (HANDLE file, void *dumpaddress, DWORD *topOfStack)
 
 static void DumpBytes (HANDLE file, BYTE *address)
 {
-	char line[64*3], *line_p = line;
+	char line[68*3], *line_p = line;
 	DWORD len;
 	BYTE peek;
 
@@ -903,15 +1412,15 @@ static void DumpBytes (HANDLE file, BYTE *address)
 	{
 		if ((i & 15) == 0)
 		{
-			line_p += sprintf (line_p, "\r\n%p:", address);
+			line_p += mysnprintf (line_p, countof(line) - (line_p - line), "\r\n%p:", address);
 		}
-		if (ReadProcessMemory (DbgProcess, address, &peek, 1, NULL))
+		if (SafeReadMemory (address, &peek, 1))
 		{
-			line_p += sprintf (line_p, " %02x", *address);
+			line_p += mysnprintf (line_p, countof(line) - (line_p - line), " %02x", *address);
 		}
 		else
 		{
-			line_p += sprintf (line_p, " --");
+			line_p += mysnprintf (line_p, countof(line) - (line_p - line), " --");
 		}
 		address++;
 	}
@@ -989,69 +1498,171 @@ static void CloseTarFiles ()
 // WriteBlock
 //
 // This is a wrapper around WriteFile. If stream is non-NULL, then the data
-// is compressed before writing it to the file. outbuf must be 512 bytes.
+// is compressed before writing it to the file. outbuf must be 1024 bytes.
 //
 //==========================================================================
 
-static void WriteBlock (HANDLE file, LPCVOID buffer, DWORD bytes, z_stream *stream, Bytef *outbuf, DWORD *crc)
+static DWORD WriteBlock (HANDLE file, LPCVOID buffer, DWORD bytes, z_stream *stream, Bytef *outbuf)
 {
 	if (stream == NULL)
 	{
 		WriteFile (file, buffer, bytes, &bytes, NULL);
+		return bytes;
 	}
 	else
 	{
+		DWORD wrote = 0;
+
 		stream->next_in = (Bytef *)buffer;
 		stream->avail_in = bytes;
-		*crc = crc32 (*crc, (const Bytef *)buffer, bytes);
 
 		while (stream->avail_in != 0)
 		{
 			if (stream->avail_out == 0)
 			{
 				stream->next_out = outbuf;
-				stream->avail_out = sizeof(tar::record);
-				WriteFile (file, outbuf, sizeof(tar::record), &bytes, NULL);
+				stream->avail_out = 1024;
+				wrote += 1024;
+				WriteFile (file, outbuf, 1024, &bytes, NULL);
 			}
 			deflate (stream, Z_NO_FLUSH);
 		}
+		return wrote;
 	}
 }
 
 //==========================================================================
 //
-// WriteTar
+// WriteZip
 //
-// Writes a .tar.gz file. If deflateInit fails, then ".gz" the gzip
-// argument will be false, otherwise it will be set true. A HANDLE to the
-// file is returned. This file is delete-on-close.
+// Writes a .zip/pk3 file. A HANDLE to the file is returned. This file is
+// delete-on-close.
 //
 // The archive contains all the files previously passed to AddFile(). They
-// must still be open, because WriteTar() does not open them itself.
+// must still be open, because MakeZip() does not open them itself.
 //
 //==========================================================================
 
-static HANDLE MakeTar (bool &gzip)
+static HANDLE MakeZip ()
 {
-	DWORD len;
-	unsigned char gzipheader[10];
-	tar::record record;
-	Bytef outbuf[sizeof(record)];
+	zip::CentralDirectoryEntry central = { ZIP_CENTRALFILE, { 20, 0 }, { 20, 0 }, };
+	zip::EndOfCentralDirectory dirend = { ZIP_ENDOFDIR, };
+	short dosdate, dostime;
 	time_t now;
-	int i, j, sum;
+	struct tm *nowtm;
+	int i, numfiles;
 	HANDLE file;
-	DWORD filesize, k;
-	DWORD totalsize;
-	z_stream stream;
-	int err;
-	DWORD crc;
+	DWORD len, dirsize;
+	size_t namelen;
 
 	if (NumFiles == 0)
 	{
 		return INVALID_HANDLE_VALUE;
 	}
 
+	// Open the zip file.
+	file = CreateTempFile ();
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		return file;
+	}
+
 	time (&now);
+	nowtm = localtime (&now);
+
+	if (nowtm == NULL || nowtm->tm_year < 80)
+	{
+		dosdate = dostime = 0;
+	}
+	else
+	{
+		dosdate = (nowtm->tm_year - 80) * 512 + (nowtm->tm_mon + 1) * 32 + nowtm->tm_mday;
+		dostime = nowtm->tm_hour * 2048 + nowtm->tm_min * 32 + nowtm->tm_sec / 2;
+		dosdate = LittleShort(dosdate);
+		dostime = LittleShort(dostime);
+	}
+
+	// Write out the zip archive, one file at a time
+	for (i = 0; i < NumFiles; ++i)
+	{
+		AddZipFile (file, &TarFiles[i], dosdate, dostime);
+	}
+
+	// Write the central directory
+	central.ModTime = dostime;
+	central.ModDate = dosdate;
+
+	dirend.DirectoryOffset = LittleLong(SetFilePointer (file, 0, NULL, FILE_CURRENT));
+
+	for (i = 0, numfiles = 0, dirsize = 0; i < NumFiles; ++i)
+	{
+		// Skip empty files
+		if (TarFiles[i].UncompressedSize == 0)
+		{
+			continue;
+		}
+		numfiles++;
+		if (TarFiles[i].Deflated)
+		{
+			central.Flags = LittleShort(2);
+			central.Method = LittleShort(8);
+		}
+		else
+		{
+			central.Flags = 0;
+			central.Method = 0;
+		}
+		namelen = strlen(TarFiles[i].Filename);
+		central.InternalAttributes = 0;
+		if (namelen > 4 && stricmp(TarFiles[i].Filename - 4, ".txt") == 0)
+		{ // Bit 0 set indicates this is probably a text file. But do any tools use it?
+			central.InternalAttributes = LittleShort(1);
+		}
+		central.CRC32 = LittleLong(TarFiles[i].CRC32);
+		central.CompressedSize = LittleLong(TarFiles[i].CompressedSize);
+		central.UncompressedSize = LittleLong(TarFiles[i].UncompressedSize);
+		central.NameLength = LittleShort((WORD)namelen);
+		central.LocalHeaderOffset = LittleLong(TarFiles[i].ZipOffset);
+		WriteFile (file, &central, sizeof(central), &len, NULL);
+		WriteFile (file, TarFiles[i].Filename, (DWORD)namelen, &len, NULL);
+		dirsize += DWORD(sizeof(central) + namelen);
+	}
+
+	// Write the directory terminator
+	dirend.NumEntriesOnAllDisks = dirend.NumEntries = LittleShort(numfiles);
+	dirend.DirectorySize = LittleLong(dirsize);
+	WriteFile (file, &dirend, sizeof(dirend), &len, NULL);
+
+	return file;
+}
+
+//==========================================================================
+//
+// AddZipFile
+//
+// Adds a file to the opened zip.
+//
+//==========================================================================
+
+static void AddZipFile (HANDLE ziphandle, TarFile *whichfile, short dosdate, short dostime)
+{
+	zip::LocalFileHeader local = { ZIP_LOCALFILE, };
+	Bytef outbuf[1024], inbuf[1024];
+	z_stream stream;
+	DWORD wrote, len, k;
+	int err;
+	bool gzip;
+
+	whichfile->UncompressedSize = GetFileSize (whichfile->File, NULL);
+	whichfile->CompressedSize = 0;
+	whichfile->ZipOffset = 0;
+	whichfile->Deflated = false;
+
+	// Skip empty files.
+	if (whichfile->UncompressedSize == 0)
+	{
+		return;
+	}
 
 	stream.next_in = Z_NULL;
 	stream.avail_in = 0;
@@ -1061,89 +1672,42 @@ static HANDLE MakeTar (bool &gzip)
 		8, Z_DEFAULT_STRATEGY);
 	gzip = err == Z_OK;
 
-	// Open the tar file.
-	file = CreateTempFile ();
-	if (file == INVALID_HANDLE_VALUE)
+	if (gzip)
 	{
-		if (gzip)
-		{
-			deflateEnd (&stream);
-		}
-		return file;
-	}
-
-	if (gzip = (err == Z_OK))
-	{
-		// Write GZIP header
-		memcpy (gzipheader,   "\x1F\x8B\x08\x00    \x02\x0B", 10);
-		memcpy (gzipheader+4, &now, 4);
-		WriteFile (file, gzipheader, 10, &len, NULL);
-		crc = crc32 (0, NULL, 0);
+		local.Method = LittleShort(8);
+		whichfile->Deflated = true;
 		stream.next_out = outbuf;
 		stream.avail_out = sizeof(outbuf);
 	}
 
-	// Write out the tar archive, one file at a time
-	for (i = 0, totalsize = 0; i < NumFiles; ++i)
+	// Write out the header and filename.
+	local.VersionToExtract[0] = 20;
+	local.Flags = gzip ? LittleShort(2) : 0;
+	local.ModTime = dostime;
+	local.ModDate = dosdate;
+	local.UncompressedSize = LittleLong(whichfile->UncompressedSize);
+	local.NameLength = LittleShort((WORD)strlen(whichfile->Filename));
+	
+	whichfile->ZipOffset = SetFilePointer (ziphandle, 0, NULL, FILE_CURRENT);
+	WriteFile (ziphandle, &local, sizeof(local), &wrote, NULL);
+	WriteFile (ziphandle, whichfile->Filename, (DWORD)strlen(whichfile->Filename), &wrote, NULL);
+
+	// Write the file itself and calculate its CRC.
+	SetFilePointer (whichfile->File, 0, NULL, FILE_BEGIN);
+	for (k = 0; k < whichfile->UncompressedSize; )
 	{
-		// Fill in header information
-		filesize = GetFileSize (TarFiles[i].File, NULL);
-
-		// Skip empty files
-		if (filesize == 0)
+		len = whichfile->UncompressedSize - k;
+		if (len > 1024)
 		{
-			continue;
+			len = 1024;
 		}
-
-		memset (&record, 0, sizeof(record));
-		strcpy (record.header.name,  TarFiles[i].Filename);
-		strcpy (record.header.mode,  "000666 ");
-		strcpy (record.header.uid,   "     0 ");
-		strcpy (record.header.gid,   "     0 ");
-		strcpy (record.header.magic, "ustar  ");
-		strcpy (record.header.uname, "zdoom");
-		strcpy (record.header.gname, "games");
-		sprintf(record.header.size,  "%11lo ", filesize);
-		sprintf(record.header.mtime, "%11lo ", now);
-		record.header.linkflag =     '0';
-
-		// Calculate checksum
-		memcpy (record.header.chksum, "        ", 8);
-		for (j = 0, sum = 0; j < (int)sizeof(record); ++j)
-		{
-			sum += record.charptr[j];
-		}
-		sprintf (record.header.chksum, "%6o", sum);
-
-		// Write out the header and then the file (padded to 512 bytes)
-		WriteBlock (file, &record, sizeof(record), gzip ? &stream : NULL, outbuf, &crc);
-		totalsize += sizeof(record);
-
-		SetFilePointer (TarFiles[i].File, 0, NULL, FILE_BEGIN);
-		for (k = 0; k < filesize; k += 512)
-		{
-			len = filesize - k;
-			if (len > sizeof(record))
-			{
-				len = sizeof(record);
-			}
-			else
-			{
-				memset (&record.charptr[len], 0, sizeof(record)-len);
-			}
-			ReadFile (TarFiles[i].File, &record, len, &len, NULL);
-			WriteBlock (file, &record, sizeof(record), gzip ? &stream : NULL, outbuf, &crc);
-			totalsize += sizeof(record);
-		}
+		k += len;
+		ReadFile (whichfile->File, &inbuf, len, &len, NULL);
+		whichfile->CRC32 = crc32 (whichfile->CRC32, inbuf, len);
+		whichfile->CompressedSize += WriteBlock (ziphandle, inbuf, len, gzip ? &stream : NULL, outbuf);
 	}
 
-	// EOT is two zeroed blocks, according to GNU tar.
-	memset (&record, 0, sizeof(record));
-	WriteBlock (file, &record, sizeof(record), gzip ? &stream : NULL, outbuf, &crc);
-	WriteBlock (file, &record, sizeof(record), gzip ? &stream : NULL, outbuf, &crc);
-	totalsize += 2*sizeof(record);
-
-	// Flush the zlib stream buffer and write the gzip epilogue
+	// Flush the zlib stream buffer.
 	if (gzip)
 	{
 		for (bool done = false;;)
@@ -1151,7 +1715,8 @@ static HANDLE MakeTar (bool &gzip)
 			len = sizeof(outbuf) - stream.avail_out;
 			if (len != 0)
 			{
-				WriteFile (file, outbuf, len, &len, NULL);
+				whichfile->CompressedSize += len;
+				WriteFile (ziphandle, outbuf, len, &wrote, NULL);
 				stream.next_out = outbuf;
 				stream.avail_out = sizeof(outbuf);
 			}
@@ -1167,14 +1732,17 @@ static HANDLE MakeTar (bool &gzip)
 			}
 		}
 		deflateEnd (&stream);
-		memcpy (gzipheader,   &crc, 4);
-		memcpy (gzipheader+4, &totalsize, 4);
-		WriteFile (file, gzipheader, 8, &len, NULL);
 	}
-	return file;
-}
 
-static WNDPROC StdStaticProc;
+	// Fill in fields we didn't know when we wrote the local header.
+	SetFilePointer (ziphandle, whichfile->ZipOffset + 14, NULL, FILE_BEGIN);
+	k = LittleLong(whichfile->CRC32);
+	WriteFile (ziphandle, &k, 4, &wrote, NULL);
+	k = LittleLong(whichfile->CompressedSize);
+	WriteFile (ziphandle, &k, 4, &wrote, NULL);
+
+	SetFilePointer (ziphandle, 0, NULL, FILE_END);
+}
 
 //==========================================================================
 //
@@ -1376,7 +1944,7 @@ static INT_PTR CALLBACK OverviewDlgProc (HWND hDlg, UINT message, WPARAM wParam,
 
 		// Setup the header at the top of the page.
 		edit = GetDlgItem (hDlg, IDC_CRASHHEADER);
-		SendMessage (edit, WM_SETTEXT, 0, (LPARAM)"ZDoom has encountered a problem and needs to close.\n"
+		SendMessage (edit, WM_SETTEXT, 0, (LPARAM)GAMENAME" has encountered a problem and needs to close.\n"
 			"We are sorry for the inconvenience.");
 		
 		// Setup a bold version of the standard dialog font and make the header bold.
@@ -1394,8 +1962,8 @@ static INT_PTR CALLBACK OverviewDlgProc (HWND hDlg, UINT message, WPARAM wParam,
 		SendMessage (edit, EM_AUTOURLDETECT, TRUE, 0);
 		SendMessage (edit, WM_SETTEXT, 0, (LPARAM)"Please tell us about this problem.\n"
 			"The information will NOT be sent to Microsoft.\n\n"
-			"An error report has been created that you can submit to help improve ZDoom. "
-			"You can either save it to disk and make a report in the bugs forum at http://forum.zdoom.org, "
+			"An error report has been created that you can submit to help improve "GAMENAME". "
+			"You can either save it to disk and make a report in the bugs forum at "FORUM_URL", "
 			"or you can send it directly without letting other people know about it.");
 		SendMessage (edit, EM_SETSEL, 0, 81);
 		SendMessage (edit, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&charFormat);
@@ -1445,6 +2013,8 @@ static INT_PTR CALLBACK OverviewDlgProc (HWND hDlg, UINT message, WPARAM wParam,
 
 static INT_PTR CALLBACK CrashDlgProc (HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
+	static CHAR overview[] = "Overview";
+	static CHAR details[] = "Details";
 	HWND edit;
 	TCITEM tcitem;
 	RECT tabrect, tcrect;
@@ -1464,15 +2034,15 @@ static INT_PTR CALLBACK CrashDlgProc (HWND hDlg, UINT message, WPARAM wParam, LP
 		// There are two tabs: Overview and Details. Each pane is created from a
 		// dialog template, and the resultant window is stored as the lParam for
 		// the corresponding tab.
-		tcitem.pszText = "Overview";
+		tcitem.pszText = overview;
 		tcitem.lParam = (LPARAM)CreateDialogParam (g_hInst, MAKEINTRESOURCE(IDD_CRASHOVERVIEW), hDlg, OverviewDlgProc, (LPARAM)edit);
 		TabCtrl_InsertItem (edit, 0, &tcitem);
 		TabCtrl_GetItemRect (edit, 0, &tabrect);
 		SetWindowPos ((HWND)tcitem.lParam, HWND_TOP, tcrect.left + 3, tcrect.top + tabrect.bottom + 3,
 			tcrect.right - tcrect.left - 8, tcrect.bottom - tcrect.top - tabrect.bottom - 8, 0);
 
-		tcitem.pszText = "Details";
-		tcitem.lParam = (LPARAM)CreateDialogParam (g_hInst, MAKEINTRESOURCE(IDD_CRASHDETAILS), hDlg, DetailsDlgProc, (LPARAM)edit);;
+		tcitem.pszText = details;
+		tcitem.lParam = (LPARAM)CreateDialogParam (g_hInst, MAKEINTRESOURCE(IDD_CRASHDETAILS), hDlg, DetailsDlgProc, (LPARAM)edit);
 		TabCtrl_InsertItem (edit, 1, &tcitem);
 		SetWindowPos ((HWND)tcitem.lParam, HWND_TOP, tcrect.left + 3, tcrect.top + tabrect.bottom + 3,
 			tcrect.right - tcrect.left - 8, tcrect.bottom - tcrect.top - tabrect.bottom - 8, 0);
@@ -1531,7 +2101,6 @@ static INT_PTR CALLBACK CrashDlgProc (HWND hDlg, UINT message, WPARAM wParam, LP
 
 static INT_PTR CALLBACK DetailsDlgProc (HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	HGDIOBJ font;
 	HWND ctrl;
 	int i, j;
 
@@ -1543,15 +2112,9 @@ static INT_PTR CALLBACK DetailsDlgProc (HWND hDlg, UINT message, WPARAM wParam, 
 			pEnableThemeDialogTexture (hDlg, ETDT_ENABLETAB);
 		}
 
-		// Set up the file contents display: Use a fixed width font,
-		// no undos. The control's userdata stores the index of the
-		// file currently displayed.
+		// Set up the file contents display: No undos. The control's
+		// userdata stores the index of the file currently displayed.
 		ctrl = GetDlgItem (hDlg, IDC_CRASHFILECONTENTS);
-		font = GetStockObject (ANSI_FIXED_FONT);
-		if (font != INVALID_HANDLE_VALUE)
-		{
-			SendMessage (ctrl, WM_SETFONT, (WPARAM)font, FALSE);
-		}
 		SendMessage (ctrl, EM_SETUNDOLIMIT, 0, 0);
 		SetWindowLongPtr (ctrl, GWLP_USERDATA, -1);
 		SetEditControl (ctrl, GetDlgItem(hDlg, IDC_CRASHFILESIZE), 0);
@@ -1635,12 +2198,13 @@ static DWORD CALLBACK StreamEditBinary (DWORD_PTR cookie, LPBYTE buffer, LONG cb
 	BYTE buf16[16];
 	DWORD read, i;
 	char *buff_p = (char *)buffer;
+	char *buff_end = (char *)buffer + cb;
 
 repeat:
 	switch (info->Stage)
 	{
 	case 0:		// Write prologue
-		buff_p += sprintf (buff_p, "{\\rtf1\\ansi\\deff0"
+		buff_p += mysnprintf (buff_p, buff_end - buff_p, "{\\rtf1\\ansi\\deff0"
 			"{\\colortbl ;\\red0\\green0\\blue80;\\red0\\green0\\blue0;\\red80\\green0\\blue80;}"
 			"\\viewkind4\\pard");
 		info->Stage++;
@@ -1650,25 +2214,27 @@ repeat:
 		while (cb - ((LPBYTE)buff_p - buffer) > 150)
 		{
 			ReadFile (info->File, buf16, 16, &read, NULL);
-			if (read == 0)
+			if (read == 0 || info->Pointer >= 65536)
 			{
-				info->Stage++;
+				info->Stage = read == 0 ? 2 : 3;
 				goto repeat;
 			}
 			char *linestart = buff_p;
-			buff_p += sprintf (buff_p, "\\cf1 %08lx:\\cf2 ", info->Pointer);
+			buff_p += mysnprintf (buff_p, buff_end - buff_p, "\\cf1 %08lx:\\cf2 ", info->Pointer);
 			info->Pointer += read;
 
 			for (i = 0; i < read;)
 			{
 				if (i <= read - 4)
 				{
-					buff_p += sprintf (buff_p, " %08lx", *(DWORD *)&buf16[i]);
+					DWORD d;
+					memcpy(&d, &buf16[i], sizeof(d));
+					buff_p += mysnprintf (buff_p, buff_end - buff_p, " %08lx", d);
 					i += 4;
 				}
 				else
 				{
-					buff_p += sprintf (buff_p, " %02x", buf16[i]);
+					buff_p += mysnprintf (buff_p, buff_end - buff_p, " %02x", buf16[i]);
 					i += 1;
 				}
 			}
@@ -1676,7 +2242,7 @@ repeat:
 			{
 				*buff_p++ = ' ';
 			}
-			buff_p += sprintf (buff_p, "\\cf3 ");
+			buff_p += mysnprintf (buff_p, buff_end - buff_p, "\\cf3 ");
 			for (i = 0; i < read; ++i)
 			{
 				BYTE code = buf16[i];
@@ -1684,16 +2250,21 @@ repeat:
 				if (code == '\\' || code == '{' || code == '}') *buff_p++ = '\\';
 				*buff_p++ = code;
 			}
-			buff_p += sprintf (buff_p, "\\par\r\n");
+			buff_p += mysnprintf (buff_p, buff_end - buff_p, "\\par\r\n");
 		}
 		break;
 
 	case 2:		// Write epilogue
-		buff_p += sprintf (buff_p, "\\cf0 }");
-		info->Stage++;
+		buff_p += mysnprintf (buff_p, buff_end - buff_p, "\\cf0 }");
+		info->Stage = 4;
 		break;
 
-	case 3:		// We're done
+	case 3:		// Write epilogue for truncated file
+		buff_p += mysnprintf (buff_p, buff_end - buff_p, "--- Rest of file truncated ---\\cf0 }");
+		info->Stage = 4;
+		break;
+
+	case 4:		// We're done
 		return TRUE;
 	}
 
@@ -1717,6 +2288,8 @@ static void SetEditControl (HWND edit, HWND sizedisplay, int filenum)
 	EDITSTREAM stream;
 	DWORD size;
 	POINT pt = { 0, 0 };
+	const char *rtf = NULL;
+	HGDIOBJ font;
 
 	// Don't refresh the control if it's already showing the file we want.
 	if (GetWindowLongPtr (edit, GWLP_USERDATA) == filenum)
@@ -1727,11 +2300,11 @@ static void SetEditControl (HWND edit, HWND sizedisplay, int filenum)
 	size = GetFileSize (TarFiles[filenum].File, NULL);
 	if (size < 1024)
 	{
-		sprintf (sizebuf, "(%lu bytes)", size);
+		mysnprintf (sizebuf, countof(sizebuf), "(%lu bytes)", size);
 	}
 	else
 	{
-		sprintf (sizebuf, "(%lu KB)", size/1024);
+		mysnprintf (sizebuf, countof(sizebuf), "(%lu KB)", size/1024);
 	}
 	SetWindowText (sizedisplay, sizebuf);
 
@@ -1740,10 +2313,19 @@ static void SetEditControl (HWND edit, HWND sizedisplay, int filenum)
 	SetFilePointer (TarFiles[filenum].File, 0, NULL, FILE_BEGIN);
 	SendMessage (edit, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
 
+	// Set the font now, in case log.rtf was previously viewed, because
+	// that file changes it.
+	font = GetStockObject (ANSI_FIXED_FONT);
+	if (font != INVALID_HANDLE_VALUE)
+	{
+		SendMessage (edit, WM_SETFONT, (WPARAM)font, FALSE);
+	}
+
 	// Text files are streamed in as-is.
 	// Binary files are streamed in as color-coded hex dumps.
 	stream.dwError = 0;
-	if (strstr (TarFiles[filenum].Filename, ".txt") != NULL)
+	if (strstr (TarFiles[filenum].Filename, ".txt") != NULL ||
+		(rtf = strstr (TarFiles[filenum].Filename, ".rtf")) != NULL)
 	{
 		CHARFORMAT beBlack;
 
@@ -1754,7 +2336,7 @@ static void SetEditControl (HWND edit, HWND sizedisplay, int filenum)
 		SendMessage (edit, EM_SETCHARFORMAT, 0, (LPARAM)&beBlack);
 		stream.dwCookie = (DWORD_PTR)TarFiles[filenum].File;
 		stream.pfnCallback = StreamEditText;
-		SendMessage (edit, EM_STREAMIN, SF_TEXT, (LPARAM)&stream);
+		SendMessage (edit, EM_STREAMIN, rtf ? SF_RTF : SF_TEXT | SF_USECODEPAGE | (1252 << 16), (LPARAM)&stream);
 	}
 	else
 	{
@@ -1837,7 +2419,7 @@ static void UploadFail (HWND hDlg, const char *message, int reason)
 {
 	char buff[512];
 
-	sprintf (buff, "%s: %d", message, reason);
+	mysnprintf (buff, countof(buff), "%s: %d", message, reason);
 	SetWindowText (GetDlgItem (hDlg, IDC_BOINGSTATUS), buff);
 
 	if (reason >= 10000 && reason <= 11999)
@@ -2301,7 +2883,6 @@ struct UploadParmStruct
 	HWND hDlg;
 	HANDLE hThread;
 	HANDLE hFile;
-	bool gzipped;
 	const char *UserSummary;
 };
 
@@ -2394,11 +2975,7 @@ static DWORD WINAPI UploadProc (LPVOID lpParam)
 						sizeof(MultipartBinaryHeader)-1 +
 						sizeof(MultipartHeaderGZip)-1 + fileLen +
 						sizeof(MultipartFooter)-1;
-		if (!parm->gzipped)
-		{
-			contentLength -= sizeof(MultipartHeaderGZip) - sizeof(MultipartHeaderNoGZip);
-		}
-		headerLen = sprintf (xferbuf, PostHeader, contentLength);
+		headerLen = mysnprintf (xferbuf, countof(xferbuf), PostHeader, contentLength);
 		bytesSent = send (sock, xferbuf, headerLen, 0);
 		if (bytesSent != headerLen)
 		{
@@ -2427,7 +3004,7 @@ static DWORD WINAPI UploadProc (LPVOID lpParam)
 			UploadFail (parm->hDlg, "Could not upload report", WSAGetLastError());
 			throw 1;
 		}
-		headerLen = sprintf (xferbuf, "Windows %08lX %p %X %08lX %08lX %08lX %08lX %08lX %s",
+		headerLen = mysnprintf (xferbuf, countof(xferbuf), "Windows %08lX %p %X %08lX %08lX %08lX %08lX %08lX %s",
 			CrashPointers.ExceptionRecord->ExceptionCode,
 			CrashPointers.ExceptionRecord->ExceptionAddress,
 			!!CrashPointers.ExceptionRecord->ExceptionInformation[0],
@@ -2463,8 +3040,7 @@ static DWORD WINAPI UploadProc (LPVOID lpParam)
 		}
 
 		// Send the report file.
-		headerLen = sprintf (xferbuf, "%s%s", MultipartBinaryHeader,
-			parm->gzipped ? MultipartHeaderGZip : MultipartHeaderNoGZip);
+		headerLen = mysnprintf (xferbuf, countof(xferbuf), "%s%s", MultipartBinaryHeader, MultipartHeaderZip);
 
 		bytesSent = send (sock, xferbuf, headerLen, 0);
 		if (bytesSent == SOCKET_ERROR)
@@ -2519,9 +3095,9 @@ static DWORD WINAPI UploadProc (LPVOID lpParam)
 		if (NeedDbgHelp && MessageBox (parm->hDlg,
 			"Shall I download dbghelp.dll?\n\n"
 			"This is a Microsoft-supplied DLL that can gather detailed information when a program crashes.\n\n"
-			"Although it is not essential for ZDoom, it will make any future error\n"
+			"Although it is not essential for "GAMENAME", it will make any future error\n"
 			"reports more useful, so it is strongly suggested that you answer \"yes.\"\n\n"
-			"If you answer \"yes,\" dbghelp.dll will be installed in the same directory as ZDoom.",
+			"If you answer \"yes,\" dbghelp.dll will be installed in the same directory as "GAMENAME".",
 			"Download dbghelp.dll?", MB_YESNO|MB_ICONQUESTION) == IDYES)
 		{
 			char *bs;
@@ -2684,9 +3260,9 @@ static BOOL CALLBACK BoingDlgProc (HWND hDlg, UINT message, WPARAM wParam, LPARA
 //
 //==========================================================================
 
-static BOOL UploadReport (HANDLE file, bool gzipped)
+static BOOL UploadReport (HANDLE file)
 {
-	UploadParmStruct uploadParm = { 0, 0, file, gzipped, UserSummary };
+	UploadParmStruct uploadParm = { 0, 0, file, UserSummary };
 	BOOL res = (BOOL)DialogBoxParam (g_hInst, MAKEINTRESOURCE(IDD_BOING), NULL, (DLGPROC)BoingDlgProc, (LPARAM)&uploadParm);
 	if (UserSummary != NULL)
 	{
@@ -2706,7 +3282,7 @@ static BOOL UploadReport (HANDLE file, bool gzipped)
 //
 //==========================================================================
 
-static void SaveReport (HANDLE file, bool gzipped)
+static void SaveReport (HANDLE file)
 {
 	OPENFILENAME ofn = {
 #ifdef OPENFILENAME_SIZE_VERSION_400
@@ -2717,16 +3293,8 @@ static void SaveReport (HANDLE file, bool gzipped)
 		, };
 	char filename[256];
 
-	if (gzipped)
-	{
-		ofn.lpstrFilter = "GZipped Tarball (*.tar.gz)\0*.tar.gz\0";
-		strcpy (filename, "CrashReport.tar.gz");
-	}
-	else
-	{
-		ofn.lpstrFilter = "Tarball (*.tar)\0*.tar\0";
-		strcpy (filename, "CrashReport.tar");
-	}
+	ofn.lpstrFilter = "Zip file (*.zip)\0*.zip\0";
+	strcpy (filename, "CrashReport.zip");
 	ofn.lpstrFile = filename;
 	ofn.nMaxFile = sizeof(filename);
 
@@ -2747,7 +3315,6 @@ static void SaveReport (HANDLE file, bool gzipped)
 		else
 		{
 			DWORD fileLen = GetFileSize (file, NULL), fileLeft;
-			DWORD bytesCopied = 0;
 			char xferbuf[1024];
 
 			SetFilePointer (file, 0, NULL, FILE_BEGIN);
@@ -2778,18 +3345,16 @@ static void SaveReport (HANDLE file, bool gzipped)
 
 void DisplayCrashLog ()
 {
-	HINSTANCE riched;
 	HANDLE file;
-	bool gzipped;
 
-	if (NumFiles == 0 || (riched = LoadLibrary ("riched20.dll")) == NULL)
+	if (NumFiles == 0)
 	{
 		char ohPoo[] =
-			"ZDoom crashed but was unable to produce\n"
+			GAMENAME" crashed but was unable to produce\n"
 			"detailed information about the crash.\n"
 			"\nThis is all that is available:\n\nCode=XXXXXXXX\nAddr=XXXXXXXX";
-		sprintf (ohPoo + sizeof(ohPoo) - 23, "%08lX\nAddr=%p", CrashCode, CrashAddress);
-		MessageBox (NULL, ohPoo, "ZDoom Very Fatal Error", MB_OK|MB_ICONSTOP);
+		mysnprintf (ohPoo + countof(ohPoo) - 23, 23, "%08lX\nAddr=%p", CrashCode, CrashAddress);
+		MessageBox (NULL, ohPoo, GAMENAME" Very Fatal Error", MB_OK|MB_ICONSTOP);
 		if (WinHlp32 != NULL)
 		{
 			FreeLibrary (WinHlp32);
@@ -2805,19 +3370,18 @@ void DisplayCrashLog ()
 		INT_PTR result = DialogBox (g_hInst, MAKEINTRESOURCE(IDD_CRASHDIALOG), NULL, (DLGPROC)CrashDlgProc);
 		if (result == IDYES)
 		{
-#if 0	// Server-side support is not done yet
-			file = MakeTar (gzipped);
-			UploadReport (file, gzipped);
+#if 0	// Server-side support is not done yet because I am too lazy.
+			file = MakeZip ();
+			UploadReport (file);
 			CloseHandle (file);
 #endif
 		}
 		else if (result == IDC_SAVEREPORT)
 		{
-			file = MakeTar (gzipped);
-			SaveReport (file, gzipped);
+			file = MakeZip ();
+			SaveReport (file);
 			CloseHandle (file);
 		}
-		FreeLibrary (riched);
 		if (uxtheme != NULL)
 		{
 			FreeLibrary (uxtheme);

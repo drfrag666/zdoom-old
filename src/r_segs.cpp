@@ -25,7 +25,6 @@
 //
 //-----------------------------------------------------------------------------
 
-#include "m_alloc.h"
 #include <stdlib.h>
 #include <stddef.h>
 
@@ -34,6 +33,7 @@
 
 #include "doomdef.h"
 #include "doomstat.h"
+#include "doomdata.h"
 #include "p_lnspec.h"
 
 #include "r_local.h"
@@ -43,11 +43,23 @@
 #include "m_swap.h"
 #include "w_wad.h"
 #include "stats.h"
+#include "a_sharedglobal.h"
+#include "d_net.h"
+#include "g_level.h"
+#include "r_bsp.h"
+#include "r_plane.h"
+#include "r_segs.h"
+#include "r_3dfloors.h"
+#include "v_palette.h"
+#include "r_data/colormaps.h"
 
 #define WALLYREPEAT 8
 
-CVAR (Int, ty, 8, 0)
-CVAR (Int, tx, 8, 0)
+
+CVAR(Bool, r_np2, true, 0)
+
+//CVAR (Int, ty, 8, 0)
+//CVAR (Int, tx, 8, 0)
 
 #define HEIGHTBITS 12
 #define HEIGHTSHIFT (FRACBITS-HEIGHTBITS)
@@ -64,12 +76,15 @@ extern fixed_t globaluclip, globaldclip;
 
 // killough 1/6/98: replaced globals with statics where appropriate
 
-static BOOL		segtextured;	// True if any of the segs textures might be visible.
+static bool		segtextured;	// True if any of the segs textures might be visible.
 bool		markfloor;		// False if the back side is the same plane.
 bool		markceiling;
 FTexture *toptexture;
 FTexture *bottomtexture;
 FTexture *midtexture;
+fixed_t rw_offset_top;
+fixed_t rw_offset_mid;
+fixed_t rw_offset_bottom;
 
 int OWallMost (short *mostbuf, fixed_t z);
 int WallMost (short *mostbuf, const secplane_t &plane);
@@ -87,7 +102,7 @@ short	wallupper[MAXWIDTH];
 short	walllower[MAXWIDTH];
 fixed_t	swall[MAXWIDTH];
 fixed_t	lwall[MAXWIDTH];
-int		lwallscale;
+fixed_t	lwallscale;
 
 //
 // regular wall
@@ -117,14 +132,23 @@ static fixed_t	rw_scalestep;
 static fixed_t	rw_midtexturemid;
 static fixed_t	rw_toptexturemid;
 static fixed_t	rw_bottomtexturemid;
+static fixed_t	rw_midtexturescalex;
+static fixed_t	rw_midtexturescaley;
+static fixed_t	rw_toptexturescalex;
+static fixed_t	rw_toptexturescaley;
+static fixed_t	rw_bottomtexturescalex;
+static fixed_t	rw_bottomtexturescaley;
 
 FTexture		*rw_pic;
 
-static short	*maskedtexturecol;
+static fixed_t	*maskedtexturecol;
 static FTexture	*WallSpriteTile;
 
-static void R_RenderBoundWallSprite (AActor *first, drawseg_t *clipper, int pass);
+static void R_RenderDecal (side_t *wall, DBaseDecal *first, drawseg_t *clipper, int pass);
 static void WallSpriteColumn (void (*drawfunc)(const BYTE *column, const FTexture::Span *spans));
+void wallscan_np2(int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, fixed_t top, fixed_t bot, bool mask);
+static void wallscan_np2_ds(drawseg_t *ds, int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat);
+static void call_wallscan(int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, bool mask);
 
 //=============================================================================
 //
@@ -138,9 +162,9 @@ CVAR(Bool, r_fogboundary, true, 0)
 
 inline bool IsFogBoundary (sector_t *front, sector_t *back)
 {
-	return r_fogboundary && !fixedcolormap && front->ColorMap->Fade &&
+	return r_fogboundary && fixedcolormap == NULL && front->ColorMap->Fade &&
 		front->ColorMap->Fade != back->ColorMap->Fade &&
-		(front->ceilingpic != skyflatnum || back->ceilingpic != skyflatnum);
+		(front->GetTexture(sector_t::ceiling) != skyflatnum || back->GetTexture(sector_t::ceiling) != skyflatnum);
 }
 
 //=============================================================================
@@ -156,18 +180,19 @@ CVAR(Bool, r_drawmirrors, true, 0)
 // R_RenderMaskedSegRange
 //
 fixed_t *MaskedSWall;
+fixed_t MaskedScaleY;
 
 static void BlastMaskedColumn (void (*blastfunc)(const BYTE *pixels, const FTexture::Span *spans), FTexture *tex)
 {
-	if (maskedtexturecol[dc_x] != SHRT_MAX)
+	if (maskedtexturecol[dc_x] != FIXED_MAX)
 	{
 		// calculate lighting
-		if (!fixedcolormap)
+		if (fixedcolormap == NULL && fixedlightlev < 0)
 		{
-			dc_colormap = basecolormap + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
+			dc_colormap = basecolormap->Maps + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
 		}
 
-		dc_iscale = MaskedSWall[dc_x];
+		dc_iscale = MulScale18 (MaskedSWall[dc_x], MaskedScaleY);
 		sprtopscreen = centeryfrac - FixedMul (dc_texturemid, spryscale);
 		
 		// killough 1/25/98: here's where Medusa came in, because
@@ -180,20 +205,44 @@ static void BlastMaskedColumn (void (*blastfunc)(const BYTE *pixels, const FText
 
 		// draw the texture
 		const FTexture::Span *spans;
-		const BYTE *pixels = tex->GetColumn (maskedtexturecol[dc_x], &spans);
+		const BYTE *pixels = tex->GetColumn (maskedtexturecol[dc_x] >> FRACBITS, &spans);
 		blastfunc (pixels, spans);
-		maskedtexturecol[dc_x] = SHRT_MAX;
+//		maskedtexturecol[dc_x] = FIXED_MAX; // kg3D - seems to be useless
 	}
 	rw_light += rw_lightstep;
 	spryscale += rw_scalestep;
 }
+
+// Clip a midtexture to the floor and ceiling of the sector in front of it.
+void ClipMidtex(int x1, int x2)
+{
+	short most[MAXWIDTH];
+
+	WallMost(most, curline->frontsector->ceilingplane);
+	for (int i = x1; i <= x2; ++i)
+	{
+		if (wallupper[i] < most[i])
+			wallupper[i] = most[i];
+	}
+	WallMost(most, curline->frontsector->floorplane);
+	for (int i = x1; i <= x2; ++i)
+	{
+		if (walllower[i] > most[i])
+			walllower[i] = most[i];
+	}
+}
+
+void R_RenderFakeWallRange(drawseg_t *ds, int x1, int x2);
 
 void R_RenderMaskedSegRange (drawseg_t *ds, int x1, int x2)
 {
 	FTexture	*tex;
 	int			i;
 	sector_t	tempsec;		// killough 4/13/98
-	fixed_t		texheight, textop, scaley;
+	fixed_t		texheight, textop, texheightscale;
+	bool		notrelevant = false;
+
+	const sector_t *sec;
 
 	sprflipvert = false;
 
@@ -203,11 +252,10 @@ void R_RenderMaskedSegRange (drawseg_t *ds, int x1, int x2)
 	// [RH] modified because we don't use user-definable translucency maps
 	ESPSResult drawmode;
 
-	drawmode = R_SetPatchStyle (curline->sidedef->Flags & WALLF_ADDTRANS ? STYLE_Add : STYLE_Translucent,
-		curline->linedef->alpha < 255 ? curline->linedef->alpha<<8 : FRACUNIT,
-		0, 0);
+	drawmode = R_SetPatchStyle (LegacyRenderStyles[curline->linedef->flags & ML_ADDTRANS ? STYLE_Add : STYLE_Translucent],
+		MIN(curline->linedef->Alpha, FRACUNIT),	0, 0);
 
-	if ((drawmode == DontDraw && !ds->bFogBoundary))
+	if ((drawmode == DontDraw && !ds->bFogBoundary && !ds->bFakeBoundary))
 	{
 		return;
 	}
@@ -217,16 +265,38 @@ void R_RenderMaskedSegRange (drawseg_t *ds, int x1, int x2)
 	frontsector = curline->frontsector;
 	backsector = curline->backsector;
 
-	tex = TexMan(curline->sidedef->midtexture);
+	tex = TexMan(curline->sidedef->GetTexture(side_t::mid), true);
+	if (i_compatflags & COMPATF_MASKEDMIDTEX)
+	{
+		tex = tex->GetRawTexture();
+	}
 
 	// killough 4/13/98: get correct lightlevel for 2s normal textures
-	const sector_t *sec = R_FakeFlat (frontsector, &tempsec, NULL, NULL, false);
+	sec = R_FakeFlat (frontsector, &tempsec, NULL, NULL, false);
 
-	basecolormap = sec->ColorMap->Maps;	// [RH] Set basecolormap
+	basecolormap = sec->ColorMap;	// [RH] Set basecolormap
 
 	wallshade = ds->shade;
 	rw_lightstep = ds->lightstep;
 	rw_light = ds->light + (x1 - ds->x1) * rw_lightstep;
+
+	if (fixedlightlev < 0)
+	{
+		for (i = frontsector->e->XFloor.lightlist.Size() - 1; i >= 0; i--)
+		{
+			if (!(fake3D & FAKE3D_CLIPTOP))
+			{
+				sclipTop = sec->ceilingplane.ZatPoint(viewx, viewy);
+			}
+			if (sclipTop <= frontsector->e->XFloor.lightlist[i].plane.ZatPoint(viewx, viewy))
+			{
+				lightlist_t *lit = &frontsector->e->XFloor.lightlist[i];
+				basecolormap = lit->extra_colormap;
+				wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, *lit->p_lightlevel, lit->lightsource == NULL) + r_actualextralight);
+				break;
+			}
+		}
+	}
 
 	mfloorclip = openings + ds->sprbottomclip - ds->x1;
 	mceilingclip = openings + ds->sprtopclip - ds->x1;
@@ -240,59 +310,313 @@ void R_RenderMaskedSegRange (drawseg_t *ds, int x1, int x2)
 			goto clearfog;
 		}
 	}
+	if ((ds->bFakeBoundary && !(ds->bFakeBoundary & 4)) || drawmode == DontDraw)
+	{
+		goto clearfog;
+	}
 
 	MaskedSWall = (fixed_t *)(openings + ds->swall) - ds->x1;
-	maskedtexturecol = openings + ds->maskedtexturecol - ds->x1;
+	MaskedScaleY = ds->yrepeat;
+	maskedtexturecol = (fixed_t *)(openings + ds->maskedtexturecol) - ds->x1;
 	spryscale = ds->iscale + ds->iscalestep * (x1 - ds->x1);
 	rw_scalestep = ds->iscalestep;
 
 	// find positioning
-	scaley = tex->ScaleY ? tex->ScaleY : ty;
-	texheight = SafeDivScale19 (tex->GetHeight(), scaley);
+	texheight = tex->GetScaledHeight() << FRACBITS;
+	texheightscale = curline->sidedef->GetTextureYScale(side_t::mid);
+	if (texheightscale != FRACUNIT)
+	{
+		texheight = FixedDiv(texheight, texheightscale);
+	}
 	if (curline->linedef->flags & ML_DONTPEGBOTTOM)
 	{
-		dc_texturemid = MAX (frontsector->floortexz, backsector->floortexz) + texheight;
+		dc_texturemid = MAX (frontsector->GetPlaneTexZ(sector_t::floor), backsector->GetPlaneTexZ(sector_t::floor)) + texheight;
 	}
 	else
 	{
-		dc_texturemid = MIN (frontsector->ceilingtexz, backsector->ceilingtexz);
+		dc_texturemid = MIN (frontsector->GetPlaneTexZ(sector_t::ceiling), backsector->GetPlaneTexZ(sector_t::ceiling));
 	}
-	if (tex->bWorldPanning)
+
+	{ // encapsulate the lifetime of rowoffset
+		fixed_t rowoffset = curline->sidedef->GetTextureYOffset(side_t::mid);
+		if (tex->bWorldPanning)
+		{
+			// rowoffset is added before the MulScale3 so that the masked texture will
+			// still be positioned in world units rather than texels.
+			dc_texturemid += rowoffset - viewz;
+			textop = dc_texturemid;
+			dc_texturemid = MulScale16 (dc_texturemid, MaskedScaleY);
+		}
+		else
+		{
+			// rowoffset is added outside the multiply so that it positions the texture
+			// by texels instead of world units.
+			textop = dc_texturemid - viewz + SafeDivScale16 (rowoffset, MaskedScaleY);
+			dc_texturemid = MulScale16 (dc_texturemid - viewz, MaskedScaleY) + rowoffset;
+		}
+	}
+
+	if (fixedlightlev >= 0)
+		dc_colormap = basecolormap->Maps + fixedlightlev;
+	else if (fixedcolormap != NULL)
+		dc_colormap = fixedcolormap;
+
+	if (!(curline->linedef->flags & ML_WRAP_MIDTEX) &&
+		!(curline->sidedef->Flags & WALLF_WRAP_MIDTEX))
+	{ // Texture does not wrap vertically.
+
+		// [RH] Don't bother drawing segs that are completely offscreen
+		if (MulScale12 (globaldclip, ds->sz1) < -textop &&
+			MulScale12 (globaldclip, ds->sz2) < -textop)
+		{ // Texture top is below the bottom of the screen
+			goto clearfog;
+		}
+
+		if (MulScale12 (globaluclip, ds->sz1) > texheight - textop &&
+			MulScale12 (globaluclip, ds->sz2) > texheight - textop)
+		{ // Texture bottom is above the top of the screen
+			goto clearfog;
+		}
+
+		if ((fake3D & FAKE3D_CLIPBOTTOM) && textop < sclipBottom - viewz)
+		{
+			notrelevant = true;
+			goto clearfog;
+		}
+		if ((fake3D & FAKE3D_CLIPTOP) && textop - texheight > sclipTop - viewz)
+		{
+			notrelevant = true;
+			goto clearfog;
+		}
+
+		WallSZ1 = ds->sz1;
+		WallSZ2 = ds->sz2;
+		WallSX1 = ds->sx1;
+		WallSX2 = ds->sx2;
+
+		if (fake3D & FAKE3D_CLIPTOP)
+		{
+			OWallMost (wallupper, textop < sclipTop - viewz ? textop : sclipTop - viewz);
+		}
+		else
+		{
+			OWallMost (wallupper, textop);
+		}
+		if (fake3D & FAKE3D_CLIPBOTTOM)
+		{
+			OWallMost (walllower, textop - texheight > sclipBottom - viewz ? textop - texheight : sclipBottom - viewz);
+		}
+		else
+		{
+			OWallMost (walllower, textop - texheight);
+		}
+
+		for (i = x1; i <= x2; i++)
+		{
+			if (wallupper[i] < mceilingclip[i])
+				wallupper[i] = mceilingclip[i];
+		}
+		for (i = x1; i <= x2; i++)
+		{
+			if (walllower[i] > mfloorclip[i])
+				walllower[i] = mfloorclip[i];
+		}
+
+		if (CurrentSkybox)
+		{ // Midtex clipping doesn't work properly with skyboxes, since you're normally below the floor
+		  // or above the ceiling, so the appropriate end won't be clipped automatically when adding
+		  // this drawseg.
+			if ((curline->linedef->flags & ML_CLIP_MIDTEX) ||
+				(curline->sidedef->Flags & WALLF_CLIP_MIDTEX))
+			{
+				ClipMidtex(x1, x2);
+			}
+		}
+
+		mfloorclip = walllower;
+		mceilingclip = wallupper;
+
+		// draw the columns one at a time
+		if (drawmode == DoDraw0)
+		{
+			for (dc_x = x1; dc_x <= x2; ++dc_x)
+			{
+				BlastMaskedColumn (R_DrawMaskedColumn, tex);
+			}
+		}
+		else
+		{
+			// [RH] Draw up to four columns at once
+			int stop = (x2+1) & ~3;
+
+			if (x1 > x2)
+				goto clearfog;
+
+			dc_x = x1;
+
+			while ((dc_x < stop) && (dc_x & 3))
+			{
+				BlastMaskedColumn (R_DrawMaskedColumn, tex);
+				dc_x++;
+			}
+
+			while (dc_x < stop)
+			{
+				rt_initcols();
+				BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex); dc_x++;
+				BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex); dc_x++;
+				BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex); dc_x++;
+				BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex);
+				rt_draw4cols (dc_x - 3);
+				dc_x++;
+			}
+
+			while (dc_x <= x2)
+			{
+				BlastMaskedColumn (R_DrawMaskedColumn, tex);
+				dc_x++;
+			}
+		}
+	}
+	else
+	{ // Texture does wrap vertically.
+		WallSZ1 = ds->sz1;
+		WallSZ2 = ds->sz2;
+		WallSX1 = ds->sx1;
+		WallSX2 = ds->sx2;
+
+		if (CurrentSkybox)
+		{ // Midtex clipping doesn't work properly with skyboxes, since you're normally below the floor
+		  // or above the ceiling, so the appropriate end won't be clipped automatically when adding
+		  // this drawseg.
+			if ((curline->linedef->flags & ML_CLIP_MIDTEX) ||
+				(curline->sidedef->Flags & WALLF_CLIP_MIDTEX))
+			{
+				ClipMidtex(x1, x2);
+			}
+		}
+
+		if (fake3D & FAKE3D_CLIPTOP)
+		{
+			OWallMost (wallupper, sclipTop - viewz);
+			for (i = x1; i <= x2; i++)
+			{
+				if (wallupper[i] < mceilingclip[i])
+					wallupper[i] = mceilingclip[i];
+			}
+			mceilingclip = wallupper;
+		}			
+		if (fake3D & FAKE3D_CLIPBOTTOM)
+		{
+			OWallMost (walllower, sclipBottom - viewz);
+			for (i = x1; i <= x2; i++)
+			{
+				if (walllower[i] > mfloorclip[i])
+					walllower[i] = mfloorclip[i];
+			}
+			mfloorclip = walllower;
+		}
+
+		rw_offset = 0;
+		rw_pic = tex;
+		wallscan_np2_ds(ds, x1, x2, mceilingclip, mfloorclip, MaskedSWall, maskedtexturecol, ds->yrepeat);
+	}
+
+clearfog:
+	R_FinishSetPatchStyle ();
+	if (ds->bFakeBoundary & 3)
+	{
+		R_RenderFakeWallRange(ds, x1, x2);
+	}
+	if (!notrelevant)
+	{
+		if (fake3D & FAKE3D_REFRESHCLIP)
+		{
+			assert(ds->bkup >= 0);
+			memcpy(openings + ds->sprtopclip, openings + ds->bkup, (ds->x2-ds->x1+1) * 2);
+		}
+		else
+		{
+			clearbufshort(openings + ds->sprtopclip - ds->x1 + x1, x2-x1+1, viewheight);
+		}
+	}
+	return;
+}
+
+// kg3D - render one fake wall
+void R_RenderFakeWall(drawseg_t *ds, int x1, int x2, F3DFloor *rover)
+{
+	int i;
+	fixed_t xscale, yscale;
+
+	fixed_t Alpha = Scale(rover->alpha, OPAQUE, 255);
+	ESPSResult drawmode;
+	drawmode = R_SetPatchStyle (LegacyRenderStyles[rover->flags & FF_ADDITIVETRANS ? STYLE_Add : STYLE_Translucent],
+		Alpha,	0, 0);
+
+	if(drawmode == DontDraw) {
+		R_FinishSetPatchStyle();
+		return;
+	}
+
+	rw_lightstep = ds->lightstep;
+	rw_light = ds->light + (x1 - ds->x1) * rw_lightstep;
+
+	mfloorclip = openings + ds->sprbottomclip - ds->x1;
+	mceilingclip = openings + ds->sprtopclip - ds->x1;
+
+	spryscale = ds->iscale + ds->iscalestep * (x1 - ds->x1);
+	rw_scalestep = ds->iscalestep;
+	MaskedSWall = (fixed_t *)(openings + ds->swall) - ds->x1;
+
+	// find positioning
+	xscale = FixedMul(rw_pic->xScale, sidedef->GetTextureXScale(side_t::mid));
+	yscale = FixedMul(rw_pic->yScale, sidedef->GetTextureYScale(side_t::mid));
+	// encapsulate the lifetime of rowoffset
+	fixed_t rowoffset = curline->sidedef->GetTextureYOffset(side_t::mid) + rover->master->sidedef[0]->GetTextureYOffset(side_t::mid);
+	dc_texturemid = rover->model->GetPlaneTexZ(sector_t::ceiling);
+	rw_offset = curline->sidedef->GetTextureXOffset(side_t::mid) + rover->master->sidedef[0]->GetTextureXOffset(side_t::mid);
+	if (rowoffset < 0)
+	{
+		rowoffset += rw_pic->GetHeight() << FRACBITS;
+	}
+	if (rw_pic->bWorldPanning)
 	{
 		// rowoffset is added before the MulScale3 so that the masked texture will
 		// still be positioned in world units rather than texels.
-		dc_texturemid += curline->sidedef->rowoffset - viewz;
-		textop = dc_texturemid;
-		dc_texturemid = MulScale3 (dc_texturemid, scaley);
+
+		dc_texturemid = MulScale16(dc_texturemid - viewz + rowoffset, yscale);
+		rw_offset = MulScale16 (rw_offset, xscale);
 	}
 	else
 	{
 		// rowoffset is added outside the multiply so that it positions the texture
 		// by texels instead of world units.
-		textop = dc_texturemid - viewz + SafeDivScale3 (curline->sidedef->rowoffset, scaley);
-		dc_texturemid = MulScale3 (dc_texturemid - viewz, scaley) + curline->sidedef->rowoffset;
+		dc_texturemid = MulScale16(dc_texturemid - viewz, yscale) + rowoffset;
 	}
 
-	// [RH] Don't bother drawing segs that are completely offscreen
-	if (MulScale12 (globaldclip, ds->sz1) < -textop &&
-		MulScale12 (globaldclip, ds->sz2) < -textop)
-	{ // Texture top is below the bottom of the screen
-		goto clearfog;
-	}
-
-	if (MulScale12 (globaluclip, ds->sz1) > texheight - textop &&
-		MulScale12 (globaluclip, ds->sz2) > texheight - textop)
-	{ // Texture bottom is above the top of the screen
-		goto clearfog;
-	}
+	if (fixedlightlev >= 0)
+		dc_colormap = basecolormap->Maps + fixedlightlev;
+	else if (fixedcolormap != NULL)
+		dc_colormap = fixedcolormap;
 
 	WallSZ1 = ds->sz1;
 	WallSZ2 = ds->sz2;
 	WallSX1 = ds->sx1;
 	WallSX2 = ds->sx2;
+	WallTX1 = ds->cx;
+	WallTY1 = ds->cy;
+	WallTX2 = WallTX1 + ds->cdx;
+	WallTY2 = WallTY1 + ds->cdy;
+	WallDepthScale = ds->WallDepthScale;
+	WallDepthOrg = ds->WallDepthOrg;
+	WallUoverZorg = ds->WallUoverZorg;
+	WallUoverZstep = ds->WallUoverZstep;
+	WallInvZorg = ds->WallInvZorg;
+	WallInvZstep = ds->WallInvZstep;
 
-	OWallMost (wallupper, textop);
-	OWallMost (walllower, textop - texheight);
+	OWallMost(wallupper, sclipTop - viewz);
+	OWallMost(walllower, sclipBottom - viewz);
 
 	for (i = x1; i <= x2; i++)
 	{
@@ -304,69 +628,419 @@ void R_RenderMaskedSegRange (drawseg_t *ds, int x1, int x2)
 		if (walllower[i] > mfloorclip[i])
 			walllower[i] = mfloorclip[i];
 	}
-	mfloorclip = walllower;
-	mceilingclip = wallupper;
 
-	if (fixedlightlev)
-		dc_colormap = basecolormap + fixedlightlev;
-	else if (fixedcolormap)
-		dc_colormap = fixedcolormap;
+	PrepLWall (lwall, curline->sidedef->TexelLength*xscale);
+	wallscan_np2_ds(ds, x1, x2, wallupper, walllower, MaskedSWall, lwall, yscale);
+	R_FinishSetPatchStyle();
+}
 
-	// draw the columns one at a time
-	if (drawmode == DoDraw0)
+// kg3D - walls of fake floors
+void R_RenderFakeWallRange (drawseg_t *ds, int x1, int x2)
+{
+	FTexture *const DONT_DRAW = ((FTexture*)(intptr_t)-1);
+	int i,j;
+	F3DFloor *rover, *fover = NULL;
+	int passed, last;
+	fixed_t floorheight;
+	fixed_t ceilingheight;
+
+	sprflipvert = false;
+	curline = ds->curline;
+
+	frontsector = curline->frontsector;
+	backsector = curline->backsector;
+
+	if (backsector == NULL)
 	{
-		for (dc_x = x1; dc_x <= x2; ++dc_x)
+		return;
+	}
+	if ((ds->bFakeBoundary & 3) == 2)
+	{
+		sector_t *sec = backsector;
+		backsector = frontsector;
+		frontsector = sec;
+	}
+
+	floorheight = backsector->CenterFloor();
+	ceilingheight = backsector->CenterCeiling();
+
+	// maybe fix clipheights
+	if (!(fake3D & FAKE3D_CLIPBOTTOM)) sclipBottom = floorheight;
+	if (!(fake3D & FAKE3D_CLIPTOP))    sclipTop = ceilingheight;
+
+	// maybe not visible
+	if (sclipBottom >= frontsector->CenterCeiling()) return;
+	if (sclipTop <= frontsector->CenterFloor()) return;
+
+	if (fake3D & FAKE3D_DOWN2UP)
+	{ // bottom to viewz
+		last = 0;
+		for (i = backsector->e->XFloor.ffloors.Size() - 1; i >= 0; i--) 
 		{
-			BlastMaskedColumn (R_DrawMaskedColumn, tex);
+			rover = backsector->e->XFloor.ffloors[i];
+			if (!(rover->flags & FF_EXISTS)) continue;
+
+			// visible?
+			passed = 0;
+			if (!(rover->flags & FF_RENDERSIDES) ||
+				rover->top.plane->a || rover->top.plane->b ||
+				rover->bottom.plane->a || rover->bottom.plane->b ||
+				rover->top.plane->Zat0() <= sclipBottom ||
+				rover->bottom.plane->Zat0() >= ceilingheight ||
+				rover->top.plane->Zat0() <= floorheight)
+			{
+				if (!i)
+				{
+					passed = 1;
+				}
+				else
+				{
+					continue;
+				}
+			}
+
+			rw_pic = NULL;
+			if (rover->bottom.plane->Zat0() >= sclipTop || passed) 
+			{
+				if (last)
+				{
+					break;
+				}
+				// maybe wall from inside rendering?
+				fover = NULL;
+				for (j = frontsector->e->XFloor.ffloors.Size() - 1; j >= 0; j--)
+				{
+					fover = frontsector->e->XFloor.ffloors[j];
+					if (fover->model == rover->model)
+					{ // never
+						fover = NULL;
+						break;
+					}
+					if (!(fover->flags & FF_EXISTS)) continue;
+					if (!(fover->flags & FF_RENDERSIDES)) continue;
+					// no sloped walls, it's bugged
+					if (fover->top.plane->a || fover->top.plane->b || fover->bottom.plane->a || fover->bottom.plane->b) continue;
+
+					// visible?
+					if (fover->top.plane->Zat0() <= sclipBottom) continue; // no
+					if (fover->bottom.plane->Zat0() >= sclipTop)
+					{ // no, last possible
+ 						fover = NULL;
+						break;
+					}
+					// it is, render inside?
+					if (!(fover->flags & (FF_BOTHPLANES|FF_INVERTPLANES)))
+					{ // no
+						fover = NULL;
+					}
+					break;
+				}
+				// nothing
+				if (!fover || j == -1)
+				{
+					break;
+				}
+				// correct texture
+				if (fover->flags & rover->flags & FF_SWIMMABLE)
+				{	// don't ever draw (but treat as something has been found)
+					rw_pic = DONT_DRAW;
+				}
+				else if(fover->flags & FF_UPPERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::top), true);
+				}
+				else if(fover->flags & FF_LOWERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::bottom), true);
+				}
+				else
+				{
+					rw_pic = TexMan(fover->master->sidedef[0]->GetTexture(side_t::mid), true);
+				}
+			} 
+			else if (frontsector->e->XFloor.ffloors.Size()) 
+			{
+				// maybe not visible?
+				fover = NULL;
+				for (j = frontsector->e->XFloor.ffloors.Size() - 1; j >= 0; j--)
+				{
+					fover = frontsector->e->XFloor.ffloors[j];
+					if (fover->model == rover->model) // never
+					{
+						break;
+					}
+					if (!(fover->flags & FF_EXISTS)) continue;
+					if (!(fover->flags & FF_RENDERSIDES)) continue;
+					// no sloped walls, it's bugged
+					if (fover->top.plane->a || fover->top.plane->b || fover->bottom.plane->a || fover->bottom.plane->b) continue;
+
+					// visible?
+					if (fover->top.plane->Zat0() <= sclipBottom) continue; // no
+					if (fover->bottom.plane->Zat0() >= sclipTop)
+					{ // visible, last possible
+ 						fover = NULL;
+						break;
+					}
+					if ((fover->flags & FF_SOLID) == (rover->flags & FF_SOLID) &&
+						!(!(fover->flags & FF_SOLID) && (fover->alpha == 255 || rover->alpha == 255))
+					)
+					{
+						break;
+					}
+					if (fover->flags & rover->flags & FF_SWIMMABLE)
+					{ // don't ever draw (but treat as something has been found)
+						rw_pic = DONT_DRAW;
+					}
+					fover = NULL; // visible
+					break;
+				}
+				if (fover && j != -1)
+				{
+					fover = NULL;
+					last = 1;
+					continue; // not visible
+				}
+			}
+			if (!rw_pic) 
+			{
+				fover = NULL;
+				if (rover->flags & FF_UPPERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::top), true);
+				}
+				else if(rover->flags & FF_LOWERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::bottom), true);
+				}
+				else
+				{
+					rw_pic = TexMan(rover->master->sidedef[0]->GetTexture(side_t::mid), true);
+				}
+			}
+			// correct colors now
+			basecolormap = frontsector->ColorMap;
+			wallshade = ds->shade;
+			if (fixedlightlev < 0)
+			{
+				if ((ds->bFakeBoundary & 3) == 2)
+				{
+					for (j = backsector->e->XFloor.lightlist.Size() - 1; j >= 0; j--)
+					{
+						if (sclipTop <= backsector->e->XFloor.lightlist[j].plane.Zat0())
+						{
+							lightlist_t *lit = &backsector->e->XFloor.lightlist[i];
+							basecolormap = lit->extra_colormap;
+							wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, *lit->p_lightlevel, lit->lightsource == NULL) + r_actualextralight);
+							break;
+						}
+					}
+				}
+				else
+				{
+					for (j = frontsector->e->XFloor.lightlist.Size() - 1; j >= 0; j--)
+					{
+						if (sclipTop <= frontsector->e->XFloor.lightlist[j].plane.Zat0())
+						{
+							lightlist_t *lit = &frontsector->e->XFloor.lightlist[j];
+							basecolormap = lit->extra_colormap;
+							wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, *lit->p_lightlevel, lit->lightsource == NULL) + r_actualextralight);
+							break;
+						}
+					}
+				}
+			}
+			if (rw_pic != DONT_DRAW)
+			{
+				R_RenderFakeWall(ds, x1, x2, fover ? fover : rover);
+			}
+			else rw_pic = NULL;
+			break;
 		}
 	}
 	else
-	{
-		// [RH] Draw up to four columns at once
-		int stop = (x2+1) & ~3;
-
-		if (x1 > x2)
-			goto clearfog;
-
-		dc_x = x1;
-
-		while ((dc_x < stop) && (dc_x & 3))
+	{ // top to viewz
+		for (i = 0; i < (int)backsector->e->XFloor.ffloors.Size(); i++)
 		{
-			BlastMaskedColumn (R_DrawMaskedColumn, tex);
-			dc_x++;
-		}
+			rover = backsector->e->XFloor.ffloors[i];
+			if (!(rover->flags & FF_EXISTS)) continue;
 
-		while (dc_x < stop)
-		{
-			rt_initcols();
-			BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex); dc_x++;
-			BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex); dc_x++;
-			BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex); dc_x++;
-			BlastMaskedColumn (R_DrawMaskedColumnHoriz, tex);
-			rt_draw4cols (dc_x - 3);
-			dc_x++;
-		}
+			// visible?
+			passed = 0;
+			if (!(rover->flags & FF_RENDERSIDES) ||
+				rover->top.plane->a || rover->top.plane->b ||
+				rover->bottom.plane->a || rover->bottom.plane->b ||
+				rover->bottom.plane->Zat0() >= sclipTop ||
+				rover->top.plane->Zat0() <= floorheight ||
+				rover->bottom.plane->Zat0() >= ceilingheight)
+			{
+				if ((unsigned)i == backsector->e->XFloor.ffloors.Size() - 1)
+				{
+					passed = 1;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			rw_pic = NULL;
+			if (rover->top.plane->Zat0() <= sclipBottom || passed)
+			{ // maybe wall from inside rendering?
+				fover = NULL;
+				for (j = 0; j < (int)frontsector->e->XFloor.ffloors.Size(); j++)
+				{
+					fover = frontsector->e->XFloor.ffloors[j];
+					if (fover->model == rover->model)
+					{ // never
+						fover = NULL;
+						break;
+					}
+					if (!(fover->flags & FF_EXISTS)) continue;
+					if (!(fover->flags & FF_RENDERSIDES)) continue;
+					// no sloped walls, it's bugged
+					if (fover->top.plane->a || fover->top.plane->b || fover->bottom.plane->a || fover->bottom.plane->b) continue;
 
-		while (dc_x <= x2)
-		{
-			BlastMaskedColumn (R_DrawMaskedColumn, tex);
-			dc_x++;
-		}
-	}
+					// visible?
+					if (fover->bottom.plane->Zat0() >= sclipTop) continue; // no
+					if (fover->top.plane->Zat0() <= sclipBottom)
+					{ // no, last possible
+ 						fover = NULL;
+						break;
+					}
+					// it is, render inside?
+					if (!(fover->flags & (FF_BOTHPLANES|FF_INVERTPLANES)))
+					{ // no
+						fover = NULL;
+					}
+					break;
+				}
+				// nothing
+				if (!fover || (unsigned)j == frontsector->e->XFloor.ffloors.Size())
+				{
+					break;
+				}
+				// correct texture
+				if (fover->flags & rover->flags & FF_SWIMMABLE)
+				{
+					rw_pic = DONT_DRAW;	// don't ever draw (but treat as something has been found)
+				}
+				else if (fover->flags & FF_UPPERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::top), true);
+				}
+				else if (fover->flags & FF_LOWERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::bottom), true);
+				}
+				else
+				{
+					rw_pic = TexMan(fover->master->sidedef[0]->GetTexture(side_t::mid), true);
+				}
+			}
+			else if (frontsector->e->XFloor.ffloors.Size())
+			{ // maybe not visible?
+				fover = NULL;
+				for (j = 0; j < (int)frontsector->e->XFloor.ffloors.Size(); j++)
+				{
+					fover = frontsector->e->XFloor.ffloors[j];
+					if (fover->model == rover->model)
+					{ // never
+						break;
+					}
+					if (!(fover->flags & FF_EXISTS)) continue;
+					if (!(fover->flags & FF_RENDERSIDES)) continue;
+					// no sloped walls, its bugged
+					if(fover->top.plane->a || fover->top.plane->b || fover->bottom.plane->a || fover->bottom.plane->b) continue;
 
-clearfog:
-	R_FinishSetPatchStyle ();
-	//if (ds->bFogBoundary)
-	{
-		clearbufshort (openings + ds->sprtopclip - ds->x1 + x1, x2-x1+1, viewheight);
+					// visible?
+					if (fover->bottom.plane->Zat0() >= sclipTop) continue; // no
+					if (fover->top.plane->Zat0() <= sclipBottom)
+					{ // visible, last possible
+ 						fover = NULL;
+						break;
+					}
+					if ((fover->flags & FF_SOLID) == (rover->flags & FF_SOLID) &&
+						!(!(rover->flags & FF_SOLID) && (fover->alpha == 255 || rover->alpha == 255))
+					)
+					{
+						break;
+					}
+					if (fover->flags & rover->flags & FF_SWIMMABLE)
+					{ // don't ever draw (but treat as something has been found)
+						rw_pic = DONT_DRAW;
+					}
+					fover = NULL; // visible
+					break;
+				}
+				if (fover && (unsigned)j != frontsector->e->XFloor.ffloors.Size())
+				{ // not visible
+					break;
+				}
+			}
+			if (rw_pic == NULL)
+			{
+				fover = NULL;
+				if (rover->flags & FF_UPPERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::top), true);
+				}
+				else if (rover->flags & FF_LOWERTEXTURE)
+				{
+					rw_pic = TexMan(curline->sidedef->GetTexture(side_t::bottom), true);
+				}
+				else
+				{
+					rw_pic = TexMan(rover->master->sidedef[0]->GetTexture(side_t::mid), true);
+				}
+			}
+			// correct colors now
+			basecolormap = frontsector->ColorMap;
+			wallshade = ds->shade;
+			if (fixedlightlev < 0)
+			{
+				if ((ds->bFakeBoundary & 3) == 2)
+				{
+					for (j = backsector->e->XFloor.lightlist.Size() - 1; j >= 0; j--)
+					{
+						if (sclipTop <= backsector->e->XFloor.lightlist[j].plane.Zat0())
+						{
+							lightlist_t *lit = &backsector->e->XFloor.lightlist[j];
+							basecolormap = lit->extra_colormap;
+							wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, *lit->p_lightlevel, lit->lightsource != NULL) + r_actualextralight);
+							break;
+						}
+					}
+				}
+				else
+				{
+					for (j = frontsector->e->XFloor.lightlist.Size() - 1; j >= 0; j--)
+					{
+						if(sclipTop <= frontsector->e->XFloor.lightlist[j].plane.Zat0())
+						{
+							lightlist_t *lit = &frontsector->e->XFloor.lightlist[j];
+							basecolormap = lit->extra_colormap;
+							wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, *lit->p_lightlevel, lit->lightsource != NULL) + r_actualextralight);
+							break;
+						}
+					}
+				}
+			}
+
+			if (rw_pic != DONT_DRAW)
+			{
+				R_RenderFakeWall(ds, x1, x2, fover ? fover : rover);
+			}
+			else
+			{
+				rw_pic = NULL;
+			}
+			break;
+		}
 	}
 	return;
 }
 
-extern int *texturewidthmask;
-
 // prevlineasm1 is like vlineasm1 but skips the loop if only drawing one pixel
-inline fixed_t prevline1 (fixed_t vince, byte *colormap, int count, fixed_t vplce, const byte *bufplce, byte *dest)
+inline fixed_t prevline1 (fixed_t vince, BYTE *colormap, int count, fixed_t vplce, const BYTE *bufplce, BYTE *dest)
 {
 	dc_iscale = vince;
 	dc_colormap = colormap;
@@ -377,44 +1051,15 @@ inline fixed_t prevline1 (fixed_t vince, byte *colormap, int count, fixed_t vplc
 	return doprevline1 ();
 }
 
-/*
-esp+00 = edi
-esp+04 = ebx
-esp+08 = esi
-esp+0c = ebp
-esp+13 = bad
-esp+14 = light
-esp+18 = &uwal[x]
-esp+1c = &lwal[x]
-esp+20 = x2
-esp+24 = &dwal[x]
-esp+28 = 
-esp+2c = xoffset
-esp+30 = yrepeat
-esp+34 = texturemid
-esp+40 = y1ve[]
-esp+50 = y2ve[]
-esp+54 =
-esp+58 =
-esp+5c =
-esp+60 = <return address>
-esp+64 = uwal
-esp+68 = dwal
-esp+6c = swal
-esp+70 = lwal
-esp+74 = getcol
-esi = x
-ebp = x2
-*/
-
 void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal,
-			   const BYTE *(*getcol)(FTexture *tex, int x))
+			   fixed_t yrepeat, const BYTE *(*getcol)(FTexture *tex, int x))
 {
-	long x, shiftval;
-	long y1ve[4], y2ve[4], u4, d4, z;
+	int x, shiftval;
+	int y1ve[4], y2ve[4], u4, d4, z;
 	char bad;
 	fixed_t light = rw_light - rw_lightstep;
-	SDWORD yrepeat, texturemid, xoffset;
+	SDWORD texturemid, xoffset;
+	BYTE *basecolormapdata;
 
 	// This function also gets used to draw skies. Unlike BUILD, skies are
 	// drawn by visplane instead of by bunch, so these checks are invalid.
@@ -432,14 +1077,16 @@ void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t 
 	rw_pic->GetHeight();	// Make sure texture size is loaded
 	shiftval = rw_pic->HeightBits;
 	setupvline (32-shiftval);
-	yrepeat = (rw_pic->ScaleY ? rw_pic->ScaleY : ty) << (11 - shiftval);
+	yrepeat >>= 2 + shiftval;
 	texturemid = dc_texturemid << (16 - shiftval);
 	xoffset = rw_offset;
+	basecolormapdata = basecolormap->Maps;
 
 	x = x1;
 	//while ((umost[x] > dmost[x]) && (x <= x2)) x++;
 
-	if (fixedcolormap)
+	bool fixed = (fixedcolormap != NULL || fixedlightlev >= 0);
+	if (fixed)
 	{
 		palookupoffse[0] = dc_colormap;
 		palookupoffse[1] = dc_colormap;
@@ -453,10 +1100,12 @@ void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t 
 		y1ve[0] = uwal[x];//max(uwal[x],umost[x]);
 		y2ve[0] = dwal[x];//min(dwal[x],dmost[x]);
 		if (y2ve[0] <= y1ve[0]) continue;
+		assert (y1ve[0] < viewheight);
+		assert (y2ve[0] <= viewheight);
 
-		if (!fixedcolormap)
+		if (!fixed)
 		{ // calculate lighting
-			dc_colormap = basecolormap + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+			dc_colormap = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
 		}
 
 		dc_source = getcol (rw_pic, (lwal[x] + xoffset) >> FRACBITS);
@@ -476,6 +1125,8 @@ void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t 
 			y1ve[z] = uwal[x+z];//max(uwal[x+z],umost[x+z]);
 			y2ve[z] = dwal[x+z];//min(dwal[x+z],dmost[x+z])-1;
 			if (y2ve[z] <= y1ve[z]) { bad += 1<<z; continue; }
+			assert (y1ve[z] < viewheight);
+			assert (y2ve[z] <= viewheight);
 
 			bufplce[z] = getcol (rw_pic, (lwal[x+z] + xoffset) >> FRACBITS);
 			vince[z] = swal[x+z] * yrepeat;
@@ -487,12 +1138,12 @@ void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t 
 			continue;
 		}
 
-		if (!fixedcolormap)
+		if (!fixed)
 		{
 			for (z = 0; z < 4; ++z)
 			{
 				light += rw_lightstep;
-				palookupoffse[z] = basecolormap + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+				palookupoffse[z] = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
 			}
 		}
 
@@ -542,10 +1193,12 @@ void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t 
 		y1ve[0] = uwal[x];//max(uwal[x],umost[x]);
 		y2ve[0] = dwal[x];//min(dwal[x],dmost[x]);
 		if (y2ve[0] <= y1ve[0]) continue;
+		assert (y1ve[0] < viewheight);
+		assert (y2ve[0] <= viewheight);
 
-		if (!fixedcolormap)
+		if (!fixed)
 		{ // calculate lighting
-			dc_colormap = basecolormap + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+			dc_colormap = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
 		}
 
 		dc_source = getcol (rw_pic, (lwal[x] + xoffset) >> FRACBITS);
@@ -562,77 +1215,520 @@ void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t 
 	NetUpdate ();
 }
 
-void wallscan_striped (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal)
+void wallscan_striped (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat)
 {
-	bool flooding = false;
-	byte *startcolormap = basecolormap;
+	FDynamicColormap *startcolormap = basecolormap;
 	int startshade = wallshade;
 	bool fogginess = foggy;
-
-	byte *floodcolormap = startcolormap;
-	int floodshade = startshade;
-	bool floodfoggy = foggy;
 
 	short most1[MAXWIDTH], most2[MAXWIDTH], most3[MAXWIDTH];
 	short *up, *down;
 
-	FExtraLight *el = frontsector->ExtraLights;
-
 	up = uwal;
 	down = most1;
 
-	for (int i = 0; i < el->NumUsedLights; ++i)
+	assert(WallSX1 <= x1);
+	assert(WallSX2 > x2);
+
+	// kg3D - fake floors instead of zdoom light list
+	for (unsigned int i = 0; i < frontsector->e->XFloor.lightlist.Size(); i++)
 	{
-		if (flooding && !el->Lights[i].bFlooder)
+		int j = WallMost (most3, frontsector->e->XFloor.lightlist[i].plane);
+		if (j != 3)
 		{
-			continue;
-		}
-
-		if (!el->Lights[i].bOverlaps)
-		{
-			int j = WallMost (most3, el->Lights[i].Plane);
-
-			if (most3[x1] > dwal[x1] && most3[x2] > dwal[x2])
-			{ // Done - does not work as well as I thought it would
-				//break;
-			}
-
-			if (j != 3 && (most3[x1] > up[x1] || most3[x2] > up[x2]))
+			for (int j = x1; j <= x2; ++j)
 			{
-				for (int j = x1; j <= x2; ++j)
-				{
-					down[j] = clamp (most3[j], up[j], dwal[j]);
-				}
-				wallscan (x1, x2, up, down, swal, lwal);
-
-				up = down;
-				down = (down == most1) ? most2 : most1;
+				down[j] = clamp (most3[j], up[j], dwal[j]);
 			}
+			wallscan (x1, x2, up, down, swal, lwal, yrepeat);
+			up = down;
+			down = (down == most1) ? most2 : most1;
 		}
 
-		if (el->Lights[i].Master == NULL)
+		lightlist_t *lit = &frontsector->e->XFloor.lightlist[i];
+		basecolormap = lit->extra_colormap;
+		wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(fogginess,
+			*lit->p_lightlevel, lit->lightsource != NULL) + r_actualextralight);
+ 	}
+
+	wallscan (x1, x2, up, dwal, swal, lwal, yrepeat);
+	basecolormap = startcolormap;
+	wallshade = startshade;
+}
+
+static void call_wallscan(int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, bool mask)
+{
+	if (mask)
+	{
+		if (colfunc == basecolfunc)
 		{
-			basecolormap = floodcolormap;
-			wallshade = floodshade;
-			fogginess = floodfoggy;
+			maskwallscan(x1, x2, uwal, dwal, swal, lwal, yrepeat);
 		}
 		else
 		{
-			basecolormap = el->Lights[i].Master->ColorMap->Maps;
-			fogginess = level.fadeto || el->Lights[i].Master->ColorMap->Fade;
-			wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(fogginess,
-				el->Lights[i].Master->lightlevel) + r_actualextralight);
-			if (el->Lights[i].bFlooder)
+			transmaskwallscan(x1, x2, uwal, dwal, swal, lwal, yrepeat);
+		}
+	}
+	else
+	{
+		if (fixedcolormap != NULL || fixedlightlev >= 0 || !(frontsector->e && frontsector->e->XFloor.lightlist.Size()))
+		{
+			wallscan(x1, x2, uwal, dwal, swal, lwal, yrepeat);
+		}
+		else
+		{
+			wallscan_striped(x1, x2, uwal, dwal, swal, lwal, yrepeat);
+		}
+	}
+}
+
+//=============================================================================
+//
+// wallscan_np2
+//
+// This is a wrapper around wallscan that helps it tile textures whose heights
+// are not powers of 2. It divides the wall into texture-sized strips and calls
+// wallscan for each of those. Since only one repetition of the texture fits
+// in each strip, wallscan will not tile.
+//
+//=============================================================================
+
+void wallscan_np2(int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, fixed_t top, fixed_t bot, bool mask)
+{
+	if (!r_np2)
+	{
+		call_wallscan(x1, x2, uwal, dwal, swal, lwal, yrepeat, mask);
+	}
+	else
+	{
+		short most1[MAXWIDTH], most2[MAXWIDTH], most3[MAXWIDTH];
+		short *up, *down;
+		fixed_t texheight = rw_pic->GetHeight() << FRACBITS;
+		fixed_t scaledtexheight = FixedDiv(texheight, yrepeat);
+		fixed_t partition;
+
+		if (yrepeat >= 0)
+		{ // normal orientation: draw strips from top to bottom
+			partition = top - (top - FixedDiv(dc_texturemid, yrepeat) - viewz) % scaledtexheight;
+			up = uwal;
+			down = most1;
+			dc_texturemid = FixedMul(partition - viewz, yrepeat) + texheight;
+			while (partition > bot)
 			{
-				floodcolormap = basecolormap;
-				floodshade = wallshade;
-				flooding = true;
+				int j = OWallMost(most3, partition - viewz);
+				if (j != 3)
+				{
+					for (int j = x1; j <= x2; ++j)
+					{
+						down[j] = clamp(most3[j], up[j], dwal[j]);
+					}
+					call_wallscan(x1, x2, up, down, swal, lwal, yrepeat, mask);
+					up = down;
+					down = (down == most1) ? most2 : most1;
+				}
+				partition -= scaledtexheight;
+				dc_texturemid -= texheight;
+ 			}
+			call_wallscan(x1, x2, up, dwal, swal, lwal, yrepeat, mask);
+		}
+		else
+		{ // upside down: draw strips from bottom to top
+			partition = bot - (bot - FixedDiv(dc_texturemid, yrepeat) - viewz) % scaledtexheight;
+			up = most1;
+			down = dwal;
+			dc_texturemid = FixedMul(partition - viewz, yrepeat) + texheight;
+			while (partition < top)
+			{
+				int j = OWallMost(most3, partition - viewz);
+				if (j != 12)
+				{
+					for (int j = x1; j <= x2; ++j)
+					{
+						up[j] = clamp(most3[j], uwal[j], down[j]);
+					}
+					call_wallscan(x1, x2, up, down, swal, lwal, yrepeat, mask);
+					down = up;
+					up = (up == most1) ? most2 : most1;
+				}
+				partition -= scaledtexheight;
+				dc_texturemid -= texheight;
+ 			}
+			call_wallscan(x1, x2, uwal, down, swal, lwal, yrepeat, mask);
+		}
+	}
+}
+
+static void wallscan_np2_ds(drawseg_t *ds, int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat)
+{
+	if (rw_pic->GetHeight() != 1 << rw_pic->HeightBits)
+	{
+		fixed_t frontcz1 = ds->curline->frontsector->ceilingplane.ZatPoint(ds->curline->v1->x, ds->curline->v1->y);
+		fixed_t frontfz1 = ds->curline->frontsector->floorplane.ZatPoint(ds->curline->v1->x, ds->curline->v1->y);
+		fixed_t frontcz2 = ds->curline->frontsector->ceilingplane.ZatPoint(ds->curline->v2->x, ds->curline->v2->y);
+		fixed_t frontfz2 = ds->curline->frontsector->floorplane.ZatPoint(ds->curline->v2->x, ds->curline->v2->y);
+		fixed_t top = MAX(frontcz1, frontcz2);
+		fixed_t bot = MIN(frontfz1, frontfz2);
+		if (fake3D & FAKE3D_CLIPTOP)
+		{
+			top = MIN(top, sclipTop);
+		}
+		if (fake3D & FAKE3D_CLIPBOTTOM)
+		{
+			bot = MAX(bot, sclipBottom);
+		}
+		wallscan_np2(x1, x2, uwal, dwal, swal, lwal, yrepeat, top, bot, true);
+	}
+	else
+	{
+		call_wallscan(x1, x2, uwal, dwal, swal, lwal, yrepeat, true);
+	}
+}
+
+inline fixed_t mvline1 (fixed_t vince, BYTE *colormap, int count, fixed_t vplce, const BYTE *bufplce, BYTE *dest)
+{
+	dc_iscale = vince;
+	dc_colormap = colormap;
+	dc_count = count;
+	dc_texturefrac = vplce;
+	dc_source = bufplce;
+	dc_dest = dest;
+	return domvline1 ();
+}
+
+void maskwallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal,
+	fixed_t yrepeat, const BYTE *(*getcol)(FTexture *tex, int x))
+{
+	int x, shiftval;
+	BYTE *p;
+	int y1ve[4], y2ve[4], u4, d4, startx, dax, z;
+	char bad;
+	fixed_t light = rw_light - rw_lightstep;
+	SDWORD texturemid, xoffset;
+	BYTE *basecolormapdata;
+
+	if (rw_pic->UseType == FTexture::TEX_Null)
+	{
+		return;
+	}
+
+	if (!rw_pic->bMasked)
+	{ // Textures that aren't masked can use the faster wallscan.
+		wallscan (x1, x2, uwal, dwal, swal, lwal, yrepeat, getcol);
+		return;
+	}
+
+//extern cycle_t WallScanCycles;
+//clock (WallScanCycles);
+
+	rw_pic->GetHeight();	// Make sure texture size is loaded
+	shiftval = rw_pic->HeightBits;
+	setupmvline (32-shiftval);
+	yrepeat >>= 2 + shiftval;
+	texturemid = dc_texturemid << (16 - shiftval);
+	xoffset = rw_offset;
+	basecolormapdata = basecolormap->Maps;
+
+	x = startx = x1;
+	p = x + dc_destorg;
+
+	bool fixed = (fixedcolormap != NULL || fixedlightlev >= 0);
+	if (fixed)
+	{
+		palookupoffse[0] = dc_colormap;
+		palookupoffse[1] = dc_colormap;
+		palookupoffse[2] = dc_colormap;
+		palookupoffse[3] = dc_colormap;
+	}
+
+	for(; (x <= x2) && ((size_t)p & 3); ++x, ++p)
+	{
+		light += rw_lightstep;
+		y1ve[0] = uwal[x];//max(uwal[x],umost[x]);
+		y2ve[0] = dwal[x];//min(dwal[x],dmost[x]);
+		if (y2ve[0] <= y1ve[0]) continue;
+
+		if (!fixed)
+		{ // calculate lighting
+			dc_colormap = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+		}
+
+		dc_source = getcol (rw_pic, (lwal[x] + xoffset) >> FRACBITS);
+		dc_dest = ylookup[y1ve[0]] + p;
+		dc_iscale = swal[x] * yrepeat;
+		dc_count = y2ve[0] - y1ve[0];
+		dc_texturefrac = texturemid + FixedMul (dc_iscale, (y1ve[0]<<FRACBITS)-centeryfrac+FRACUNIT);
+
+		domvline1();
+	}
+
+	for(; x <= x2-3; x += 4, p+= 4)
+	{
+		bad = 0;
+		for (z = 3, dax = x+3; z >= 0; --z, --dax)
+		{
+			y1ve[z] = uwal[dax];
+			y2ve[z] = dwal[dax];
+			if (y2ve[z] <= y1ve[z]) { bad += 1<<z; continue; }
+
+			bufplce[z] = getcol (rw_pic, (lwal[dax] + xoffset) >> FRACBITS);
+			vince[z] = swal[dax] * yrepeat;
+			vplce[z] = texturemid + FixedMul (vince[z], (y1ve[z]<<FRACBITS)-centeryfrac+FRACUNIT);
+		}
+		if (bad == 15)
+		{
+			light += rw_lightstep << 2;
+			continue;
+		}
+
+		if (!fixed)
+		{
+			for (z = 0; z < 4; ++z)
+			{
+				light += rw_lightstep;
+				palookupoffse[z] = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+			}
+		}
+
+		u4 = MAX(MAX(y1ve[0],y1ve[1]),MAX(y1ve[2],y1ve[3]));
+		d4 = MIN(MIN(y2ve[0],y2ve[1]),MIN(y2ve[2],y2ve[3]));
+
+		if ((bad != 0) || (u4 >= d4))
+		{
+			for (z = 0; z < 4; ++z)
+			{
+				if (!(bad & 1))
+				{
+					mvline1(vince[z],palookupoffse[z],y2ve[z]-y1ve[z],vplce[z],bufplce[z],ylookup[y1ve[z]]+p+z);
+				}
+				bad >>= 1;
+			}
+			continue;
+		}
+
+		for (z = 0; z < 4; ++z)
+		{
+			if (u4 > y1ve[z])
+			{
+				vplce[z] = mvline1(vince[z],palookupoffse[z],u4-y1ve[z],vplce[z],bufplce[z],ylookup[y1ve[z]]+p+z);
+			}
+		}
+
+		if (d4 > u4)
+		{
+			dc_count = d4-u4;
+			dc_dest = ylookup[u4]+p;
+			domvline4();
+		}
+
+		BYTE *i = p+ylookup[d4];
+		for (z = 0; z < 4; ++z)
+		{
+			if (y2ve[z] > d4)
+			{
+				mvline1(vince[z],palookupoffse[0],y2ve[z]-d4,vplce[z],bufplce[z],i+z);
 			}
 		}
 	}
-	wallscan (x1, x2, up, dwal, swal, lwal);
-	basecolormap = startcolormap;
-	wallshade = startshade;
+	for(; x <= x2; ++x, ++p)
+	{
+		light += rw_lightstep;
+		y1ve[0] = uwal[x];
+		y2ve[0] = dwal[x];
+		if (y2ve[0] <= y1ve[0]) continue;
+
+		if (!fixed)
+		{ // calculate lighting
+			dc_colormap = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+		}
+
+		dc_source = getcol (rw_pic, (lwal[x] + xoffset) >> FRACBITS);
+		dc_dest = ylookup[y1ve[0]] + p;
+		dc_iscale = swal[x] * yrepeat;
+		dc_count = y2ve[0] - y1ve[0];
+		dc_texturefrac = texturemid + FixedMul (dc_iscale, (y1ve[0]<<FRACBITS)-centeryfrac+FRACUNIT);
+
+		domvline1();
+	}
+
+//unclock(WallScanCycles);
+
+	NetUpdate ();
+}
+
+inline void preptmvline1 (fixed_t vince, BYTE *colormap, int count, fixed_t vplce, const BYTE *bufplce, BYTE *dest)
+{
+	dc_iscale = vince;
+	dc_colormap = colormap;
+	dc_count = count;
+	dc_texturefrac = vplce;
+	dc_source = bufplce;
+	dc_dest = dest;
+}
+
+void transmaskwallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal,
+	fixed_t yrepeat, const BYTE *(*getcol)(FTexture *tex, int x))
+{
+	fixed_t (*tmvline1)();
+	void (*tmvline4)();
+	int x, shiftval;
+	BYTE *p;
+	int y1ve[4], y2ve[4], u4, d4, startx, dax, z;
+	char bad;
+	fixed_t light = rw_light - rw_lightstep;
+	SDWORD texturemid, xoffset;
+	BYTE *basecolormapdata;
+
+	if (rw_pic->UseType == FTexture::TEX_Null)
+	{
+		return;
+	}
+
+	if (!R_GetTransMaskDrawers (&tmvline1, &tmvline4))
+	{
+		// The current translucency is unsupported, so draw with regular maskwallscan instead.
+		maskwallscan (x1, x2, uwal, dwal, swal, lwal, yrepeat, getcol);
+		return;
+	}
+
+//extern cycle_t WallScanCycles;
+//clock (WallScanCycles);
+
+	rw_pic->GetHeight();	// Make sure texture size is loaded
+	shiftval = rw_pic->HeightBits;
+	setuptmvline (32-shiftval);
+	yrepeat >>= 2 + shiftval;
+	texturemid = dc_texturemid << (16 - shiftval);
+	xoffset = rw_offset;
+	basecolormapdata = basecolormap->Maps;
+
+	x = startx = x1;
+	p = x + dc_destorg;
+
+	bool fixed = (fixedcolormap != NULL || fixedlightlev >= 0);
+	if (fixed)
+	{
+		palookupoffse[0] = dc_colormap;
+		palookupoffse[1] = dc_colormap;
+		palookupoffse[2] = dc_colormap;
+		palookupoffse[3] = dc_colormap;
+	}
+
+	for(; (x <= x2) && ((size_t)p & 3); ++x, ++p)
+	{
+		light += rw_lightstep;
+		y1ve[0] = uwal[x];//max(uwal[x],umost[x]);
+		y2ve[0] = dwal[x];//min(dwal[x],dmost[x]);
+		if (y2ve[0] <= y1ve[0]) continue;
+
+		if (!fixed)
+		{ // calculate lighting
+			dc_colormap = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+		}
+
+		dc_source = getcol (rw_pic, (lwal[x] + xoffset) >> FRACBITS);
+		dc_dest = ylookup[y1ve[0]] + p;
+		dc_iscale = swal[x] * yrepeat;
+		dc_count = y2ve[0] - y1ve[0];
+		dc_texturefrac = texturemid + FixedMul (dc_iscale, (y1ve[0]<<FRACBITS)-centeryfrac+FRACUNIT);
+
+		tmvline1();
+	}
+
+	for(; x <= x2-3; x += 4, p+= 4)
+	{
+		bad = 0;
+		for (z = 3, dax = x+3; z >= 0; --z, --dax)
+		{
+			y1ve[z] = uwal[dax];
+			y2ve[z] = dwal[dax];
+			if (y2ve[z] <= y1ve[z]) { bad += 1<<z; continue; }
+
+			bufplce[z] = getcol (rw_pic, (lwal[dax] + xoffset) >> FRACBITS);
+			vince[z] = swal[dax] * yrepeat;
+			vplce[z] = texturemid + FixedMul (vince[z], (y1ve[z]<<FRACBITS)-centeryfrac+FRACUNIT);
+		}
+		if (bad == 15)
+		{
+			light += rw_lightstep << 2;
+			continue;
+		}
+
+		if (!fixed)
+		{
+			for (z = 0; z < 4; ++z)
+			{
+				light += rw_lightstep;
+				palookupoffse[z] = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+			}
+		}
+
+		u4 = MAX(MAX(y1ve[0],y1ve[1]),MAX(y1ve[2],y1ve[3]));
+		d4 = MIN(MIN(y2ve[0],y2ve[1]),MIN(y2ve[2],y2ve[3]));
+
+		if ((bad != 0) || (u4 >= d4))
+		{
+			for (z = 0; z < 4; ++z)
+			{
+				if (!(bad & 1))
+				{
+					preptmvline1(vince[z],palookupoffse[z],y2ve[z]-y1ve[z],vplce[z],bufplce[z],ylookup[y1ve[z]]+p+z);
+					tmvline1();
+				}
+				bad >>= 1;
+			}
+			continue;
+		}
+
+		for (z = 0; z < 4; ++z)
+		{
+			if (u4 > y1ve[z])
+			{
+				preptmvline1(vince[z],palookupoffse[z],u4-y1ve[z],vplce[z],bufplce[z],ylookup[y1ve[z]]+p+z);
+				vplce[z] = tmvline1();
+			}
+		}
+
+		if (d4 > u4)
+		{
+			dc_count = d4-u4;
+			dc_dest = ylookup[u4]+p;
+			tmvline4();
+		}
+
+		BYTE *i = p+ylookup[d4];
+		for (z = 0; z < 4; ++z)
+		{
+			if (y2ve[z] > d4)
+			{
+				preptmvline1(vince[z],palookupoffse[0],y2ve[z]-d4,vplce[z],bufplce[z],i+z);
+				tmvline1();
+			}
+		}
+	}
+	for(; x <= x2; ++x, ++p)
+	{
+		light += rw_lightstep;
+		y1ve[0] = uwal[x];
+		y2ve[0] = dwal[x];
+		if (y2ve[0] <= y1ve[0]) continue;
+
+		if (!fixed)
+		{ // calculate lighting
+			dc_colormap = basecolormapdata + (GETPALOOKUP (light, wallshade) << COLORMAPSHIFT);
+		}
+
+		dc_source = getcol (rw_pic, (lwal[x] + xoffset) >> FRACBITS);
+		dc_dest = ylookup[y1ve[0]] + p;
+		dc_iscale = swal[x] * yrepeat;
+		dc_count = y2ve[0] - y1ve[0];
+		dc_texturefrac = texturemid + FixedMul (dc_iscale, (y1ve[0]<<FRACBITS)-centeryfrac+FRACUNIT);
+
+		tmvline1();
+	}
+
+//unclock(WallScanCycles);
+
+	NetUpdate ();
 }
 
 //
@@ -650,12 +1746,12 @@ void R_RenderSegLoop ()
 	int x1 = rw_x;
 	int x2 = rw_stopx;
 	int x;
-	int xscale;
+	fixed_t xscale, yscale;
 	fixed_t xoffset = rw_offset;
 
-	if (fixedlightlev)
-		dc_colormap = basecolormap + fixedlightlev;
-	else if (fixedcolormap)
+	if (fixedlightlev >= 0)
+		dc_colormap = basecolormap->Maps + fixedlightlev;
+	else if (fixedcolormap != NULL)
 		dc_colormap = fixedcolormap;
 
 	// clip wall to the floor and ceiling
@@ -676,7 +1772,7 @@ void R_RenderSegLoop ()
 	{
 		for (x = x1; x < x2; ++x)
 		{
-			short top = ceilingclip[x];
+			short top = (fakeFloor && fake3D & 2) ? fakeFloor->ceilingclip[x] : ceilingclip[x];
 			short bottom = MIN (walltop[x], floorclip[x]);
 			if (top < bottom)
 			{
@@ -692,14 +1788,45 @@ void R_RenderSegLoop ()
 		for (x = x1; x < x2; ++x)
 		{
 			short top = MAX (wallbottom[x], ceilingclip[x]);
-			short bottom = floorclip[x];
+			short bottom = (fakeFloor && fake3D & 1) ? fakeFloor->floorclip[x] : floorclip[x];
 			if (top < bottom)
 			{
+				assert (bottom <= viewheight);
 				floorplane->top[x] = top;
 				floorplane->bottom[x] = bottom;
 			}
 		}
 	}
+
+	// kg3D - fake planes clipping
+	if (fake3D & FAKE3D_REFRESHCLIP)
+	{
+		if (fake3D & FAKE3D_CLIPBOTFRONT)
+		{
+			memcpy (fakeFloor->floorclip+x1, wallbottom+x1, (x2-x1)*sizeof(short));
+		}
+		else
+		{
+			for (x = x1; x < x2; ++x)
+			{
+				walllower[x] = MIN (MAX (walllower[x], ceilingclip[x]), wallbottom[x]);
+			}
+			memcpy (fakeFloor->floorclip+x1, walllower+x1, (x2-x1)*sizeof(short));
+		}
+		if (fake3D & FAKE3D_CLIPTOPFRONT)
+		{
+			memcpy (fakeFloor->ceilingclip+x1, walltop+x1, (x2-x1)*sizeof(short));
+		}
+		else
+		{
+			for (x = x1; x < x2; ++x)
+			{
+				wallupper[x] = MAX (MIN (wallupper[x], floorclip[x]), walltop[x]);
+			}
+			memcpy (fakeFloor->ceilingclip+x1, wallupper+x1, (x2-x1)*sizeof(short));
+		}
+	}
+	if(fake3D & 7) return;
 
 	// draw the wall tiers
 	if (midtexture)
@@ -708,23 +1835,32 @@ void R_RenderSegLoop ()
 		{
 			dc_texturemid = rw_midtexturemid;
 			rw_pic = midtexture;
-			xscale = rw_pic->ScaleX ? rw_pic->ScaleX : tx;
+			xscale = FixedMul(rw_pic->xScale, rw_midtexturescalex);
+			yscale = FixedMul(rw_pic->yScale, rw_midtexturescaley);
 			if (xscale != lwallscale)
 			{
-				PrepLWall (lwall, (curline->sidedef->TexelLength*xscale) << (FRACBITS-3));
+				PrepLWall (lwall, curline->sidedef->TexelLength*xscale);
 				lwallscale = xscale;
 			}
 			if (midtexture->bWorldPanning)
 			{
-				rw_offset = MulScale3 (xoffset, midtexture->ScaleX ? midtexture->ScaleX : tx);
-			}
-			if (fixedlightlev || fixedcolormap || !frontsector->ExtraLights)
-			{
-				wallscan (x1, x2-1, walltop, wallbottom, swall, lwall);
+				rw_offset = MulScale16 (rw_offset_mid, xscale);
 			}
 			else
 			{
-				wallscan_striped (x1, x2-1, walltop, wallbottom, swall, lwall);
+				rw_offset = rw_offset_mid;
+			}
+			if (xscale < 0)
+			{
+				rw_offset = -rw_offset;
+			}
+			if (rw_pic->GetHeight() != 1 << rw_pic->HeightBits)
+			{
+				wallscan_np2(x1, x2-1, walltop, wallbottom, swall, lwall, yscale, MAX(rw_frontcz1, rw_frontcz2), MIN(rw_frontfz1, rw_frontfz2), false);
+			}
+			else
+			{
+				call_wallscan(x1, x2-1, walltop, wallbottom, swall, lwall, yscale, false);
 			}
 		}
 		clearbufshort (ceilingclip+x1, x2-x1, viewheight);
@@ -742,23 +1878,32 @@ void R_RenderSegLoop ()
 			{
 				dc_texturemid = rw_toptexturemid;
 				rw_pic = toptexture;
-				xscale = rw_pic->ScaleX ? rw_pic->ScaleX : tx;
+				xscale = FixedMul(rw_pic->xScale, rw_toptexturescalex);
+				yscale = FixedMul(rw_pic->yScale, rw_toptexturescaley);
 				if (xscale != lwallscale)
 				{
-					PrepLWall (lwall, (curline->sidedef->TexelLength*xscale) << (FRACBITS-3));
+					PrepLWall (lwall, curline->sidedef->TexelLength*xscale);
 					lwallscale = xscale;
 				}
 				if (toptexture->bWorldPanning)
 				{
-					rw_offset = MulScale3 (xoffset, toptexture->ScaleX ? toptexture->ScaleX : tx);
-				}
-				if (fixedlightlev || fixedcolormap || !frontsector->ExtraLights)
-				{
-					wallscan (x1, x2-1, walltop, wallupper, swall, lwall);
+					rw_offset = MulScale16 (rw_offset_top, xscale);
 				}
 				else
 				{
-					wallscan_striped (x1, x2-1, walltop, wallupper, swall, lwall);
+					rw_offset = rw_offset_top;
+				}
+				if (xscale < 0)
+				{
+					rw_offset = -rw_offset;
+				}
+				if (rw_pic->GetHeight() != 1 << rw_pic->HeightBits)
+				{
+					wallscan_np2(x1, x2-1, walltop, wallupper, swall, lwall, yscale, MAX(rw_frontcz1, rw_frontcz2), MIN(rw_backcz1, rw_backcz2), false);
+				}
+				else
+				{
+					call_wallscan(x1, x2-1, walltop, wallupper, swall, lwall, yscale, false);
 				}
 			}
 			memcpy (ceilingclip+x1, wallupper+x1, (x2-x1)*sizeof(short));
@@ -779,27 +1924,32 @@ void R_RenderSegLoop ()
 			{
 				dc_texturemid = rw_bottomtexturemid;
 				rw_pic = bottomtexture;
-				xscale = rw_pic->ScaleX ? rw_pic->ScaleX : tx;
+				xscale = FixedMul(rw_pic->xScale, rw_bottomtexturescalex);
+				yscale = FixedMul(rw_pic->yScale, rw_bottomtexturescaley);
 				if (xscale != lwallscale)
 				{
-					PrepLWall (lwall, (curline->sidedef->TexelLength*xscale) << (FRACBITS-3));
+					PrepLWall (lwall, curline->sidedef->TexelLength*xscale);
 					lwallscale = xscale;
 				}
 				if (bottomtexture->bWorldPanning)
 				{
-					rw_offset = MulScale3 (xoffset, bottomtexture->ScaleX ? bottomtexture->ScaleX : tx);
+					rw_offset = MulScale16 (rw_offset_bottom, xscale);
 				}
 				else
 				{
-					rw_offset = xoffset;
+					rw_offset = rw_offset_bottom;
 				}
-				if (fixedlightlev || fixedcolormap || !frontsector->ExtraLights)
+				if (xscale < 0)
 				{
-					wallscan (x1, x2-1, walllower, wallbottom, swall, lwall);
+					rw_offset = -rw_offset;
+				}
+				if (rw_pic->GetHeight() != 1 << rw_pic->HeightBits)
+				{
+					wallscan_np2(x1, x2-1, walllower, wallbottom, swall, lwall, yscale, MAX(rw_backfz1, rw_backfz2), MIN(rw_frontfz1, rw_frontfz2), false);
 				}
 				else
 				{
-					wallscan_striped (x1, x2-1, walllower, wallbottom, swall, lwall);
+					call_wallscan(x1, x2-1, walllower, wallbottom, swall, lwall, yscale, false);
 				}
 			}
 			memcpy (floorclip+x1, walllower+x1, (x2-x1)*sizeof(short));
@@ -814,7 +1964,7 @@ void R_RenderSegLoop ()
 
 void R_NewWall (bool needlights)
 {
-	fixed_t rowoffset;
+	fixed_t rowoffset, yrepeat;
 
 	rw_markmirror = false;
 
@@ -822,7 +1972,7 @@ void R_NewWall (bool needlights)
 	linedef = curline->linedef;
 
 	// mark the segment as visible for auto map
-	linedef->flags |= ML_MAPPED;
+	if (!r_dontmaplines) linedef->flags |= ML_MAPPED;
 
 	midtexture = toptexture = bottomtexture = 0;
 
@@ -837,32 +1987,48 @@ void R_NewWall (bool needlights)
 			// [RH] Horizon lines do not need to be textured
 			if (linedef->special != Line_Horizon)
 			{
-				midtexture = TexMan(sidedef->midtexture);
-				rowoffset = sidedef->rowoffset;
-				if (linedef->flags & ML_DONTPEGBOTTOM)
-				{ // bottom of texture at bottom
-					rw_midtexturemid = frontsector->floortexz + (midtexture->GetHeight() << FRACBITS);
+				midtexture = TexMan(sidedef->GetTexture(side_t::mid), true);
+				rw_offset_mid = sidedef->GetTextureXOffset(side_t::mid);
+				rowoffset = sidedef->GetTextureYOffset(side_t::mid);
+				rw_midtexturescalex = sidedef->GetTextureXScale(side_t::mid);
+				rw_midtexturescaley = sidedef->GetTextureYScale(side_t::mid);
+				yrepeat = FixedMul(midtexture->yScale, rw_midtexturescaley);
+				if (yrepeat >= 0)
+				{ // normal orientation
+					if (linedef->flags & ML_DONTPEGBOTTOM)
+					{ // bottom of texture at bottom
+						rw_midtexturemid = MulScale16(frontsector->GetPlaneTexZ(sector_t::floor) - viewz, yrepeat) + (midtexture->GetHeight() << FRACBITS);
+					}
+					else
+					{ // top of texture at top
+						rw_midtexturemid = MulScale16(frontsector->GetPlaneTexZ(sector_t::ceiling) - viewz, yrepeat);
+						if (rowoffset < 0 && midtexture != NULL)
+						{
+							rowoffset += midtexture->GetHeight() << FRACBITS;
+						}
+					}
 				}
 				else
-				{ // top of texture at top
-					rw_midtexturemid = frontsector->ceilingtexz;
-					if (rowoffset < 0 && midtexture != NULL)
-					{
-						rowoffset += midtexture->GetHeight() << FRACBITS;
+				{ // upside down
+					rowoffset = -rowoffset;
+					if (linedef->flags & ML_DONTPEGBOTTOM)
+					{ // top of texture at bottom
+						rw_midtexturemid = MulScale16(frontsector->GetPlaneTexZ(sector_t::floor) - viewz, yrepeat);
+					}
+					else
+					{ // bottom of texture at top
+						rw_midtexturemid = MulScale16(frontsector->GetPlaneTexZ(sector_t::ceiling) - viewz, yrepeat) + (midtexture->GetHeight() << FRACBITS);
 					}
 				}
 				if (midtexture->bWorldPanning)
 				{
-					rw_midtexturemid = MulScale3 (rw_midtexturemid - viewz + rowoffset,
-						midtexture->ScaleY ? midtexture->ScaleY : ty);
+					rw_midtexturemid += MulScale16(rowoffset, yrepeat);
 				}
 				else
 				{
 					// rowoffset is added outside the multiply so that it positions the texture
 					// by texels instead of world units.
-					rw_midtexturemid = MulScale3 (rw_midtexturemid - viewz,
-						midtexture->ScaleY ? midtexture->ScaleY : ty)
-						+ rowoffset;
+					rw_midtexturemid += rowoffset;
 				}
 			}
 		}
@@ -875,25 +2041,28 @@ void R_NewWall (bool needlights)
 	{ // two-sided line
 		// hack to allow height changes in outdoor areas
 
-		rw_frontlowertop = frontsector->ceilingtexz;
+		rw_frontlowertop = frontsector->GetPlaneTexZ(sector_t::ceiling);
 
-		if (frontsector->ceilingpic == skyflatnum &&
-			backsector->ceilingpic == skyflatnum)
+		if (frontsector->GetTexture(sector_t::ceiling) == skyflatnum &&
+			backsector->GetTexture(sector_t::ceiling) == skyflatnum)
 		{
 			if (rw_havehigh)
 			{ // front ceiling is above back ceiling
 				memcpy (&walltop[WallSX1], &wallupper[WallSX1], (WallSX2 - WallSX1)*sizeof(walltop[0]));
 				rw_havehigh = false;
 			}
-			else
+			else if (rw_havelow && frontsector->ceilingplane != backsector->ceilingplane)
 			{ // back ceiling is above front ceiling
+				// The check for rw_havelow is not Doom-compliant, but it avoids HoM that
+				// would otherwise occur because there is space made available for this
+				// wall but nothing to draw for it.
 				// Recalculate walltop so that the wall is clipped by the back sector's
 				// ceiling instead of the front sector's ceiling.
 				WallMost (walltop, backsector->ceilingplane);
 			}
-			// Putting sky ceilins on the front and back of a line alters the way unpegged
+			// Putting sky ceilings on the front and back of a line alters the way unpegged
 			// positioning works.
-			rw_frontlowertop = backsector->ceilingtexz;
+			rw_frontlowertop = backsector->GetPlaneTexZ(sector_t::ceiling);
 		}
 
 		if ((rw_backcz1 <= rw_frontfz1 && rw_backcz2 <= rw_frontfz2) ||
@@ -907,81 +2076,113 @@ void R_NewWall (bool needlights)
 			markfloor = rw_mustmarkfloor
 				|| backsector->floorplane != frontsector->floorplane
 				|| backsector->lightlevel != frontsector->lightlevel
-				|| backsector->floorpic != frontsector->floorpic
+				|| backsector->GetTexture(sector_t::floor) != frontsector->GetTexture(sector_t::floor)
 
 				// killough 3/7/98: Add checks for (x,y) offsets
-				|| backsector->floor_xoffs != frontsector->floor_xoffs
-				|| (backsector->floor_yoffs + backsector->base_floor_yoffs) != (frontsector->floor_yoffs + frontsector->base_floor_yoffs)
+				|| backsector->GetXOffset(sector_t::floor) != frontsector->GetXOffset(sector_t::floor)
+				|| backsector->GetYOffset(sector_t::floor) != frontsector->GetYOffset(sector_t::floor)
+				|| backsector->GetAlpha(sector_t::floor) != frontsector->GetAlpha(sector_t::floor)
 
 				// killough 4/15/98: prevent 2s normals
 				// from bleeding through deep water
 				|| frontsector->heightsec
 
-				|| backsector->FloorLight != frontsector->FloorLight
-				|| backsector->FloorFlags != frontsector->FloorFlags
+				|| backsector->GetPlaneLight(sector_t::floor) != frontsector->GetPlaneLight(sector_t::floor)
+				|| backsector->GetFlags(sector_t::floor) != frontsector->GetFlags(sector_t::floor)
 
 				// [RH] Add checks for colormaps
 				|| backsector->ColorMap != frontsector->ColorMap
 
-				|| backsector->floor_xscale != frontsector->floor_xscale
-				|| backsector->floor_yscale != frontsector->floor_yscale
+				|| backsector->GetXScale(sector_t::floor) != frontsector->GetXScale(sector_t::floor)
+				|| backsector->GetYScale(sector_t::floor) != frontsector->GetYScale(sector_t::floor)
 
-				|| (backsector->floor_angle + backsector->base_floor_angle) != (frontsector->floor_angle + frontsector->base_floor_angle)
+				|| backsector->GetAngle(sector_t::floor) != frontsector->GetAngle(sector_t::floor)
 
-				|| (sidedef->midtexture && linedef->flags & ML_CLIP_MIDTEX)
+				// kg3D - add fake lights
+				|| (frontsector->e && frontsector->e->XFloor.lightlist.Size())
+				|| (backsector->e && backsector->e->XFloor.lightlist.Size())
+
+				|| (sidedef->GetTexture(side_t::mid).isValid() &&
+					((linedef->flags & (ML_CLIP_MIDTEX|ML_WRAP_MIDTEX)) ||
+					 (sidedef->Flags & (WALLF_CLIP_MIDTEX|WALLF_WRAP_MIDTEX))))
 				;
 
-			markceiling = (frontsector->ceilingpic != skyflatnum ||
-				backsector->ceilingpic != skyflatnum) &&
+			markceiling = (frontsector->GetTexture(sector_t::ceiling) != skyflatnum ||
+				backsector->GetTexture(sector_t::ceiling) != skyflatnum) &&
 				(rw_mustmarkceiling
 				|| backsector->ceilingplane != frontsector->ceilingplane
 				|| backsector->lightlevel != frontsector->lightlevel
-				|| backsector->ceilingpic != frontsector->ceilingpic
+				|| backsector->GetTexture(sector_t::ceiling) != frontsector->GetTexture(sector_t::ceiling)
 
 				// killough 3/7/98: Add checks for (x,y) offsets
-				|| backsector->ceiling_xoffs != frontsector->ceiling_xoffs
-				|| (backsector->ceiling_yoffs + backsector->base_ceiling_yoffs) != (frontsector->ceiling_yoffs + frontsector->base_ceiling_yoffs)
+				|| backsector->GetXOffset(sector_t::ceiling) != frontsector->GetXOffset(sector_t::ceiling)
+				|| backsector->GetYOffset(sector_t::ceiling) != frontsector->GetYOffset(sector_t::ceiling)
+				|| backsector->GetAlpha(sector_t::ceiling) != frontsector->GetAlpha(sector_t::ceiling)
 
 				// killough 4/15/98: prevent 2s normals
 				// from bleeding through fake ceilings
-				|| (frontsector->heightsec && frontsector->ceilingpic != skyflatnum)
+				|| (frontsector->heightsec && frontsector->GetTexture(sector_t::ceiling) != skyflatnum)
 
-				|| backsector->CeilingLight != frontsector->CeilingLight
-				|| backsector->CeilingFlags != frontsector->CeilingFlags
+				|| backsector->GetPlaneLight(sector_t::ceiling) != frontsector->GetPlaneLight(sector_t::ceiling)
+				|| backsector->GetFlags(sector_t::ceiling) != frontsector->GetFlags(sector_t::ceiling)
 
 				// [RH] Add check for colormaps
 				|| backsector->ColorMap != frontsector->ColorMap
 
-				|| backsector->ceiling_xscale != frontsector->ceiling_xscale
-				|| backsector->ceiling_yscale != frontsector->ceiling_yscale
+				|| backsector->GetXScale(sector_t::ceiling) != frontsector->GetXScale(sector_t::ceiling)
+				|| backsector->GetYScale(sector_t::ceiling) != frontsector->GetYScale(sector_t::ceiling)
 
-				|| (backsector->ceiling_angle + backsector->base_ceiling_angle) != (frontsector->ceiling_angle + frontsector->base_ceiling_angle)
+				|| backsector->GetAngle(sector_t::ceiling) != frontsector->GetAngle(sector_t::ceiling)
 
-				|| (sidedef->midtexture && linedef->flags & ML_CLIP_MIDTEX)
+				// kg3D - add fake lights
+				|| (frontsector->e && frontsector->e->XFloor.lightlist.Size())
+				|| (backsector->e && backsector->e->XFloor.lightlist.Size())
+
+				|| (sidedef->GetTexture(side_t::mid).isValid() &&
+					((linedef->flags & (ML_CLIP_MIDTEX|ML_WRAP_MIDTEX)) ||
+					(sidedef->Flags & (WALLF_CLIP_MIDTEX|WALLF_WRAP_MIDTEX))))
 				);
 		}
 
 		if (rw_havehigh)
 		{ // top texture
-			toptexture = TexMan(sidedef->toptexture);
-			const int scale = toptexture->ScaleY ? toptexture->ScaleY : ty;
+			toptexture = TexMan(sidedef->GetTexture(side_t::top), true);
 
-			rowoffset = sidedef->rowoffset;
-			if (linedef->flags & ML_DONTPEGTOP)
-			{ // top of texture at top
-				rw_toptexturemid = MulScale3 (frontsector->ceilingtexz - viewz, scale);
-				if (rowoffset < 0 && toptexture != NULL)
-				{
-					rowoffset += toptexture->GetHeight() << FRACBITS;
+			rw_offset_top = sidedef->GetTextureXOffset(side_t::top);
+			rowoffset = sidedef->GetTextureYOffset(side_t::top);
+			rw_toptexturescalex = sidedef->GetTextureXScale(side_t::top);
+			rw_toptexturescaley = sidedef->GetTextureYScale(side_t::top);
+			yrepeat = FixedMul(toptexture->yScale, rw_toptexturescaley);
+			if (yrepeat >= 0)
+			{ // normal orientation
+				if (linedef->flags & ML_DONTPEGTOP)
+				{ // top of texture at top
+					rw_toptexturemid = MulScale16(frontsector->GetPlaneTexZ(sector_t::ceiling) - viewz, yrepeat);
+					if (rowoffset < 0 && toptexture != NULL)
+					{
+						rowoffset += toptexture->GetHeight() << FRACBITS;
+					}
+				}
+				else
+				{ // bottom of texture at bottom
+					rw_toptexturemid = MulScale16(backsector->GetPlaneTexZ(sector_t::ceiling) - viewz, yrepeat) + (toptexture->GetHeight() << FRACBITS);
 				}
 			}
 			else
-			{ // bottom of texture at bottom
-				rw_toptexturemid = MulScale3 (backsector->ceilingtexz - viewz, scale) + (toptexture->GetHeight() << FRACBITS);
+			{ // upside down
+				rowoffset = -rowoffset;
+				if (linedef->flags & ML_DONTPEGTOP)
+				{ // bottom of texture at top
+					rw_toptexturemid = MulScale16(frontsector->GetPlaneTexZ(sector_t::ceiling) - viewz, yrepeat) + (toptexture->GetHeight() << FRACBITS);
+				}
+				else
+				{ // top of texture at bottom
+					rw_toptexturemid = MulScale16(backsector->GetPlaneTexZ(sector_t::ceiling) - viewz, yrepeat);
+				}
 			}
 			if (toptexture->bWorldPanning)
 			{
-				rw_toptexturemid += MulScale3 (rowoffset, scale);
+				rw_toptexturemid += MulScale16(rowoffset, yrepeat);
 			}
 			else
 			{
@@ -990,31 +2191,47 @@ void R_NewWall (bool needlights)
 		}
 		if (rw_havelow)
 		{ // bottom texture
-			bottomtexture = TexMan(sidedef->bottomtexture);
+			bottomtexture = TexMan(sidedef->GetTexture(side_t::bottom), true);
 
-			rowoffset = sidedef->rowoffset;
-			if (linedef->flags & ML_DONTPEGBOTTOM)
-			{ // bottom of texture at bottom
-				rw_bottomtexturemid = rw_frontlowertop;
+			rw_offset_bottom = sidedef->GetTextureXOffset(side_t::bottom);
+			rowoffset = sidedef->GetTextureYOffset(side_t::bottom);
+			rw_bottomtexturescalex = sidedef->GetTextureXScale(side_t::bottom);
+			rw_bottomtexturescaley = sidedef->GetTextureYScale(side_t::bottom);
+			yrepeat = FixedMul(bottomtexture->yScale, rw_bottomtexturescaley);
+			if (yrepeat >= 0)
+			{ // normal orientation
+				if (linedef->flags & ML_DONTPEGBOTTOM)
+				{ // bottom of texture at bottom
+					rw_bottomtexturemid = MulScale16(rw_frontlowertop - viewz, yrepeat);
+				}
+				else
+				{ // top of texture at top
+					rw_bottomtexturemid = MulScale16(backsector->GetPlaneTexZ(sector_t::floor) - viewz, yrepeat);
+					if (rowoffset < 0 && bottomtexture != NULL)
+					{
+						rowoffset += bottomtexture->GetHeight() << FRACBITS;
+					}
+				}
 			}
 			else
-			{ // top of texture at top
-				rw_bottomtexturemid = backsector->floortexz;
-				if (rowoffset < 0 && bottomtexture != NULL)
-				{
-					rowoffset += bottomtexture->GetHeight() << FRACBITS;
+			{ // upside down
+				rowoffset = -rowoffset;
+				if (linedef->flags & ML_DONTPEGBOTTOM)
+				{ // top of texture at bottom
+					rw_bottomtexturemid = MulScale16(rw_frontlowertop - viewz, yrepeat);
+				}
+				else
+				{ // bottom of texture at top
+					rw_bottomtexturemid = MulScale16(backsector->GetPlaneTexZ(sector_t::floor) - viewz, yrepeat) + (bottomtexture->GetHeight() << FRACBITS);
 				}
 			}
 			if (bottomtexture->bWorldPanning)
 			{
-				rw_bottomtexturemid = MulScale3 (rw_bottomtexturemid - viewz + rowoffset,
-					bottomtexture->ScaleY ? bottomtexture->ScaleY : ty);
+				rw_bottomtexturemid += MulScale16(rowoffset, yrepeat);
 			}
 			else
 			{
-				rw_bottomtexturemid = MulScale3 (rw_bottomtexturemid - viewz,
-					bottomtexture->ScaleY ? bottomtexture->ScaleY : ty)
-					+ rowoffset;
+				rw_bottomtexturemid += rowoffset;
 			}
 		}
 	}
@@ -1023,31 +2240,42 @@ void R_NewWall (bool needlights)
 	// it is definitely invisible and doesn't need to be marked.
 
 	// killough 3/7/98: add deep water check
-	if (frontsector->heightsec == NULL ||
-		(frontsector->heightsec->MoreFlags & SECF_IGNOREHEIGHTSEC))
+	if (frontsector->GetHeightSec() == NULL)
 	{
-		if (frontsector->floorplane.ZatPoint (viewx, viewy) >= viewz)       // above view plane
+		int planeside;
+
+		planeside = frontsector->floorplane.PointOnSide(viewx, viewy, viewz);
+		if (frontsector->floorplane.c < 0)	// 3D floors have the floor backwards
+			planeside = -planeside;
+		if (planeside <= 0)		// above view plane
 			markfloor = false;
-		if (frontsector->ceilingplane.ZatPoint (viewx, viewy) <= viewz &&
-			frontsector->ceilingpic != skyflatnum)   // below view plane
-			markceiling = false;
+
+		if (frontsector->GetTexture(sector_t::ceiling) != skyflatnum)
+		{
+			planeside = frontsector->ceilingplane.PointOnSide(viewx, viewy, viewz);
+			if (frontsector->ceilingplane.c > 0)	// 3D floors have the ceiling backwards
+				planeside = -planeside;
+			if (planeside <= 0)		// below view plane
+				markceiling = false;
+		}
 	}
 
-	segtextured = TexMan(sidedef->midtexture) != NULL || toptexture != NULL || bottomtexture != NULL;
+	FTexture *midtex = TexMan(sidedef->GetTexture(side_t::mid), true);
+
+	segtextured = midtex != NULL || toptexture != NULL || bottomtexture != NULL;
 
 	// calculate light table
-	if (needlights && (segtextured || (backsector && IsFogBoundary (frontsector, backsector))))
+	if (needlights && (segtextured || (backsector && IsFogBoundary(frontsector, backsector))))
 	{
-		lwallscale = TexMan(sidedef->midtexture) ? TexMan(sidedef->midtexture)->ScaleX :
-							toptexture ? toptexture->ScaleX :
-							bottomtexture ? bottomtexture->ScaleX : 0;
-		if (lwallscale == 0)
-		{
-			lwallscale = tx;
-		}
-		PrepWall (swall, lwall, (sidedef->TexelLength*lwallscale) << (FRACBITS-3));
+		lwallscale =
+			midtex ? FixedMul(midtex->xScale, sidedef->GetTextureXScale(side_t::mid)) :
+			toptexture ? FixedMul(toptexture->xScale, sidedef->GetTextureXScale(side_t::top)) :
+			bottomtexture ? FixedMul(bottomtexture->xScale, sidedef->GetTextureXScale(side_t::bottom)) :
+			FRACUNIT;
 
-		if (!fixedcolormap)
+		PrepWall (swall, lwall, sidedef->TexelLength * lwallscale);
+
+		if (fixedcolormap == NULL && fixedlightlev < 0)
 		{
 			wallshade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, frontsector->lightlevel)
 				+ r_actualextralight);
@@ -1063,23 +2291,6 @@ void R_NewWall (bool needlights)
 	}
 }
 
-int side_s::GetLightLevel (bool foggy, int baselight) const
-{
-	// [RH] Get wall light level
-	if (this->Flags & WALLF_ABSLIGHTING)
-	{
-		return (BYTE)this->Light;
-	}
-	else
-	{
-		if (!foggy) // Don't do relative lighting in foggy sectors
-		{
-			baselight += this->Light * 2;
-		}
-		return baselight;
-	}
-}
-
 
 //
 // R_CheckDrawSegs
@@ -1091,11 +2302,11 @@ void R_CheckDrawSegs ()
 	{ // [RH] Grab some more drawsegs
 		size_t newdrawsegs = MaxDrawSegs ? MaxDrawSegs*2 : 32;
 		ptrdiff_t firstofs = firstdrawseg - drawsegs;
-		drawsegs = (drawseg_t *)Realloc (drawsegs, newdrawsegs * sizeof(drawseg_t));
+		drawsegs = (drawseg_t *)M_Realloc (drawsegs, newdrawsegs * sizeof(drawseg_t));
 		firstdrawseg = drawsegs + firstofs;
 		ds_p = drawsegs + MaxDrawSegs;
 		MaxDrawSegs = newdrawsegs;
-		DPrintf ("MaxDrawSegs increased to %d\n", MaxDrawSegs);
+		DPrintf ("MaxDrawSegs increased to %zu\n", MaxDrawSegs);
 	}
 }
 
@@ -1103,19 +2314,21 @@ void R_CheckDrawSegs ()
 // R_CheckOpenings
 //
 
-void R_CheckOpenings (size_t need)
-{	
-	need += lastopening;
-
-	if (need > maxopenings)
+ptrdiff_t R_NewOpening (ptrdiff_t len)
+{
+	ptrdiff_t res = lastopening;
+	lastopening += len;
+	if ((size_t)lastopening > maxopenings)
 	{
 		do
 			maxopenings = maxopenings ? maxopenings*2 : 16384;
-		while (need > maxopenings);
-		openings = (short *)Realloc (openings, maxopenings * sizeof(*openings));
-		DPrintf ("MaxOpenings increased to %u\n", maxopenings);
+		while ((size_t)lastopening > maxopenings);
+		openings = (short *)M_Realloc (openings, maxopenings * sizeof(*openings));
+		DPrintf ("MaxOpenings increased to %zu\n", maxopenings);
 	}
+	return res;
 }
+
 
 //
 // R_StoreWallRange
@@ -1124,6 +2337,7 @@ void R_CheckOpenings (size_t need)
 
 void R_StoreWallRange (int start, int stop)
 {
+	int i;
 	bool maskedtexture = false;
 
 #ifdef RANGECHECK
@@ -1140,13 +2354,23 @@ void R_StoreWallRange (int start, int stop)
 		R_NewWall (true);
 	}
 
-	rw_offset = sidedef->textureoffset;
+	rw_offset = sidedef->GetTextureXOffset(side_t::mid);
 	rw_light = rw_lightleft + rw_lightstep * (start - WallSX1);
 
 	ds_p->sx1 = WallSX1;
 	ds_p->sx2 = WallSX2;
 	ds_p->sz1 = WallSZ1;
 	ds_p->sz2 = WallSZ2;
+	ds_p->cx = WallTX1;
+	ds_p->cy = WallTY1;
+	ds_p->cdx = WallTX2 - WallTX1;
+	ds_p->cdy = WallTY2 - WallTY1;
+	ds_p->WallDepthScale = WallDepthScale;
+	ds_p->WallDepthOrg = WallDepthOrg;
+	ds_p->WallUoverZorg = WallUoverZorg;
+	ds_p->WallUoverZstep = WallUoverZstep;
+	ds_p->WallInvZorg = WallInvZorg;
+	ds_p->WallInvZstep = WallInvZstep;
 	ds_p->siz1 = (DWORD)DivScale32 (1, WallSZ1) >> 1;
 	ds_p->siz2 = (DWORD)DivScale32 (1, WallSZ2) >> 1;
 	ds_p->x1 = rw_x = start;
@@ -1154,15 +2378,17 @@ void R_StoreWallRange (int start, int stop)
 	ds_p->curline = curline;
 	rw_stopx = stop;
 	ds_p->bFogBoundary = false;
+	ds_p->bFakeBoundary = false;
+	if(fake3D & 7) ds_p->fake = 1;
+	else ds_p->fake = 0;
 
 	// killough 1/6/98, 2/1/98: remove limit on openings
-	R_CheckOpenings ((stop - start)*6);
-
-	ds_p->sprtopclip = ds_p->sprbottomclip = ds_p->maskedtexturecol = ds_p->swall = -1;
+	ds_p->sprtopclip = ds_p->sprbottomclip = ds_p->maskedtexturecol = ds_p->bkup = ds_p->swall = -1;
 
 	if (rw_markmirror)
 	{
-		WallMirrors.Push (ds_p - drawsegs);
+		size_t drawsegnum = ds_p - drawsegs;
+		WallMirrors.Push (drawsegnum);
 		ds_p->silhouette = SIL_BOTH;
 	}
 	else if (backsector == NULL)
@@ -1179,13 +2405,13 @@ void R_StoreWallRange (int start, int stop)
 		ds_p->silhouette = 0;
 
 		if (rw_frontfz1 > rw_backfz1 || rw_frontfz2 > rw_backfz2 ||
-			backsector->floorplane.ZatPoint (viewx, viewy) > viewz)
+			backsector->floorplane.PointOnSide(viewx, viewy, viewz) < 0)
 		{
 			ds_p->silhouette = SIL_BOTTOM;
 		}
 
 		if (rw_frontcz1 < rw_backcz1 || rw_frontcz2 < rw_backcz2 ||
-			backsector->ceilingplane.ZatPoint (viewx, viewy) < viewz)
+			backsector->ceilingplane.PointOnSide(viewx, viewy, viewz) < 0)
 		{
 			ds_p->silhouette |= SIL_TOP;
 		}
@@ -1214,38 +2440,71 @@ void R_StoreWallRange (int start, int stop)
 			}
 		}
 
+		if(!ds_p->fake && r_3dfloors && backsector->e && backsector->e->XFloor.ffloors.Size()) {
+			for(i = 0; i < (int)backsector->e->XFloor.ffloors.Size(); i++) {
+				F3DFloor *rover = backsector->e->XFloor.ffloors[i];
+				if(rover->flags & FF_RENDERSIDES && (!(rover->flags & FF_INVERTSIDES) || rover->flags & FF_ALLSIDES)) {
+					ds_p->bFakeBoundary |= 1;
+					break;
+				}
+			}
+		}
+		if(!ds_p->fake && r_3dfloors && frontsector->e && frontsector->e->XFloor.ffloors.Size()) {
+			for(i = 0; i < (int)frontsector->e->XFloor.ffloors.Size(); i++) {
+				F3DFloor *rover = frontsector->e->XFloor.ffloors[i];
+				if(rover->flags & FF_RENDERSIDES && (rover->flags & FF_ALLSIDES || rover->flags & FF_INVERTSIDES)) {
+					ds_p->bFakeBoundary |= 2;
+					break;
+				}
+			}
+		}
+		// kg3D - no for fakes
+		if(!ds_p->fake)
 		// allocate space for masked texture tables, if needed
 		// [RH] Don't just allocate the space; fill it in too.
-		if ((TexMan(sidedef->midtexture)->UseType != FTexture::TEX_Null || IsFogBoundary (frontsector, backsector)) &&
-			(rw_ceilstat != 12 || sidedef->toptexture == 0) &&
-			(rw_floorstat != 3 || sidedef->bottomtexture == 0) &&
+		if ((TexMan(sidedef->GetTexture(side_t::mid), true)->UseType != FTexture::TEX_Null || ds_p->bFakeBoundary || IsFogBoundary (frontsector, backsector)) &&
+			(rw_ceilstat != 12 || !sidedef->GetTexture(side_t::top).isValid()) &&
+			(rw_floorstat != 3 || !sidedef->GetTexture(side_t::bottom).isValid()) &&
 			(WallSZ1 >= TOO_CLOSE_Z && WallSZ2 >= TOO_CLOSE_Z))
 		{
 			fixed_t *swal;
-			short *lwal;
+			fixed_t *lwal;
 			int i;
 
 			maskedtexture = true;
 
+			// kg3D - backup for mid and fake walls
+			ds_p->bkup = R_NewOpening(stop - start);
+			memcpy(openings + ds_p->bkup, &ceilingclip[start], sizeof(short)*(stop - start));
+
 			ds_p->bFogBoundary = IsFogBoundary (frontsector, backsector);
-			if (sidedef->midtexture != 0)
+			if (sidedef->GetTexture(side_t::mid).isValid() || ds_p->bFakeBoundary)
 			{
-				ds_p->maskedtexturecol = R_NewOpening (stop - start);
+				if(sidedef->GetTexture(side_t::mid).isValid())
+					ds_p->bFakeBoundary |= 4; // it is also mid texture
+
+				ds_p->maskedtexturecol = R_NewOpening ((stop - start) * 2);
 				ds_p->swall = R_NewOpening ((stop - start) * 2);
 
-				lwal = openings + ds_p->maskedtexturecol;
+				lwal = (fixed_t *)(openings + ds_p->maskedtexturecol);
 				swal = (fixed_t *)(openings + ds_p->swall);
-				int scaley = TexMan(sidedef->midtexture)->ScaleY ?
-					TexMan(sidedef->midtexture)->ScaleY : ty;
-				int xoffset = rw_offset;
-				for (i = start; i < stop; i++)
+				FTexture *pic = TexMan(sidedef->GetTexture(side_t::mid), true);
+				fixed_t yrepeat = FixedMul(pic->yScale, sidedef->GetTextureYScale(side_t::mid));
+				fixed_t xoffset = sidedef->GetTextureXOffset(side_t::mid);
+
+				if (pic->bWorldPanning)
 				{
-					*lwal++ = (short)((lwall[i] + xoffset) >> FRACBITS);
-					*swal++ = MulScale5 (swall[i], scaley);
+					xoffset = MulScale16 (xoffset, lwallscale);
 				}
 
-				fixed_t istart = *((fixed_t *)(openings + ds_p->swall));
-				fixed_t iend = *(swal - 1);
+				for (i = start; i < stop; i++)
+				{
+					*lwal++ = lwall[i] + xoffset;
+					*swal++ = swall[i];
+				}
+
+				fixed_t istart = MulScale18 (*((fixed_t *)(openings + ds_p->swall)), yrepeat);
+				fixed_t iend = MulScale18 (*(swal - 1), yrepeat);
 
 				if (istart < 3 && istart >= 0) istart = 3;
 				if (istart > -3 && istart < 0) istart = -3;
@@ -1253,8 +2512,8 @@ void R_StoreWallRange (int start, int stop)
 				if (iend > -3 && iend < 0) iend = -3;
 				istart = DivScale32 (1, istart);
 				iend = DivScale32 (1, iend);
+				ds_p->yrepeat = yrepeat;
 				ds_p->iscale = istart;
-
 				if (stop - start > 1)
 				{
 					ds_p->iscalestep = (iend - istart) / (stop - start - 1);
@@ -1266,11 +2525,25 @@ void R_StoreWallRange (int start, int stop)
 			}
 			ds_p->light = rw_light;
 			ds_p->lightstep = rw_lightstep;
-			ds_p->shade = wallshade;
+
+			// Masked midtextures should get the light level from the sector they reference,
+			// not from the current subsector, which is what the current wallshade value
+			// comes from. We make an exeption for polyobjects, however, since their "home"
+			// sector should be whichever one they move into.
+			if (curline->sidedef->Flags & WALLF_POLYOBJ)
+			{
+				ds_p->shade = wallshade;
+			}
+			else
+			{
+				ds_p->shade = LIGHT2SHADE(curline->sidedef->GetLightLevel(foggy, curline->frontsector->lightlevel)
+					+ r_actualextralight);
+			}
 
 			if (ds_p->bFogBoundary || ds_p->maskedtexturecol != -1)
 			{
-				InterestingDrawsegs.Push (ds_p - drawsegs);
+				size_t drawsegnum = ds_p - drawsegs;
+				InterestingDrawsegs.Push (drawsegnum);
 			}
 		}
 	}
@@ -1302,6 +2575,11 @@ void R_StoreWallRange (int start, int stop)
 
 	R_RenderSegLoop ();
 
+	if(fake3D & 7) {
+		ds_p++;
+		return;
+	}
+
 	// save sprite clipping info
 	if ( ((ds_p->silhouette & SIL_TOP) || maskedtexture) && ds_p->sprtopclip == -1)
 	{
@@ -1315,17 +2593,15 @@ void R_StoreWallRange (int start, int stop)
 		memcpy (openings + ds_p->sprbottomclip, &floorclip[start], sizeof(short)*(stop-start));
 	}
 
-	if (maskedtexture && curline->sidedef->midtexture != 0)
+	if (maskedtexture && curline->sidedef->GetTexture(side_t::mid).isValid())
 	{
 		ds_p->silhouette |= SIL_TOP | SIL_BOTTOM;
 	}
 
 	// [RH] Draw any decals bound to the seg
-	AActor *decal = (AActor *)curline->sidedef->BoundActors;
-	while (decal != NULL)
+	for (DBaseDecal *decal = curline->sidedef->AttachedDecals; decal != NULL; decal = decal->WallNext)
 	{
-		R_RenderBoundWallSprite (decal, ds_p, 0);
-		decal = decal->snext;
+		R_RenderDecal (curline->sidedef, decal, ds_p, 0);
 	}
 
 	ds_p++;
@@ -1341,6 +2617,7 @@ int OWallMost (short *mostbuf, fixed_t z)
 	s3 = MulScale16 (globaldclip, WallSZ1); s4 = MulScale16 (globaldclip, WallSZ2);
 	bad = (z<s1)+((z<s2)<<1)+((z>s3)<<2)+((z>s4)<<3);
 
+#if 1
 	if ((bad&3) == 3)
 	{
 		memset (&mostbuf[WallSX1], 0, (WallSX2 - WallSX1)*sizeof(mostbuf[0]));
@@ -1352,10 +2629,10 @@ int OWallMost (short *mostbuf, fixed_t z)
 		clearbufshort (&mostbuf[WallSX1], WallSX2 - WallSX1, viewheight);
 		return bad;
 	}
-
+#endif
 	ix1 = WallSX1; iy1 = WallSZ1;
 	ix2 = WallSX2; iy2 = WallSZ2;
-
+#if 1
 	if (bad & 3)
 	{
 		int t = DivScale30 (z-s1, s2-s1);
@@ -1402,7 +2679,38 @@ int OWallMost (short *mostbuf, fixed_t z)
 		fixed_t yinc  = (Scale (z, InvZtoScale, iy2) - y) / (ix2 - ix1);
 		qinterpolatedown16short (&mostbuf[ix1], ix2-ix1, y + centeryfrac, yinc);
 	}
+#else
+	double max = viewheight;
+	double zz = z / 65536.0;
+#if 0
+	double z1 = zz * InvZtoScale / WallSZ1;
+	double z2 = zz * InvZtoScale / WallSZ2 - z1;
+	z2 /= (WallSX2 - WallSX1);
+	z1 += centeryfrac / 65536.0;
 
+	for (int x = WallSX1; x < WallSX2; ++x)
+	{
+		mostbuf[x] = xs_RoundToInt(clamp(z1, 0.0, max));
+		z1 += z2;
+	}
+#else
+	double top, bot, i;
+
+	i = WallSX1 - centerx;
+	top = WallUoverZorg + WallUoverZstep * i;
+	bot = WallInvZorg + WallInvZstep * i;
+	double cy = centeryfrac / 65536.0;
+
+	for (int x = WallSX1; x < WallSX2; x++)
+	{
+		double frac = top / bot;
+		double scale = frac * WallDepthScale + WallDepthOrg;
+		mostbuf[x] = xs_RoundToInt(clamp(zz / scale + cy, 0.0, max));
+		top += WallUoverZstep;
+		bot += WallInvZstep;
+	}
+#endif
+#endif
 	if (mostbuf[ix1] < 0) mostbuf[ix1] = 0;
 	else if (mostbuf[ix1] > viewheight) mostbuf[ix1] = (short)viewheight;
 	if (mostbuf[ix2] < 0) mostbuf[ix2] = 0;
@@ -1499,6 +2807,7 @@ int WallMost (short *mostbuf, const secplane_t &plane)
 	{
 		clearbufshort (&mostbuf[ix1], ix2-ix1, viewheight);
 		return bad;
+
 	}
 
 	if (bad&3)
@@ -1568,80 +2877,13 @@ int WallMost (short *mostbuf, const secplane_t &plane)
 	return bad;
 }
 
-void PrepWall (fixed_t *swall, fixed_t *lwall, fixed_t walxrepeat)
-{ // swall = scale, lwall = texturecolumn
-	int x;
-	float top, bot, i;
-	float xrepeat = (float)walxrepeat;
-	float ol, l, topinc, botinc;
-
-	i = (float)(WallSX1 - centerx);
-	top = WallUoverZorg + WallUoverZstep * i;
-	bot = WallInvZorg + WallInvZstep * i;
-	topinc = WallUoverZstep * 4.f;
-	botinc = WallInvZstep * 4.f;
-
-	x = WallSX1;
-
-	l = top / bot;
-	swall[x] = quickertoint (l * WallDepthScale + WallDepthOrg);
-	lwall[x] = quickertoint (l * xrepeat);
-	// As long as l is invalid, step one column at a time so that
-	// we can get as many correct texture columns as possible.
-	while (l > 1.0 && x+1 < WallSX2)
-	{
-		l = (top += WallUoverZstep) / (bot += WallInvZstep);
-		x++;
-		swall[x] = quickertoint (l * WallDepthScale + WallDepthOrg);
-		lwall[x] = quickertoint (l * xrepeat);
-	}
-	l *= xrepeat;
-	while (x+4 < WallSX2)
-	{
-		top += topinc; bot += botinc;
-		ol = l; l = top / bot;
-		swall[x+4] = quickertoint (l * WallDepthScale + WallDepthOrg);
-		lwall[x+4] = quickertoint (l *= xrepeat);
-
-		i = (ol+l) * 0.5f;
-		lwall[x+2] = quickertoint (i);
-		lwall[x+1] = quickertoint ((ol+i) * 0.5f);
-		lwall[x+3] = quickertoint ((l+i) * 0.5f);
-		swall[x+2] = ((swall[x]+swall[x+4])>>1);
-		swall[x+1] = ((swall[x]+swall[x+2])>>1);
-		swall[x+3] = ((swall[x+4]+swall[x+2])>>1);
-		x += 4;
-	}
-	if (x+2 < WallSX2)
-	{
-		top += topinc * 0.5f; bot += botinc * 0.5f;
-		ol = l; l = top / bot;
-		swall[x+2] = quickertoint (l * WallDepthScale + WallDepthOrg);
-		lwall[x+2] = quickertoint (l *= xrepeat);
-
-		lwall[x+1] = quickertoint ((l+ol)*0.5f);
-		swall[x+1] = (swall[x]+swall[x+2])>>1;
-		x += 2;
-	}
-	if (x+1 < WallSX2)
-	{
-		l = (top + WallUoverZstep) / (bot + WallInvZstep);
-		swall[x+1] = quickertoint (l * WallDepthScale + WallDepthOrg);
-		lwall[x+1] = quickertoint (l * xrepeat);
-	}
-	/*
-	for (x = WallSX1; x < WallSX2; x++)
-	{
-		frac = top / bot;
-		lwall[x] = quickertoint (frac * xrepeat);
-		swall[x] = quickertoint (frac * WallDepthScale + WallDepthOrg);
-		top += WallUoverZstep;
-		bot += WallInvZstep;
-	}
-	*/
-
+static void PrepWallRoundFix(fixed_t *lwall, fixed_t walxrepeat)
+{
 	// fix for rounding errors
+	walxrepeat = abs(walxrepeat);
 	fixed_t fix = (MirrorFlags & RF_XFLIP) ? walxrepeat-1 : 0;
+	int x;
+
 	if (WallSX1 > 0)
 	{
 		for (x = WallSX1; x < WallSX2; x++)
@@ -1670,171 +2912,146 @@ void PrepWall (fixed_t *swall, fixed_t *lwall, fixed_t walxrepeat)
 	}
 }
 
-void PrepLWall (fixed_t *lwall, fixed_t walxrepeat)
-{ // lwall = texturecolumn
-	int x;
-	float top, bot, i;
-	float xrepeat = (float)walxrepeat;
-	float ol, l, topinc, botinc;
+void PrepWall (fixed_t *swall, fixed_t *lwall, fixed_t walxrepeat)
+{ // swall = scale, lwall = texturecolumn
+	double top, bot, i;
+	double xrepeat = fabs((double)walxrepeat);
 
-	i = (float)(WallSX1 - centerx);
+	i = WallSX1 - centerx;
 	top = WallUoverZorg + WallUoverZstep * i;
 	bot = WallInvZorg + WallInvZstep * i;
-	topinc = WallUoverZstep * 4.f;
-	botinc = WallInvZstep * 4.f;
 
-	x = WallSX1;
-
-	l = top / bot;
-	lwall[x] = quickertoint (l * xrepeat);
-	// As long as l is invalid, step one column at a time so that
-	// we can get as many correct texture columns as possible.
-	while (l > 1.0 && x+1 < WallSX2)
+	for (int x = WallSX1; x < WallSX2; x++)
 	{
-		l = (top += WallUoverZstep) / (bot += WallInvZstep);
-		lwall[++x] = quickertoint (l * xrepeat);
-	}
-	l *= xrepeat;
-	while (x+4 < WallSX2)
-	{
-		top += topinc; bot += botinc;
-		ol = l; l = top / bot;
-		lwall[x+4] = quickertoint (l *= xrepeat);
-
-		i = (ol+l) * 0.5f;
-		lwall[x+2] = quickertoint (i);
-		lwall[x+1] = quickertoint ((ol+i) * 0.5f);
-		lwall[x+3] = quickertoint ((l+i) * 0.5f);
-		x += 4;
-	}
-	if (x+2 < WallSX2)
-	{
-		top += topinc * 0.5f; bot += botinc * 0.5f;
-		ol = l; l = top / bot;
-		lwall[x+2] = quickertoint (l *= xrepeat);
-		lwall[x+1] = quickertoint ((l+ol)*0.5f);
-		x += 2;
-	}
-	if (x+1 < WallSX2)
-	{
-		l = (top + WallUoverZstep) / (bot + WallInvZstep);
-		lwall[x+1] = quickertoint (l * xrepeat);
-	}
-
-	// fix for rounding errors
-	fixed_t fix = (MirrorFlags & RF_XFLIP) ? walxrepeat-1 : 0;
-	if (WallSX1 > 0)
-	{
-		for (x = WallSX1; x < WallSX2; x++)
+		double frac = top / bot;
+		if (walxrepeat < 0)
 		{
-			if ((unsigned)lwall[x] >= (unsigned)walxrepeat)
-			{
-				lwall[x] = fix;
-			}
-			else
-			{
-				break;
-			}
-		}
-	}
-	fix = walxrepeat - 1 - fix;
-	for (x = WallSX2-1; x >= WallSX1; x--)
-	{
-		if ((unsigned)lwall[x] >= (unsigned)walxrepeat)
-		{
-			lwall[x] = fix;
+			lwall[x] = xs_RoundToInt(xrepeat - frac * xrepeat);
 		}
 		else
 		{
-			break;
+			lwall[x] = xs_RoundToInt(frac * xrepeat);
 		}
+		swall[x] = xs_RoundToInt(frac * WallDepthScale + WallDepthOrg);
+		top += WallUoverZstep;
+		bot += WallInvZstep;
 	}
+	PrepWallRoundFix(lwall, walxrepeat);
+}
+
+void PrepLWall (fixed_t *lwall, fixed_t walxrepeat)
+{ // lwall = texturecolumn
+	double top, bot, i;
+	double xrepeat = fabs((double)walxrepeat);
+	double topstep;
+
+	i = WallSX1 - centerx;
+	top = WallUoverZorg + WallUoverZstep * i;
+	bot = WallInvZorg + WallInvZstep * i;
+
+	top *= xrepeat;
+	topstep = WallUoverZstep * xrepeat;
+
+	for (int x = WallSX1; x < WallSX2; x++)
+	{
+		if (walxrepeat < 0)
+		{
+			lwall[x] = xs_RoundToInt(xrepeat - top / bot);
+		}
+		else
+		{
+			lwall[x] = xs_RoundToInt(top / bot);
+		}
+		top += topstep;
+		bot += WallInvZstep;
+	}
+	PrepWallRoundFix(lwall, walxrepeat);
 }
 
 // pass = 0: when seg is first drawn
 //		= 1: drawing masked textures (including sprites)
 // Currently, only pass = 0 is done or used
 
-static AActor *DecalActorForDebug;
-
-static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass)
+static void R_RenderDecal (side_t *wall, DBaseDecal *decal, drawseg_t *clipper, int pass)
 {
-	fixed_t lx, ly, lx2, ly2;
+	fixed_t lx, ly, lx2, ly2, decalx, decaly;
 	int x1, x2;
-	int xscale, yscale;
+	fixed_t xscale, yscale;
 	fixed_t topoff;
-	byte flipx;
+	BYTE flipx;
 	fixed_t zpos;
 	int needrepeat = 0;
 	sector_t *front, *back;
+	bool calclighting;
+	bool rereadcolormap;
+	FDynamicColormap *usecolormap;
 
-	if (actor->renderflags & RF_INVISIBLE || !viewactive)
+	if (decal->RenderFlags & RF_INVISIBLE || !viewactive || !decal->PicNum.isValid())
 		return;
 
-	DecalActorForDebug = actor;
-
 	// Determine actor z
-	zpos = actor->z;
+	zpos = decal->Z;
 	front = curline->frontsector;
 	back = (curline->backsector != NULL) ? curline->backsector : curline->frontsector;
-	switch (actor->renderflags & RF_RELMASK)
+	switch (decal->RenderFlags & RF_RELMASK)
 	{
 	default:
-		zpos = actor->z;
+		zpos = decal->Z;
 		break;
 	case RF_RELUPPER:
 		if (curline->linedef->flags & ML_DONTPEGTOP)
 		{
-			zpos = actor->z + front->ceilingtexz;
+			zpos = decal->Z + front->GetPlaneTexZ(sector_t::ceiling);
 		}
 		else
 		{
-			zpos = actor->z + back->ceilingtexz;
+			zpos = decal->Z + back->GetPlaneTexZ(sector_t::ceiling);
 		}
 		break;
 	case RF_RELLOWER:
 		if (curline->linedef->flags & ML_DONTPEGBOTTOM)
 		{
-			zpos = actor->z + front->ceilingtexz;
+			zpos = decal->Z + front->GetPlaneTexZ(sector_t::ceiling);
 		}
 		else
 		{
-			zpos = actor->z + back->floortexz;
+			zpos = decal->Z + back->GetPlaneTexZ(sector_t::floor);
 		}
 		break;
 	case RF_RELMID:
 		if (curline->linedef->flags & ML_DONTPEGBOTTOM)
 		{
-			zpos = actor->z + front->floortexz;
+			zpos = decal->Z + front->GetPlaneTexZ(sector_t::floor);
 		}
 		else
 		{
-			zpos = actor->z + front->ceilingtexz;
+			zpos = decal->Z + front->GetPlaneTexZ(sector_t::ceiling);
 		}
 	}
 
-	xscale = actor->xscale + 1;
-	yscale = actor->yscale + 1;
+	xscale = decal->ScaleX;
+	yscale = decal->ScaleY;
 
-	if (actor->picnum != 0xffff)
-	{
-		WallSpriteTile = TexMan(actor->picnum);
-		flipx = actor->renderflags & RF_XFLIP;
-	}
-	else
-	{
-		//WallSpriteTile = SpriteFrames[sprites[actor->sprite].spriteframes + actor->frame].lump[0];
-		//flipx = SpriteFrames[sprites[actor->sprite].spriteframes + actor->frame].flip & 1;
-		return;
-	}
-	if (WallSpriteTile->UseType == FTexture::TEX_Null)
+	WallSpriteTile = TexMan(decal->PicNum, true);
+	flipx = (BYTE)(decal->RenderFlags & RF_XFLIP);
+
+	if (WallSpriteTile == NULL || WallSpriteTile->UseType == FTexture::TEX_Null)
 	{
 		return;
 	}
 
 	// Determine left and right edges of sprite. Since this sprite is bound
-	// to a wall, we use the wall's angle instead of the actor's. This is
+	// to a wall, we use the wall's angle instead of the decal's. This is
 	// pretty much the same as what R_AddLine() does.
+
+	fixed_t savetx1, savetx2, savety1, savety2, savesz1, savesz2;
+
+	savetx1 = WallTX1;
+	savetx2 = WallTX2;
+	savety1 = WallTY1;
+	savety2 = WallTY2;
+	savesz1 = WallSZ1;
+	savesz2 = WallSZ2;
 
 	x2 = WallSpriteTile->GetWidth();
 	x1 = WallSpriteTile->LeftOffset;
@@ -1843,11 +3060,13 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	x1 *= xscale;
 	x2 *= xscale;
 
+	decal->GetXY (wall, decalx, decaly);
+
 	angle_t ang = R_PointToAngle2 (curline->v1->x, curline->v1->y, curline->v2->x, curline->v2->y) >> ANGLETOFINESHIFT;
-	lx  = actor->x - MulScale6 (x1, finecosine[ang]) - viewx;
-	lx2 = actor->x + MulScale6 (x2, finecosine[ang]) - viewx;
-	ly  = actor->y - MulScale6 (x1, finesine[ang]) - viewy;
-	ly2 = actor->y + MulScale6 (x2, finesine[ang]) - viewy;
+	lx  = decalx - FixedMul (x1, finecosine[ang]) - viewx;
+	lx2 = decalx + FixedMul (x2, finecosine[ang]) - viewx;
+	ly  = decaly - FixedMul (x1, finesine[ang]) - viewy;
+	ly2 = decaly + FixedMul (x2, finesine[ang]) - viewy;
 
 	WallTX1 = DMulScale20 (lx,  viewsin, -ly,  viewcos);
 	WallTX2 = DMulScale20 (lx2, viewsin, -ly2, viewcos);
@@ -1860,48 +3079,48 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 		int t = 256-WallTX1;
 		WallTX1 = 256-WallTX2;
 		WallTX2 = t;
-		swap (WallTY1, WallTY2);
+		swapvalues (WallTY1, WallTY2);
 	}
 
 	if (WallTX1 >= -WallTY1)
 	{
-		if (WallTX1 > WallTY1) return;	// left edge is off the right side
-		if (WallTY1 == 0) return;
+		if (WallTX1 > WallTY1) goto done;	// left edge is off the right side
+		if (WallTY1 == 0) goto done;
 		x1 = (centerxfrac + Scale (WallTX1, centerxfrac, WallTY1)) >> FRACBITS;
 		if (WallTX1 >= 0) x1 = MIN (viewwidth, x1+1); // fix for signed divide
 		WallSZ1 = WallTY1;
 	}
 	else
 	{
-		if (WallTX2 < -WallTY2) return;	// wall is off the left side
+		if (WallTX2 < -WallTY2) goto done;	// wall is off the left side
 		fixed_t den = WallTX1 - WallTX2 - WallTY2 + WallTY1;	
-		if (den == 0) return;
+		if (den == 0) goto done;
 		x1 = 0;
 		WallSZ1 = WallTY1 + Scale (WallTY2 - WallTY1, WallTX1 + WallTY1, den);
 	}
 
 	if (WallSZ1 < TOO_CLOSE_Z)
-		return;
+		goto done;
 
 	if (WallTX2 <= WallTY2)
 	{
-		if (WallTX2 < -WallTY2) return;	// right edge is off the left side
-		if (WallTY2 == 0) return;
+		if (WallTX2 < -WallTY2) goto done;	// right edge is off the left side
+		if (WallTY2 == 0) goto done;
 		x2 = (centerxfrac + Scale (WallTX2, centerxfrac, WallTY2)) >> FRACBITS;
 		if (WallTX2 >= 0) x2 = MIN (viewwidth, x2+1);	// fix for signed divide
 		WallSZ2 = WallTY2;
 	}
 	else
 	{
-		if (WallTX1 > WallTY1) return;	// wall is off the right side
+		if (WallTX1 > WallTY1) goto done;	// wall is off the right side
 		fixed_t den = WallTY2 - WallTY1 - WallTX2 + WallTX1;
-		if (den == 0) return;
+		if (den == 0) goto done;
 		x2 = viewwidth;
 		WallSZ2 = WallTY1 + Scale (WallTY2 - WallTY1, WallTX1 - WallTY1, den);
 	}
 
 	if (x1 >= x2 || x1 > clipper->x2 || x2 <= clipper->x1 || WallSZ2 < TOO_CLOSE_Z)
-		return;
+		goto done;
 
 	if (MirrorFlags & RF_XFLIP)
 	{
@@ -1921,14 +3140,14 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	WallDepthOrg = -WallUoverZstep * WallTMapScale2;
 
 	// Get the top and bottom clipping arrays
-	switch (actor->renderflags & RF_CLIPMASK)
+	switch (decal->RenderFlags & RF_CLIPMASK)
 	{
 	case RF_CLIPFULL:
 		if (curline->backsector == NULL)
 		{
 			if (pass != 0)
 			{
-				return;
+				goto done;
 			}
 			mceilingclip = walltop;
 			mfloorclip = wallbottom;
@@ -1949,7 +3168,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	case RF_CLIPUPPER:
 		if (pass != 0)
 		{
-			return;
+			goto done;
 		}
 		mceilingclip = walltop;
 		mfloorclip = ceilingclip;
@@ -1958,7 +3177,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	case RF_CLIPMID:
 		if (curline->backsector != NULL && pass != 2)
 		{
-			return;
+			goto done;
 		}
 		mceilingclip = openings + clipper->sprtopclip - clipper->x1;
 		mfloorclip = openings + clipper->sprbottomclip - clipper->x1;
@@ -1967,7 +3186,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	case RF_CLIPLOWER:
 		if (pass != 0)
 		{
-			return;
+			goto done;
 		}
 		mceilingclip = floorclip;
 		mfloorclip = wallbottom;
@@ -1975,10 +3194,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	}
 
 	topoff = WallSpriteTile->TopOffset << FRACBITS;
-	dc_texturemid = topoff + SafeDivScale6 (zpos - viewz, yscale);
-
-	// Scale the texture size
-	rw_scalestep = MulScale6 (rw_scalestep, yscale);
+	dc_texturemid = topoff + FixedDiv (zpos - viewz, yscale);
 
 	// Clip sprite to drawseg
 	if (x1 < clipper->x1)
@@ -1991,14 +3207,14 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	}
 	if (x1 >= x2)
 	{
-		return;
+		goto done;
 	}
 
-	swap (x1, WallSX1);
-	swap (x2, WallSX2);
+	swapvalues (x1, WallSX1);
+	swapvalues (x2, WallSX2);
 	PrepWall (swall, lwall, WallSpriteTile->GetWidth() << FRACBITS);
-	swap (x1, WallSX1);
-	swap (x2, WallSX2);
+	swapvalues (x1, WallSX1);
+	swapvalues (x2, WallSX2);
 
 	if (flipx)
 	{
@@ -2012,20 +3228,29 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	}
 
 	// Prepare lighting
-	bool calclighting = false;
+	calclighting = false;
+	usecolormap = basecolormap;
+	rereadcolormap = true;
+
+	// Decals that are added to the scene must fade to black.
+	if (decal->RenderStyle == LegacyRenderStyles[STYLE_Add] && usecolormap->Fade != 0)
+	{
+		usecolormap = GetSpecialLights(usecolormap->Color, 0, usecolormap->Desaturate);
+		rereadcolormap = false;
+	}
 
 	rw_light = rw_lightleft + (x1 - WallSX1) * rw_lightstep;
-	if (fixedlightlev)
-		dc_colormap = basecolormap + fixedlightlev;
-	else if (fixedcolormap)
+	if (fixedlightlev >= 0)
+		dc_colormap = usecolormap->Maps + fixedlightlev;
+	else if (fixedcolormap != NULL)
 		dc_colormap = fixedcolormap;
-	else if (!foggy && (actor->renderflags & RF_FULLBRIGHT))
-		dc_colormap = basecolormap;
+	else if (!foggy && (decal->RenderFlags & RF_FULLBRIGHT))
+		dc_colormap = usecolormap->Maps;
 	else
 		calclighting = true;
 
 	// Draw it
-	if (actor->renderflags & RF_YFLIP)
+	if (decal->RenderFlags & RF_YFLIP)
 	{
 		sprflipvert = true;
 		yscale = -yscale;
@@ -2036,14 +3261,21 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 		sprflipvert = false;
 	}
 
-	rw_offset = 16*FRACUNIT/yscale;
+	// rw_offset is used as the texture's vertical scale
+	rw_offset = SafeDivScale30(1, yscale);
 
 	do
 	{
 		dc_x = x1;
 		ESPSResult mode;
 
-		mode = R_SetPatchStyle (actor->RenderStyle, actor->alpha, actor->Translation, actor->alphacolor);
+		mode = R_SetPatchStyle (decal->RenderStyle, decal->Alpha, decal->Translation, decal->AlphaColor);
+
+		// R_SetPatchStyle can modify basecolormap.
+		if (rereadcolormap)
+		{
+			usecolormap = basecolormap;
+		}
 
 		if (mode == DontDraw)
 		{
@@ -2066,7 +3298,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 			{
 				if (calclighting)
 				{ // calculate lighting
-					dc_colormap = basecolormap + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
+					dc_colormap = usecolormap->Maps + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
 				}
 
 				WallSpriteColumn (R_DrawMaskedColumn);
@@ -2077,7 +3309,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 			{
 				if (calclighting)
 				{ // calculate lighting
-					dc_colormap = basecolormap + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
+					dc_colormap = usecolormap->Maps + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
 				}
 				rt_initcols();
 				for (int zz = 4; zz; --zz)
@@ -2092,7 +3324,7 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 			{
 				if (calclighting)
 				{ // calculate lighting
-					dc_colormap = basecolormap + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
+					dc_colormap = usecolormap->Maps + (GETPALOOKUP (rw_light, wallshade) << COLORMAPSHIFT);
 				}
 
 				WallSpriteColumn (R_DrawMaskedColumn);
@@ -2113,28 +3345,18 @@ static void R_RenderBoundWallSprite (AActor *actor, drawseg_t *clipper, int pass
 	hcolfunc_post4 = rt_map4cols;
 
 	R_FinishSetPatchStyle ();
+done:
+	WallTX1 = savetx1;
+	WallTX2 = savetx2;
+	WallTY1 = savety1;
+	WallTY2 = savety2;
+	WallSZ1 = savesz1;
+	WallSZ2 = savesz2;
 }
 
 static void WallSpriteColumn (void (*drawfunc)(const BYTE *column, const FTexture::Span *spans))
 {
 	unsigned int texturecolumn = lwall[dc_x] >> FRACBITS;
-#if 0
-	if (texturecolumn >= (unsigned)WallSpriteTile->GetWidth())
-	{
-		I_FatalError ("WallSpriteColumn tried to draw part of a decal that didn't exist.\n"
-			"Please report all of the following information, because\n"
-			"I want to get this fixed, yet I just can't get it happen to me:\n\n"
-			"%d->%d/%d"
-			"  %s  %04x  %d\n"
-			"%d  %d  %d\n"
-			"%d  %d  %d  %u\n",
-			dc_x, texturecolumn, TileCache[WallSpriteTile]->width,
-			WallSpriteTile->Name, DecalActorForDebug->renderflags, DecalActorForDebug->RenderStyle,
-			DecalActorForDebug->x, DecalActorForDebug->y, DecalActorForDebug->z,
-			viewx, viewy, viewz, viewangle);
-		texturecolumn = TileCache[WallSpriteTile]->width-1;
-	}
-#endif
 	dc_iscale = MulScale16 (swall[dc_x], rw_offset);
 	spryscale = SafeDivScale32 (1, dc_iscale);
 	if (sprflipvert)
@@ -2145,6 +3367,7 @@ static void WallSpriteColumn (void (*drawfunc)(const BYTE *column, const FTextur
 	const BYTE *column;
 	const FTexture::Span *spans;
 	column = WallSpriteTile->GetColumn (texturecolumn, &spans);
+	dc_texturefrac = 0;
 	drawfunc (column, spans);
 	rw_light += rw_lightstep;
 }

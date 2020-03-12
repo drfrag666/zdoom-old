@@ -2,7 +2,7 @@
 ** gameconfigfile.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,6 +34,7 @@
 #ifndef __GAMECONFIGFILE_H__
 #define __GAMECONFIGFILE_H__
 
+#include "doomtype.h"
 #include "configfile.h"
 
 class DArgs;
@@ -46,14 +47,16 @@ public:
 
 	void DoGlobalSetup ();
 	void DoGameSetup (const char *gamename);
+	void DoModSetup (const char *gamename);
 	void ArchiveGlobalData ();
 	void ArchiveGameData (const char *gamename);
 	void AddAutoexec (DArgs *list, const char *gamename);
-	string GetConfigPath (bool tryProg);
+	FString GetConfigPath (bool tryProg);
 	void ReadNetVars ();
 
 protected:
 	void WriteCommentHeader (FILE *file) const;
+	void CreateStandardAutoExec (const char *section, bool start);
 
 private:
 	static void MigrateStub (const char *pathname, FConfigFile *config, void *userdata);
@@ -61,14 +64,15 @@ private:
 	void MigrateOldConfig ();
 	void SetRavenDefaults (bool isHexen);
 	void ReadCVars (DWORD flags);
-	void SetupWeaponList (const char *gamename);
 
 	bool bMigrating;
+	bool bModSetup;
 
 	char section[64];
 	char *subsection;
+	size_t sublen;
 };
 
-extern char *WeaponSection;
+extern FGameConfigFile *GameConfig;
 
 #endif //__GAMECONFIGFILE_H__

@@ -6,18 +6,23 @@
 #include "s_sound.h"
 #include "gi.h"
 #include "p_lnspec.h"
-#include "a_hereticglobal.h"
 #include "sbar.h"
 #include "statnums.h"
 #include "c_dispatch.h"
 #include "gstrings.h"
 #include "templates.h"
+#include "a_strifeglobal.h"
+#include "a_morph.h"
+#include "a_specialspot.h"
+#include "thingdef/thingdef.h"
+#include "g_level.h"
+#include "g_game.h"
+#include "doomstat.h"
+#include "farchive.h"
 
 static FRandom pr_restore ("RestorePos");
 
-IMPLEMENT_STATELESS_ACTOR (AAmmo, Any, -1, 0)
-	PROP_Inventory_PickupSound ("misc/ammo_pkup")
-END_DEFAULTS
+IMPLEMENT_CLASS (AAmmo)
 
 //===========================================================================
 //
@@ -28,10 +33,7 @@ END_DEFAULTS
 void AAmmo::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
-	if (SaveVersion >= 223)
-	{
-		arc << BackpackAmount << BackpackMaxAmount;
-	}
+	arc << BackpackAmount << BackpackMaxAmount;
 }
 
 //===========================================================================
@@ -51,40 +53,15 @@ void AAmmo::Serialize (FArchive &arc)
 //
 //===========================================================================
 
-const TypeInfo *AAmmo::GetParentAmmo () const
+const PClass *AAmmo::GetParentAmmo () const
 {
-	const TypeInfo *type = GetClass ();
+	const PClass *type = GetClass ();
 
-	while (type->ParentType != RUNTIME_CLASS(AAmmo))
+	while (type->ParentClass != RUNTIME_CLASS(AAmmo) && type->ParentClass != NULL)
 	{
-		type = type->ParentType;
+		type = type->ParentClass;
 	}
 	return type;
-}
-
-//===========================================================================
-//
-// AAmmo :: TryPickup
-//
-//===========================================================================
-
-bool AAmmo::TryPickup (AActor *toucher)
-{
-	int count = Amount;
-
-	if (gameskill == sk_baby || (gameskill == sk_nightmare && gameinfo.gametype != GAME_Strife))
-	{ // extra ammo in baby mode and nightmare mode
-		if (gameinfo.gametype & (GAME_Doom|GAME_Strife))
-			Amount <<= 1;
-		else
-			Amount += Amount >> 1;
-	}
-	if (!Super::TryPickup (toucher))
-	{
-		Amount = count;
-		return false;
-	}
-	return true;
 }
 
 //===========================================================================
@@ -92,17 +69,32 @@ bool AAmmo::TryPickup (AActor *toucher)
 // AAmmo :: HandlePickup
 //
 //===========================================================================
+EXTERN_CVAR(Bool, sv_unlimited_pickup)
 
 bool AAmmo::HandlePickup (AInventory *item)
 {
 	if (GetClass() == item->GetClass() ||
 		(item->IsKindOf (RUNTIME_CLASS(AAmmo)) && static_cast<AAmmo*>(item)->GetParentAmmo() == GetClass()))
 	{
-		if (Amount < MaxAmount)
+		if (Amount < MaxAmount || sv_unlimited_pickup)
 		{
+			int receiving = item->Amount;
+
+			if (!(item->ItemFlags & IF_IGNORESKILL))
+			{ // extra ammo in baby mode and nightmare mode
+				receiving = FixedMul(receiving, G_SkillProperty(SKILLP_AmmoFactor));
+			}
 			int oldamount = Amount;
-			Amount += item->Amount;
-			if (Amount > MaxAmount)
+
+			if (Amount > 0 && Amount + receiving < 0)
+			{
+				Amount = 0x7fffffff;
+			}
+			else
+			{
+				Amount += receiving;
+			}
+			if (Amount > MaxAmount && !sv_unlimited_pickup)
 			{
 				Amount = MaxAmount;
 			}
@@ -114,18 +106,9 @@ bool AAmmo::HandlePickup (AInventory *item)
 
 			assert (Owner != NULL);
 
-			if (oldamount == 0 && Owner != NULL && Owner->player != NULL &&
-				!Owner->player->userinfo.neverswitch &&
-				Owner->player->PendingWeapon == WP_NOCHANGE && 
-				(Owner->player->ReadyWeapon == NULL ||
-				 (Owner->player->ReadyWeapon->WeaponFlags & WIF_WIMPY_WEAPON)))
+			if (oldamount == 0 && Owner != NULL && Owner->player != NULL)
 			{
-				AWeapon *best = static_cast<APlayerPawn *>(Owner)->BestWeapon (GetClass());
-				if (best != NULL && (Owner->player->ReadyWeapon == NULL ||
-					best->SelectionOrder < Owner->player->ReadyWeapon->SelectionOrder))
-				{
-					Owner->player->PendingWeapon = best;
-				}
+				barrier_cast<APlayerPawn *>(Owner)->CheckWeaponSwitch(GetClass());
 			}
 		}
 		return true;
@@ -146,21 +129,31 @@ bool AAmmo::HandlePickup (AInventory *item)
 AInventory *AAmmo::CreateCopy (AActor *other)
 {
 	AInventory *copy;
+	int amount = Amount;
 
-	if (GetClass()->ParentType != RUNTIME_CLASS(AAmmo))
+	// extra ammo in baby mode and nightmare mode
+	if (!(ItemFlags&IF_IGNORESKILL))
 	{
-		const TypeInfo *type = GetParentAmmo();
+		amount = FixedMul(amount, G_SkillProperty(SKILLP_AmmoFactor));
+	}
+
+	if (GetClass()->ParentClass != RUNTIME_CLASS(AAmmo) && GetClass() != RUNTIME_CLASS(AAmmo))
+	{
+		const PClass *type = GetParentAmmo();
+		assert (type->ActorInfo != NULL);
 		if (!GoAway ())
 		{
 			Destroy ();
 		}
-		copy = static_cast<AInventory *>(Spawn (type, 0, 0, 0));
-		copy->Amount = Amount;
+
+		copy = static_cast<AInventory *>(Spawn (type, 0, 0, 0, NO_REPLACE));
+		copy->Amount = amount;
 		copy->BecomeItem ();
 	}
 	else
 	{
 		copy = Super::CreateCopy (other);
+		copy->Amount = amount;
 	}
 	if (copy->Amount > copy->MaxAmount)
 	{ // Don't pick up more ammo than you're supposed to be able to carry.
@@ -169,7 +162,22 @@ AInventory *AAmmo::CreateCopy (AActor *other)
 	return copy;
 }
 
-/* Keys *******************************************************************/
+//===========================================================================
+//
+// AAmmo :: CreateTossable
+//
+//===========================================================================
+
+AInventory *AAmmo::CreateTossable()
+{
+	AInventory *copy = Super::CreateTossable();
+	if (copy != NULL)
+	{ // Do not increase ammo by dropping it and picking it back up at
+	  // certain skill levels.
+		copy->ItemFlags |= IF_IGNORESKILL;
+	}
+	return copy;
+}
 
 //---------------------------------------------------------------------------
 //
@@ -179,17 +187,42 @@ AInventory *AAmmo::CreateCopy (AActor *other)
 //
 //---------------------------------------------------------------------------
 
-bool P_GiveBody (AActor *actor, int num)
+bool P_GiveBody (AActor *actor, int num, int max)
 {
-	int max;
+	if (actor->health <= 0 || (actor->player != NULL && actor->player->playerstate == PST_DEAD))
+	{ // Do not heal dead things.
+		return false;
+	}
+
 	player_t *player = actor->player;
 
+	num = clamp(num, -65536, 65536);	// prevent overflows for bad values
 	if (player != NULL)
 	{
-		max = MAXHEALTH + player->stamina;
-		if (player->morphTics)
+		// Max is 0 by default, preserving default behavior for P_GiveBody()
+		// calls while supporting AHealth.
+		if (max <= 0)
 		{
-			max = MAXMORPHHEALTH;
+			max = static_cast<APlayerPawn*>(actor)->GetMaxHealth() + player->mo->stamina;
+			// [MH] First step in predictable generic morph effects
+ 			if (player->morphTics)
+ 			{
+				if (player->MorphStyle & MORPH_FULLHEALTH)
+				{
+					if (!(player->MorphStyle & MORPH_ADDSTAMINA))
+					{
+						max -= player->mo->stamina;
+					}
+				}
+				else // old health behaviour
+				{
+					max = MAXMORPHHEALTH;
+					if (player->MorphStyle & MORPH_ADDSTAMINA)
+					{
+						max += player->mo->stamina;
+					}
+				}
+ 			}
 		}
 		// [RH] For Strife: A negative body sets you up with a percentage
 		// of your full health.
@@ -219,7 +252,9 @@ bool P_GiveBody (AActor *actor, int num)
 	}
 	else
 	{
-		max = actor->GetDefault()->health;
+		// Parameter value for max is ignored on monsters, preserving original
+		// behaviour on AHealth as well as on existing calls to P_GiveBody().
+		max = actor->SpawnHealth();
 		if (num < 0)
 		{
 			num = max * -num / 100;
@@ -250,12 +285,12 @@ bool P_GiveBody (AActor *actor, int num)
 //
 //---------------------------------------------------------------------------
 
-void A_RestoreSpecialThing1 (AActor *thing)
+DEFINE_ACTION_FUNCTION(AActor, A_RestoreSpecialThing1)
 {
-	thing->renderflags &= ~RF_INVISIBLE;
-	if (static_cast<AInventory *>(thing)->DoRespawn ())
+	self->renderflags &= ~RF_INVISIBLE;
+	if (static_cast<AInventory *>(self)->DoRespawn ())
 	{
-		S_Sound (thing, CHAN_VOICE, "misc/spawn", 1, ATTN_IDLE);
+		S_Sound (self, CHAN_VOICE, "misc/spawn", 1, ATTN_IDLE);
 	}
 }
 
@@ -265,40 +300,16 @@ void A_RestoreSpecialThing1 (AActor *thing)
 //
 //---------------------------------------------------------------------------
 
-void A_RestoreSpecialThing2 (AActor *thing)
+DEFINE_ACTION_FUNCTION(AActor, A_RestoreSpecialThing2)
 {
-	thing->flags |= MF_SPECIAL;
-	if (!(thing->GetDefault()->flags & MF_NOGRAVITY))
+	self->flags |= MF_SPECIAL;
+	if (!(self->GetDefault()->flags & MF_NOGRAVITY))
 	{
-		thing->flags &= ~MF_NOGRAVITY;
+		self->flags &= ~MF_NOGRAVITY;
 	}
-	thing->SetState (thing->SpawnState);
+	self->SetState (self->SpawnState);
 }
 
-/***************************************************************************/
-/* AItemFog, shown for respawning Doom and Strife items					   */
-/***************************************************************************/
-
-class AItemFog : public AActor
-{
-	DECLARE_ACTOR (AItemFog, AActor)
-};
-
-FState AItemFog::States[] =
-{
-	S_BRIGHT (IFOG, 'A',	6, NULL 						, &States[1]),
-	S_BRIGHT (IFOG, 'B',	6, NULL 						, &States[2]),
-	S_BRIGHT (IFOG, 'A',	6, NULL 						, &States[3]),
-	S_BRIGHT (IFOG, 'B',	6, NULL 						, &States[4]),
-	S_BRIGHT (IFOG, 'C',	6, NULL 						, &States[5]),
-	S_BRIGHT (IFOG, 'D',	6, NULL 						, &States[6]),
-	S_BRIGHT (IFOG, 'E',	6, NULL 						, NULL)
-};
-
-IMPLEMENT_ACTOR (AItemFog, Doom, -1, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
-	PROP_SpawnState (0)
-END_DEFAULTS
 
 //---------------------------------------------------------------------------
 //
@@ -306,7 +317,7 @@ END_DEFAULTS
 //
 //---------------------------------------------------------------------------
 
-void A_RestoreSpecialDoomThing (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_RestoreSpecialDoomThing)
 {
 	self->renderflags &= ~RF_INVISIBLE;
 	self->flags |= MF_SPECIAL;
@@ -318,7 +329,7 @@ void A_RestoreSpecialDoomThing (AActor *self)
 	{
 		self->SetState (self->SpawnState);
 		S_Sound (self, CHAN_VOICE, "misc/spawn", 1, ATTN_IDLE);
-		Spawn<AItemFog> (self->x, self->y, self->z);
+		Spawn ("ItemFog", self->x, self->y, self->z, ALLOW_REPLACE);
 	}
 }
 
@@ -328,22 +339,29 @@ void A_RestoreSpecialDoomThing (AActor *self)
 //
 //---------------------------------------------------------------------------
 
-void A_RestoreSpecialPosition (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_RestoreSpecialPosition)
 {
 	// Move item back to its original location
 	fixed_t _x, _y;
 	sector_t *sec;
 
-	_x = self->SpawnPoint[0] << FRACBITS;
-	_y = self->SpawnPoint[1] << FRACBITS;
-	sec = R_PointInSubsector (_x, _y)->sector;
+	_x = self->SpawnPoint[0];
+	_y = self->SpawnPoint[1];
 
-	self->SetOrigin (_x, _y, sec->floorplane.ZatPoint (_x, _y));
-	P_CheckPosition (self, _x, _y);
+	self->UnlinkFromWorld();
+	self->x = _x;
+	self->y = _y;
+	self->LinkToWorld(true);
+	sec = self->Sector;
+	self->z =
+	self->dropoffz =
+	self->floorz = sec->floorplane.ZatPoint(_x, _y);
+	self->ceilingz = sec->ceilingplane.ZatPoint(_x, _y);
+	P_FindFloorCeiling(self, FFCF_ONLYSPAWNPOS);
 
 	if (self->flags & MF_SPAWNCEILING)
 	{
-		self->z = self->ceilingz - self->height - (self->SpawnPoint[2] << FRACBITS);
+		self->z = self->ceilingz - self->height - self->SpawnPoint[2];
 	}
 	else if (self->flags2 & MF2_SPAWNFLOAT)
 	{
@@ -360,71 +378,25 @@ void A_RestoreSpecialPosition (AActor *self)
 	}
 	else
 	{
-		self->z = (self->SpawnPoint[2] << FRACBITS) + self->floorz;
-		if (self->flags2 & MF2_FLOATBOB)
-		{
-			self->z += FloatBobOffsets[(self->FloatBobPhase + level.maptime) & 63];
-		}
+		self->z = self->SpawnPoint[2] + self->floorz;
 	}
+	// Redo floor/ceiling check, in case of 3D floors
+	P_FindFloorCeiling(self, FFCF_SAMESECTOR | FFCF_ONLY3DFLOORS | FFCF_3DRESTRICT);
+	if (self->z < self->floorz)
+	{ // Do not reappear under the floor, even if that's where we were for the
+	  // initial spawn.
+		self->z = self->floorz;
+	}
+	if ((self->flags & MF_SOLID) && (self->z + self->height > self->ceilingz))
+	{ // Do the same for the ceiling.
+		self->z = self->ceilingz - self->height;
+	}
+	// Do not interpolate from the position the actor was at when it was
+	// picked up, in case that is different from where it is now.
+	self->PrevX = self->x;
+	self->PrevY = self->y;
+	self->PrevZ = self->z;
 }
-
-// Pickup flash -------------------------------------------------------------
-
-class APickupFlash : public AActor
-{
-	DECLARE_ACTOR (APickupFlash, AActor)
-};
-
-FState APickupFlash::States[] =
-{
-	S_NORMAL (ACLO, 'D',    3, NULL                         , &States[1]),
-	S_NORMAL (ACLO, 'C',    3, NULL                         , &States[2]),
-	S_NORMAL (ACLO, 'D',    3, NULL                         , &States[3]),
-	S_NORMAL (ACLO, 'C',    3, NULL                         , &States[4]),
-	S_NORMAL (ACLO, 'B',    3, NULL                         , &States[5]),
-	S_NORMAL (ACLO, 'C',    3, NULL                         , &States[6]),
-	S_NORMAL (ACLO, 'B',    3, NULL                         , &States[7]),
-	S_NORMAL (ACLO, 'A',    3, NULL                         , &States[8]),
-	S_NORMAL (ACLO, 'B',    3, NULL                         , &States[9]),
-	S_NORMAL (ACLO, 'A',    3, NULL                         , NULL)
-};
-
-IMPLEMENT_ACTOR (APickupFlash, Raven, -1, 0)
-	PROP_SpawnState (0)
-	PROP_Flags (MF_NOGRAVITY)
-END_DEFAULTS
-
-/***************************************************************************/
-/* AInventory implementation											   */
-/***************************************************************************/
-
-FState AInventory::States[] =
-{
-#define S_HIDEDOOMISH 0
-	S_NORMAL (TNT1, 'A', 1050, NULL							, &States[S_HIDEDOOMISH+1]),
-	S_NORMAL (TNT1, 'A',	0, A_RestoreSpecialPosition		, &States[S_HIDEDOOMISH+2]),
-	S_NORMAL (TNT1, 'A',    1, A_RestoreSpecialDoomThing	, NULL),
-
-#define S_HIDESPECIAL (S_HIDEDOOMISH+3)
-	S_NORMAL (ACLO, 'E', 1400, NULL                         , &States[S_HIDESPECIAL+1]),
-	S_NORMAL (ACLO, 'A',	0, A_RestoreSpecialPosition		, &States[S_HIDESPECIAL+2]),
-	S_NORMAL (ACLO, 'A',    4, A_RestoreSpecialThing1       , &States[S_HIDESPECIAL+3]),
-	S_NORMAL (ACLO, 'B',    4, NULL                         , &States[S_HIDESPECIAL+4]),
-	S_NORMAL (ACLO, 'A',    4, NULL                         , &States[S_HIDESPECIAL+5]),
-	S_NORMAL (ACLO, 'B',    4, NULL                         , &States[S_HIDESPECIAL+6]),
-	S_NORMAL (ACLO, 'C',    4, NULL                         , &States[S_HIDESPECIAL+7]),
-	S_NORMAL (ACLO, 'B',    4, NULL                         , &States[S_HIDESPECIAL+8]),
-	S_NORMAL (ACLO, 'C',    4, NULL                         , &States[S_HIDESPECIAL+9]),
-	S_NORMAL (ACLO, 'D',    4, NULL                         , &States[S_HIDESPECIAL+10]),
-	S_NORMAL (ACLO, 'C',    4, NULL                         , &States[S_HIDESPECIAL+11]),
-	S_NORMAL (ACLO, 'D',    4, A_RestoreSpecialThing2       , NULL),
-
-#define S_HELD (S_HIDESPECIAL+12)
-	S_NORMAL (TNT1, 'A',   -1, NULL							, NULL),
-
-#define S_HOLDANDDESTROY (S_HELD+1)
-	S_NORMAL (TNT1, 'A',	1, NULL							, NULL),
-};
 
 int AInventory::StaticLastMessageTic;
 const char *AInventory::StaticLastMessage;
@@ -432,13 +404,6 @@ const char *AInventory::StaticLastMessage;
 IMPLEMENT_POINTY_CLASS (AInventory)
  DECLARE_POINTER (Owner)
 END_POINTERS
-
-BEGIN_DEFAULTS (AInventory, Any, -1, 0)
-	PROP_Inventory_Amount (1)
-	PROP_Inventory_MaxAmount (1)
-	PROP_UseSound ("misc/invuse")
-	PROP_Inventory_PickupSound ("misc/i_pkup")
-END_DEFAULTS
 
 //===========================================================================
 //
@@ -448,7 +413,31 @@ END_DEFAULTS
 
 void AInventory::Tick ()
 {
-	Super::Tick ();
+	if (Owner == NULL)
+	{
+		// AActor::Tick is only handling interaction with the world
+		// and we don't want that for owned inventory items.
+		Super::Tick ();
+	}
+	else if (tics != -1)	// ... but at least we have to advance the states
+	{
+		tics--;
+				
+		// you can cycle through multiple states in a tic
+		// [RH] Use <= 0 instead of == 0 so that spawnstates
+		// of 0 tics work as expected.
+		if (tics <= 0)
+		{
+			assert (state != NULL);
+			if (state == NULL)
+			{
+				Destroy();
+				return;
+			}
+			if (!SetState (state->GetNextState()))
+				return; 		// freed itself
+		}
+	}
 	if (DropTime)
 	{
 		if (--DropTime == 0)
@@ -467,19 +456,19 @@ void AInventory::Tick ()
 void AInventory::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
-	arc << Owner << Amount << MaxAmount << RespawnTics << ItemFlags;
-	if (arc.IsStoring ())
-	{
-		TexMan.WriteTexture (arc, Icon);
-	}
-	else
-	{
-		Icon = TexMan.ReadTexture (arc);
-	}
-	if (SaveVersion >= 226)
-	{
-		arc << AR_SOUNDW(PickupSound);
-	}
+	arc << Owner << Amount << MaxAmount << RespawnTics << ItemFlags << Icon << PickupSound << SpawnPointClass;
+}
+
+//===========================================================================
+//
+// AInventory :: MarkPrecacheSounds
+//
+//===========================================================================
+
+void AInventory::MarkPrecacheSounds() const
+{
+	Super::MarkPrecacheSounds();
+	PickupSound.MarkUsed();
 }
 
 //===========================================================================
@@ -508,6 +497,8 @@ bool AInventory::SpecialDropAction (AActor *dropper)
 
 bool AInventory::ShouldRespawn ()
 {
+	if ((ItemFlags & IF_BIGPOWERUP) && !(dmflags & DF_RESPAWN_SUPER)) return false;
+	if (ItemFlags & IF_NEVERRESPAWN) return false;
 	return !!(dmflags & DF_ITEMS_RESPAWN);
 }
 
@@ -526,6 +517,46 @@ void AInventory::BeginPlay ()
 
 //===========================================================================
 //
+// AInventory :: Grind
+//
+//===========================================================================
+
+bool AInventory::Grind(bool items)
+{
+	// Does this grind request even care about items?
+	if (!items)
+	{
+		return false;
+	}
+	// Dropped items are normally destroyed by crushers. Set the DONTGIB flag,
+	// and they'll act like corpses with it set and be immune to crushers.
+	if (flags & MF_DROPPED)
+	{
+		if (!(flags3 & MF3_DONTGIB))
+		{
+			Destroy();
+		}
+		return false;
+	}
+	// Non-dropped items call the super method for compatibility.
+	return Super::Grind(items);
+}
+
+//===========================================================================
+//
+// AInventory :: DoEffect
+//
+// Handles any effect an item might apply to its owner
+// Normally only used by subclasses of APowerup
+//
+//===========================================================================
+
+void AInventory::DoEffect ()
+{
+}
+
+//===========================================================================
+//
 // AInventory :: Travelled
 //
 // Called when an item in somebody's inventory is carried over to another
@@ -534,6 +565,18 @@ void AInventory::BeginPlay ()
 //===========================================================================
 
 void AInventory::Travelled ()
+{
+}
+
+//===========================================================================
+//
+// AInventory :: OwnerDied
+//
+// Items receive this message when their owners die.
+//
+//===========================================================================
+
+void AInventory::OwnerDied ()
 {
 }
 
@@ -550,10 +593,18 @@ bool AInventory::HandlePickup (AInventory *item)
 {
 	if (item->GetClass() == GetClass())
 	{
-		if (Amount < MaxAmount)
+		if (Amount < MaxAmount || sv_unlimited_pickup)
 		{
-			Amount += item->Amount;
-			if (Amount > MaxAmount)
+			if (Amount > 0 && Amount + item->Amount < 0)
+			{
+				Amount = 0x7fffffff;
+			}
+			else
+			{
+				Amount += item->Amount;
+			}
+		
+			if (Amount > MaxAmount && !sv_unlimited_pickup)
 			{
 				Amount = MaxAmount;
 			}
@@ -582,19 +633,11 @@ bool AInventory::GoAway ()
 	// Dropped items never stick around
 	if (flags & MF_DROPPED)
 	{
-		if (ItemFlags & IF_PICKUPFLASH)
-		{
-			Spawn<APickupFlash> (x, y, z);
-		}
 		return false;
 	}
 
 	if (!ShouldStay ())
 	{
-		if (ItemFlags & IF_PICKUPFLASH)
-		{
-			Spawn<APickupFlash> (x, y, z);
-		}
 		Hide ();
 		if (ShouldRespawn ())
 		{
@@ -619,7 +662,7 @@ void AInventory::GoAwayAndDie ()
 	if (!GoAway ())
 	{
 		flags &= ~MF_SPECIAL;
-		SetState (&States[S_HOLDANDDESTROY]);
+		SetState (FindState("HoldAndDestroy"));
 	}
 }
 
@@ -639,7 +682,7 @@ AInventory *AInventory::CreateCopy (AActor *other)
 
 	if (GoAway ())
 	{
-		copy = static_cast<AInventory *>(Spawn (GetClass(), 0, 0, 0));
+		copy = static_cast<AInventory *>(Spawn (GetClass(), 0, 0, 0, NO_REPLACE));
 		copy->Amount = Amount;
 		copy->MaxAmount = MaxAmount;
 	}
@@ -666,16 +709,16 @@ AInventory *AInventory::CreateTossable ()
 
 	// If this actor lacks a SpawnState, don't drop it. (e.g. A base weapon
 	// like the fist can't be dropped because you'll never see it.)
-	if (SpawnState == &AActor::States[AActor::S_NULL] ||
+	if (SpawnState == ::GetDefault<AActor>()->SpawnState ||
 		SpawnState == NULL)
 	{
 		return NULL;
 	}
-	if ((ItemFlags & IF_UNDROPPABLE) || Owner == NULL || Amount <= 0)
+	if ((ItemFlags & (IF_UNDROPPABLE|IF_UNTOSSABLE)) || Owner == NULL || Amount <= 0)
 	{
 		return NULL;
 	}
-	if (Amount == 1 && !IsKindOf (RUNTIME_CLASS(AAmmo)))
+	if (Amount == 1 && !(ItemFlags & IF_KEEPDEPLETED))
 	{
 		BecomePickup ();
 		DropTime = 30;
@@ -683,15 +726,15 @@ AInventory *AInventory::CreateTossable ()
 		return this;
 	}
 	copy = static_cast<AInventory *>(Spawn (GetClass(), Owner->x,
-		Owner->y, Owner->z));
+		Owner->y, Owner->z, NO_REPLACE));
 	if (copy != NULL)
 	{
 		copy->MaxAmount = MaxAmount;
 		copy->Amount = 1;
+		copy->DropTime = 30;
+		copy->flags &= ~(MF_SPECIAL|MF_SOLID);
 		Amount--;
 	}
-	copy->DropTime = 30;
-	copy->flags &= ~(MF_SPECIAL|MF_SOLID);
 	return copy;
 }
 
@@ -718,7 +761,7 @@ void AInventory::BecomeItem ()
 	}
 	RemoveFromHash ();
 	flags &= ~MF_SPECIAL;
-	SetState (&States[S_HELD]);
+	SetState (FindState("Held"));
 }
 
 //===========================================================================
@@ -758,11 +801,52 @@ void AInventory::BecomePickup ()
 //
 //===========================================================================
 
-void AInventory::AbsorbDamage (int damage, int damageType, int &newdamage)
+void AInventory::AbsorbDamage (int damage, FName damageType, int &newdamage)
 {
 	if (Inventory != NULL)
 	{
 		Inventory->AbsorbDamage (damage, damageType, newdamage);
+	}
+}
+
+//===========================================================================
+//
+// AInventory :: ModifyDamage
+//
+// Allows inventory items to manipulate the amount of damage
+// inflicted. Damage is the amount of damage that would be done without manipulation,
+// and newdamage is the amount that should be done after the item has changed
+// it.
+// 'active' means it is called by the inflictor, 'passive' by the target.
+// It may seem that this is redundant and AbsorbDamage is the same. However,
+// AbsorbDamage is called only for players and also depends on other settings
+// which are undesirable for a protection artifact.
+//
+//===========================================================================
+
+void AInventory::ModifyDamage (int damage, FName damageType, int &newdamage, bool passive)
+{
+	if (Inventory != NULL)
+	{
+		Inventory->ModifyDamage (damage, damageType, newdamage, passive);
+	}
+}
+
+//===========================================================================
+//
+// AInventory :: GetSpeedFactor
+//
+//===========================================================================
+
+fixed_t AInventory::GetSpeedFactor ()
+{
+	if (Inventory != NULL)
+	{
+		return Inventory->GetSpeedFactor();
+	}
+	else
+	{
+		return FRACUNIT;
 	}
 }
 
@@ -775,12 +859,13 @@ void AInventory::AbsorbDamage (int damage, int damageType, int &newdamage)
 //
 //===========================================================================
 
-void AInventory::AlterWeaponSprite (vissprite_t *vis)
+int AInventory::AlterWeaponSprite (visstyle_t *vis)
 {
 	if (Inventory != NULL)
 	{
-		Inventory->AlterWeaponSprite (vis);
+		return Inventory->AlterWeaponSprite (vis);
 	}
+	return 0;
 }
 
 //===========================================================================
@@ -804,21 +889,62 @@ bool AInventory::Use (bool pickup)
 
 void AInventory::Hide ()
 {
+	FState *HideSpecialState = NULL, *HideDoomishState = NULL;
+
  	flags = (flags & ~MF_SPECIAL) | MF_NOGRAVITY;
 	renderflags |= RF_INVISIBLE;
+
 	if (gameinfo.gametype & GAME_Raven)
 	{
-		SetState (&States[S_HIDESPECIAL]);
-		tics = 1400;
+		HideSpecialState = FindState("HideSpecial");
+		if (HideSpecialState == NULL)
+		{
+			HideDoomishState = FindState("HideDoomish");
+		}
 	}
 	else
 	{
-		SetState (&States[S_HIDEDOOMISH]);
+		HideDoomishState = FindState("HideDoomish");
+		if (HideDoomishState == NULL)
+		{
+			HideSpecialState = FindState("HideSpecial");
+		}
+	}
+
+	assert(HideDoomishState != NULL || HideSpecialState != NULL);
+
+	if (HideSpecialState != NULL)
+	{
+		SetState (HideSpecialState);
+		tics = 1400;
+		if (PickupFlash != NULL) tics += 30;
+	}
+	else if (HideDoomishState != NULL)
+	{
+		SetState (HideDoomishState);
 		tics = 1050;
 	}
 	if (RespawnTics != 0)
 	{
 		tics = RespawnTics;
+	}
+}
+
+
+//===========================================================================
+//
+//
+//===========================================================================
+
+static void PrintPickupMessage (const char *str)
+{
+	if (str != NULL)
+	{
+		if (str[0]=='$') 
+		{
+			str=GStrings(str+1);
+		}
+		if (str[0] != 0) Printf (PRINT_LOW, "%s\n", str);
 	}
 }
 
@@ -839,23 +965,26 @@ void AInventory::Touch (AActor *toucher)
 		toucher = toucher->player->mo;
 	}
 
-	if (!TryPickup (toucher))
-		return;
+	bool localview = toucher->CheckLocalView(consoleplayer);
+
+	if (!CallTryPickup (toucher, &toucher)) return;
+
+	// This is the only situation when a pickup flash should ever play.
+	if (PickupFlash != NULL && !ShouldStay())
+	{
+		Spawn(PickupFlash, x, y, z, ALLOW_REPLACE);
+	}
 
 	if (!(ItemFlags & IF_QUIET))
 	{
-		const char *message = GetClass()->Meta.GetMetaString (AIMETA_PickupMessage);
-		if (message == NULL)
-		{
-			message = PickupMessage ();
-		}
+		const char * message = PickupMessage ();
 
-		if (toucher->CheckLocalView (consoleplayer)
+		if (message != NULL && *message != 0 && localview
 			&& (StaticLastMessageTic != gametic || StaticLastMessage != message))
 		{
 			StaticLastMessageTic = gametic;
 			StaticLastMessage = message;
-			Printf (PRINT_LOW, "%s\n", message);
+			PrintPickupMessage (message);
 			StatusBar->FlashCrosshair ();
 		}
 
@@ -864,13 +993,16 @@ void AInventory::Touch (AActor *toucher)
 		if (toucher->player != NULL)
 		{
 			PlayPickupSound (toucher->player->mo);
-			toucher->player->bonuscount = BONUSADD;
+			if (!(ItemFlags & IF_NOSCREENFLASH))
+			{
+				toucher->player->bonuscount = BONUSADD;
+			}
 		}
 		else
 		{
 			PlayPickupSound (toucher);
 		}
-	}
+	}							
 
 	// [RH] Execute an attached special (if any)
 	DoPickupSpecial (toucher);
@@ -882,6 +1014,11 @@ void AInventory::Touch (AActor *toucher)
 			toucher->player->itemcount++;
 		}
 		level.found_items++;
+	}
+
+	if (flags5 & MF5_COUNTSECRET)
+	{
+		P_GiveSecret(toucher, true, true);
 	}
 
 	//Added by MC: Check if item taken was the roam destination of any bot
@@ -904,7 +1041,7 @@ void AInventory::DoPickupSpecial (AActor *toucher)
 {
 	if (special)
 	{
-		LineSpecials[special] (NULL, toucher, false,
+		P_ExecuteSpecial(special, NULL, toucher, false,
 			args[0], args[1], args[2], args[3], args[4]);
 		special = 0;
 	}
@@ -920,7 +1057,7 @@ void AInventory::DoPickupSpecial (AActor *toucher)
 
 const char *AInventory::PickupMessage ()
 {
-	return "You got a pickup";
+	return GetClass()->Meta.GetMetaString (AIMETA_PickupMessage);
 }
 
 //===========================================================================
@@ -931,10 +1068,34 @@ const char *AInventory::PickupMessage ()
 
 void AInventory::PlayPickupSound (AActor *toucher)
 {
-	S_SoundID (toucher, CHAN_PICKUP, PickupSound, 1,
-		(ItemFlags & IF_FANCYPICKUPSOUND) &&
-		(toucher == NULL || toucher->CheckLocalView (consoleplayer))
-		? ATTN_SURROUND : ATTN_NORM);
+	float atten;
+	int chan;
+
+	if (ItemFlags & IF_NOATTENPICKUPSOUND)
+	{
+		atten = ATTN_NONE;
+	}
+#if 0
+	else if ((ItemFlags & IF_FANCYPICKUPSOUND) &&
+		(toucher == NULL || toucher->CheckLocalView(consoeplayer)))
+	{
+		atten = ATTN_NONE;
+	}
+#endif
+	else
+	{
+		atten = ATTN_NORM;
+	}
+
+	if (toucher != NULL && toucher->CheckLocalView(consoleplayer))
+	{
+		chan = CHAN_PICKUP|CHAN_NOPAUSE;
+	}
+	else
+	{
+		chan = CHAN_PICKUP;
+	}
+	S_Sound (toucher, chan, PickupSound, 1, atten);
 }
 
 //===========================================================================
@@ -964,6 +1125,10 @@ void AInventory::Destroy ()
 	}
 	Inventory = NULL;
 	Super::Destroy ();
+
+	// Although contrived it can theoretically happen that these variables still got a pointer to this item
+	if (SendItemUse == this) SendItemUse = NULL;
+	if (SendItemDrop == this) SendItemDrop = NULL;
 }
 
 //===========================================================================
@@ -988,7 +1153,7 @@ PalEntry AInventory::GetBlend ()
 //
 //===========================================================================
 
-AInventory *AInventory::PrevItem () const
+AInventory *AInventory::PrevItem ()
 {
 	AInventory *item = Owner->Inventory;
 
@@ -1007,7 +1172,7 @@ AInventory *AInventory::PrevItem () const
 //
 //===========================================================================
 
-AInventory *AInventory::PrevInv () const
+AInventory *AInventory::PrevInv ()
 {
 	AInventory *lastgood = NULL;
 	AInventory *item = Owner->Inventory;
@@ -1030,7 +1195,7 @@ AInventory *AInventory::PrevInv () const
 //
 //===========================================================================
 
-AInventory *AInventory::NextInv () const
+AInventory *AInventory::NextInv ()
 {
 	AInventory *item = Inventory;
 
@@ -1059,12 +1224,7 @@ bool AInventory::DrawPowerup (int x, int y)
 /* AArtifact implementation												   */
 /***************************************************************************/
 
-IMPLEMENT_STATELESS_ACTOR (APowerupGiver, Any, -1, 0)
-	PROP_Inventory_RespawnTics (30+1400)
-	PROP_Inventory_DefMaxAmount
-	PROP_Inventory_FlagsSet (IF_INVBAR|IF_FANCYPICKUPSOUND)
-	PROP_Inventory_PickupSound ("misc/p_pkup")
-END_DEFAULTS
+IMPLEMENT_CLASS (APowerupGiver)
 
 //===========================================================================
 //
@@ -1074,7 +1234,35 @@ END_DEFAULTS
 
 bool AInventory::DoRespawn ()
 {
+	if (SpawnPointClass != NULL)
+	{
+		AActor *spot = NULL;
+		DSpotState *state = DSpotState::GetSpotState();
+
+		if (state != NULL) spot = state->GetRandomSpot(SpawnPointClass);
+		if (spot != NULL) 
+		{
+			SetOrigin (spot->x, spot->y, spot->z);
+			z = floorz;
+		}
+	}
 	return true;
+}
+
+
+//===========================================================================
+//
+// AInventory :: GiveQuest
+//
+//===========================================================================
+
+void AInventory::GiveQuest (AActor *toucher)
+{
+	int quest = GetClass()->Meta.GetMetaInt(AIMETA_GiveQuest);
+	if (quest>0 && quest<31)
+	{
+		toucher->GiveInventoryType (QuestItemClasses[quest-1]);
+	}
 }
 
 //===========================================================================
@@ -1083,8 +1271,10 @@ bool AInventory::DoRespawn ()
 //
 //===========================================================================
 
-bool AInventory::TryPickup (AActor *toucher)
+bool AInventory::TryPickup (AActor *&toucher)
 {
+	AActor *newtoucher = toucher; // in case changed by the powerup
+
 	// If HandlePickup() returns true, it will set the IF_PICKUPGOOD flag
 	// to indicate that this item has been picked up. If the item cannot be
 	// picked up, then it leaves the flag cleared.
@@ -1100,7 +1290,7 @@ bool AInventory::TryPickup (AActor *toucher)
 		ItemFlags &= ~IF_PICKUPGOOD;
 		GoAwayAndDie ();
 	}
-	else if (MaxAmount == 0)
+	else if (MaxAmount == 0 && !IsKindOf(RUNTIME_CLASS(AAmmo)))
 	{
 		// Special case: If an item's MaxAmount is 0, you can still pick it
 		// up if it is autoactivate-able.
@@ -1113,7 +1303,7 @@ bool AInventory::TryPickup (AActor *toucher)
 		bool usegood = Use (true);
 		toucher->RemoveInventory (this);
 
-		if (usegood || (ItemFlags & IF_ALWAYSPICKUP))
+		if (usegood)
 		{
 			GoAwayAndDie ();
 		}
@@ -1131,17 +1321,111 @@ bool AInventory::TryPickup (AActor *toucher)
 		{
 			return false;
 		}
-		copy->AttachToOwner (toucher);
+		// Some powerups cannot activate absolutely, for
+		// example, PowerMorph; fail the pickup if so.
+		if (copy->ItemFlags & IF_INITEFFECTFAILED)
+		{
+			if (copy != this) copy->Destroy();
+			else ItemFlags &= ~IF_INITEFFECTFAILED;
+			return false;
+		}
+		// Handle owner-changing powerups
+		if (copy->ItemFlags & IF_CREATECOPYMOVED)
+		{
+			newtoucher = copy->Owner;
+			copy->Owner = NULL;
+			copy->ItemFlags &= ~IF_CREATECOPYMOVED;
+		}
+		// Continue onwards with the rest
+		copy->AttachToOwner (newtoucher);
 		if (ItemFlags & IF_AUTOACTIVATE)
 		{
 			if (copy->Use (true))
 			{
 				if (--copy->Amount <= 0)
 				{
-					flags &= ~MF_SPECIAL;
-					SetState (&States[S_HOLDANDDESTROY]);
+					copy->flags &= ~MF_SPECIAL;
+					copy->SetState (copy->FindState("HoldAndDestroy"));
 				}
 			}
+		}
+	}
+	return true;
+}
+
+//===========================================================================
+//
+// AInventory :: TryPickupRestricted
+//
+//===========================================================================
+
+bool AInventory::TryPickupRestricted (AActor *&toucher)
+{
+	return false;
+}
+
+//===========================================================================
+//
+// AInventory :: CallTryPickup
+//
+//===========================================================================
+
+bool AInventory::CallTryPickup (AActor *toucher, AActor **toucher_return)
+{
+	// unmorphed versions of a currently morphed actor cannot pick up anything. 
+	if (toucher->flags & MF_UNMORPHED) return false;
+
+	bool res;
+	if (CanPickup(toucher))
+		res = TryPickup(toucher);
+	else if (!(ItemFlags & IF_RESTRICTABSOLUTELY))
+		res = TryPickupRestricted(toucher);	// let an item decide for itself how it will handle this
+	else
+		return false;
+
+	// Morph items can change the toucher so we need an option to return this info.
+	if (toucher_return != NULL) *toucher_return = toucher;
+
+	if (!res && (ItemFlags & IF_ALWAYSPICKUP) && !ShouldStay())
+	{
+		res = true;
+		GoAwayAndDie();
+	}
+
+	if (res) GiveQuest(toucher);
+	return res;
+}
+
+
+//===========================================================================
+//
+// AInventory :: CanPickup
+//
+//===========================================================================
+
+bool AInventory::CanPickup (AActor *toucher)
+{
+	if (!toucher)
+		return false;
+
+	FActorInfo *ai = GetClass()->ActorInfo;
+	// Is the item restricted to certain player classes?
+	if (ai->RestrictedToPlayerClass.Size() != 0)
+	{
+		for (unsigned i = 0; i < ai->RestrictedToPlayerClass.Size(); ++i)
+		{
+			if (toucher->IsKindOf(ai->RestrictedToPlayerClass[i]))
+				return true;
+		}
+		return false;
+	}
+	// Or is it forbidden to certain other classes?
+	else
+	{
+		for (unsigned i = 0; i < ai->ForbiddenToPlayerClass.Size(); ++i)
+		{
+			if (toucher->IsKindOf(ai->ForbiddenToPlayerClass[i]))
+				return false;
 		}
 	}
 	return true;
@@ -1158,10 +1442,28 @@ bool AInventory::TryPickup (AActor *toucher)
 CCMD (printinv)
 {
 	AInventory *item;
+	int pnum = consoleplayer;
 
-	for (item = players[consoleplayer].mo->Inventory; item != NULL; item = item->Inventory)
+#ifdef _DEBUG
+	// Only allow peeking on other players' inventory in debug builds.
+	if (argv.argc() > 1)
 	{
-		Printf ("%s #%lu (%d/%d)\n", item->GetClass()->Name+1, item->InventoryID, item->Amount, item->MaxAmount);
+		pnum = atoi (argv[1]);
+		if (pnum < 0 || pnum >= MAXPLAYERS)
+		{
+			return;
+		}
+	}
+#endif
+	if (players[pnum].mo == NULL)
+	{
+		return;
+	}
+	for (item = players[pnum].mo->Inventory; item != NULL; item = item->Inventory)
+	{
+		Printf ("%s #%u (%d/%d)\n", item->GetClass()->TypeName.GetChars(),
+			item->InventoryID,
+			item->Amount, item->MaxAmount);
 	}
 }
 
@@ -1190,20 +1492,7 @@ void AInventory::DetachFromOwner ()
 {
 }
 
-IMPLEMENT_STATELESS_ACTOR (ACustomInventory, Any, -1, 0)
-END_DEFAULTS
-
-//===========================================================================
-//
-// ACustomInventory :: Serialize
-//
-//===========================================================================
-
-void ACustomInventory::Serialize (FArchive &arc)
-{
-	Super::Serialize (arc);
-	arc << UseState << PickupState << DropState;
-}
+IMPLEMENT_CLASS (ACustomInventory)
 
 //===========================================================================
 //
@@ -1213,7 +1502,7 @@ void ACustomInventory::Serialize (FArchive &arc)
 
 bool ACustomInventory::SpecialDropAction (AActor *dropper)
 {
-	return CallStateChain (dropper, DropState);
+	return CallStateChain (dropper, FindState(NAME_Drop));
 }
 
 //===========================================================================
@@ -1224,7 +1513,7 @@ bool ACustomInventory::SpecialDropAction (AActor *dropper)
 
 bool ACustomInventory::Use (bool pickup)
 {
-	return CallStateChain (Owner, UseState);
+	return CallStateChain (Owner, FindState(NAME_Use));
 }
 
 //===========================================================================
@@ -1233,493 +1522,43 @@ bool ACustomInventory::Use (bool pickup)
 //
 //===========================================================================
 
-bool ACustomInventory::TryPickup (AActor *toucher)
+bool ACustomInventory::TryPickup (AActor *&toucher)
 {
-	bool useok = CallStateChain (toucher, PickupState);
-	if ((useok || PickupState == NULL) && UseState != NULL)
+	FState *pickupstate = FindState(NAME_Pickup);
+	bool useok = CallStateChain (toucher, pickupstate);
+	if ((useok || pickupstate == NULL) && FindState(NAME_Use) != NULL)
 	{
 		useok = Super::TryPickup (toucher);
+	}
+	else if (useok)
+	{
+		GoAwayAndDie();
 	}
 	return useok;
 }
 
-IMPLEMENT_STATELESS_ACTOR (AArmor, Any, -1, 0)
-	PROP_Inventory_PickupSound ("misc/armor_pkup")
-END_DEFAULTS
-
-IMPLEMENT_STATELESS_ACTOR (ABasicArmor, Any, -1, 0)
-	PROP_SpawnState (S_HELD)
-END_DEFAULTS
-
-IMPLEMENT_STATELESS_ACTOR (ABasicArmorPickup, Any, -1, 0)
-	PROP_Inventory_MaxAmount (0)
-	PROP_Inventory_FlagsSet (IF_AUTOACTIVATE)
-END_DEFAULTS
-
-IMPLEMENT_STATELESS_ACTOR (ABasicArmorBonus, Any, -1, 0)
-	PROP_Inventory_MaxAmount (0)
-	PROP_Inventory_FlagsSet (IF_AUTOACTIVATE|IF_ALWAYSPICKUP)
-	PROP_BasicArmorBonus_SavePercent (FRACUNIT/3)
-END_DEFAULTS
-
-IMPLEMENT_STATELESS_ACTOR (AHexenArmor, Any, -1, 0)
-	PROP_Inventory_FlagsSet (IF_UNDROPPABLE)
-END_DEFAULTS
-
+IMPLEMENT_CLASS (AHealth)
 
 //===========================================================================
 //
-// ABasicArmorPickup :: Serialize
+// AHealth :: PickupMessage
 //
 //===========================================================================
-
-void ABasicArmorPickup::Serialize (FArchive &arc)
+const char *AHealth::PickupMessage ()
 {
-	Super::Serialize (arc);
-	arc << SavePercent << SaveAmount;
-	if (SaveVersion >= 222)
+	int threshold = GetClass()->Meta.GetMetaInt(AIMETA_LowHealth, 0);
+
+	if (PrevHealth < threshold)
 	{
-		arc << DropTime;
-	}
-}
+		const char *message = GetClass()->Meta.GetMetaString (AIMETA_LowHealthMessage);
 
-//===========================================================================
-//
-// ABasicArmorPickup :: CreateCopy
-//
-//===========================================================================
-
-AInventory *ABasicArmorPickup::CreateCopy (AActor *other)
-{
-	ABasicArmorPickup *copy = static_cast<ABasicArmorPickup *> (Super::CreateCopy (other));
-	copy->SavePercent = SavePercent;
-	copy->SaveAmount = SaveAmount;
-	return copy;
-}
-
-//===========================================================================
-//
-// ABasicArmorPickup :: Use
-//
-// Either gives you new armor or replaces the armor you already have (if
-// the SaveAmount is greater than the amount of armor you own). When the
-// item is auto-activated, it will only be activated if its max amount is 0
-// or if you have no armor active already.
-//
-//===========================================================================
-
-bool ABasicArmorPickup::Use (bool pickup)
-{
-	ABasicArmor *armor = Owner->FindInventory<ABasicArmor> ();
-
-	if (armor == NULL)
-	{
-		armor = Spawn<ABasicArmor> (0,0,0);
-		armor->BecomeItem ();
-		armor->SavePercent = SavePercent;
-		armor->Amount = armor->MaxAmount = SaveAmount;
-		armor->Icon = Icon;
-		Owner->AddInventory (armor);
-		return true;
-	}
-	// If you already have more armor than this item gives you, you can't
-	// use it.
-	if (armor->Amount >= SaveAmount)
-	{
-		return false;
-	}
-	// Don't use it if you're picking it up and already have some.
-	if (pickup && armor->Amount > 0 && MaxAmount > 0)
-	{
-		return false;
-	}
-	armor->SavePercent = SavePercent;
-	armor->Amount = armor->MaxAmount = SaveAmount;
-	armor->Icon = Icon;
-	return true;
-}
-
-//===========================================================================
-//
-// ABasicArmorBonus :: Serialize
-//
-//===========================================================================
-
-void ABasicArmorBonus::Serialize (FArchive &arc)
-{
-	Super::Serialize (arc);
-	arc << SavePercent << SaveAmount << MaxSaveAmount;
-}
-
-//===========================================================================
-//
-// ABasicArmorBonus :: CreateCopy
-//
-//===========================================================================
-
-AInventory *ABasicArmorBonus::CreateCopy (AActor *other)
-{
-	ABasicArmorBonus *copy = static_cast<ABasicArmorBonus *> (Super::CreateCopy (other));
-	copy->SavePercent = SavePercent;
-	copy->SaveAmount = SaveAmount;
-	copy->MaxSaveAmount = MaxSaveAmount;
-	return copy;
-}
-
-//===========================================================================
-//
-// ABasicArmorBonus :: Use
-//
-// Tries to add to the amount of BasicArmor a player has.
-//
-//===========================================================================
-
-bool ABasicArmorBonus::Use (bool pickup)
-{
-	ABasicArmor *armor = Owner->FindInventory<ABasicArmor> ();
-	int saveAmount = MIN (SaveAmount, MaxSaveAmount);
-
-	if (saveAmount <= 0)
-	{ // If it can't give you anything, it's as good as used.
-		return true;
-	}
-	if (armor == NULL)
-	{
-		armor = Spawn<ABasicArmor> (0,0,0);
-		armor->BecomeItem ();
-		armor->SavePercent = SavePercent;
-		armor->Amount = saveAmount;
-		armor->MaxAmount = MaxSaveAmount;
-		armor->Icon = Icon;
-		Owner->AddInventory (armor);
-		return true;
-	}
-	// If you already have more armor than this item can give you, you can't
-	// use it.
-	if (armor->Amount >= MaxSaveAmount)
-	{
-		return false;
-	}
-	if (armor->Amount <= 0)
-	{ // Should never be less than 0, but might as well check anyway
-		armor->Amount = 0;
-		armor->Icon = Icon;
-		armor->SavePercent = SavePercent;
-	}
-	armor->Amount += saveAmount;
-	armor->MaxAmount = MAX (armor->MaxAmount, MaxSaveAmount);
-	return true;
-}
-
-//===========================================================================
-//
-// ABasicArmor :: Serialize
-//
-//===========================================================================
-
-void ABasicArmor::Serialize (FArchive &arc)
-{
-	Super::Serialize (arc);
-	arc << SavePercent;
-}
-
-//===========================================================================
-//
-// ABasicArmor :: Tick
-//
-// If BasicArmor is given to the player by means other than a
-// BasicArmorPickup, then it may not have an icon set. Fix that here.
-//
-//===========================================================================
-
-void ABasicArmor::Tick ()
-{
-	Super::Tick ();
-	if (Icon == 0)
-	{
-		switch (gameinfo.gametype)
+		if (message != NULL)
 		{
-		case GAME_Doom:
-			Icon = TexMan.CheckForTexture (SavePercent == FRACUNIT/3 ? "ARM1A0" : "ARM2A0", FTexture::TEX_Any);
-			break;
-
-		case GAME_Heretic:
-			Icon = TexMan.CheckForTexture (SavePercent == FRACUNIT/2 ? "SHLDA0" : "SHD2A0", FTexture::TEX_Any);
-			break;
-
-		case GAME_Strife:
-			Icon = TexMan.CheckForTexture (SavePercent == FRACUNIT/3 ? "I_ARM2" : "I_ARM1", FTexture::TEX_Any);
-			break;
-		
-		default:
-			break;
+			return message;
 		}
 	}
+	return Super::PickupMessage();
 }
-
-//===========================================================================
-//
-// ABasicArmor :: CreateCopy
-//
-//===========================================================================
-
-AInventory *ABasicArmor::CreateCopy (AActor *other)
-{
-	// BasicArmor that is in use is stored in the inventory as BasicArmor.
-	// BasicArmor that is in reserve is not.
-	ABasicArmor *copy = Spawn<ABasicArmor> (0, 0, 0);
-	copy->SavePercent = SavePercent != 0 ? SavePercent : FRACUNIT/3;
-	copy->Amount = Amount;
-	copy->MaxAmount = MaxAmount;
-	copy->Icon = Icon;
-	GoAwayAndDie ();
-	return copy;
-}
-
-//===========================================================================
-//
-// ABasicArmor :: HandlePickup
-//
-//===========================================================================
-
-bool ABasicArmor::HandlePickup (AInventory *item)
-{
-	if (item->GetClass() == RUNTIME_CLASS(ABasicArmor))
-	{
-		// You shouldn't be picking up BasicArmor anyway.
-		return true;
-	}
-	if (Inventory != NULL)
-	{
-		return Inventory->HandlePickup (item);
-	}
-	return false;
-}
-
-//===========================================================================
-//
-// ABasicArmor :: AbsorbDamage
-//
-//===========================================================================
-
-void ABasicArmor::AbsorbDamage (int damage, int damageType, int &newdamage)
-{
-	if (damageType != MOD_WATER)
-	{
-		int saved = FixedMul (damage, SavePercent);
-		if (Amount < saved)
-		{
-			saved = Amount;
-		}
-		newdamage -= saved;
-		Amount -= saved;
-		if (Amount == 0)
-		{
-			// The armor has become useless
-			SavePercent = 0;
-			// Now see if the player has some more armor in their inventory
-			// and use it if so. As in Strife, the best armor is used up first.
-			ABasicArmorPickup *best = NULL;
-			AInventory *probe = Owner->Inventory;
-			while (probe != NULL)
-			{
-				if (probe->IsKindOf (RUNTIME_CLASS(ABasicArmorPickup)))
-				{
-					ABasicArmorPickup *inInv = static_cast<ABasicArmorPickup*>(probe);
-					if (best == NULL || best->SavePercent < inInv->SavePercent)
-					{
-						best = inInv;
-					}
-				}
-				probe = probe->Inventory;
-			}
-			if (best != NULL)
-			{
-				Owner->UseInventory (best);
-			}
-		}
-	}
-	if (Inventory != NULL)
-	{
-		Inventory->AbsorbDamage (damage, damageType, newdamage);
-	}
-}
-
-//===========================================================================
-//
-// AHexenArmor :: Serialize
-//
-//===========================================================================
-
-void AHexenArmor::Serialize (FArchive &arc)
-{
-	Super::Serialize (arc);
-	arc << Slots[0] << Slots[1] << Slots[2] << Slots[3];
-	if (SaveVersion >= 224)
-	{
-		arc << Slots[4]
-			<< SlotsIncrement[0] << SlotsIncrement[1] << SlotsIncrement[2]
-			<< SlotsIncrement[3];
-	}
-}
-
-//===========================================================================
-//
-// AHexenArmor :: CreateCopy
-//
-//===========================================================================
-
-AInventory *AHexenArmor::CreateCopy (AActor *other)
-{
-	// Like BasicArmor, HexenArmor is used in the inventory but not the map.
-	// health is the slot this armor occupies.
-	// Amount is the quantity to give (0 = normal max).
-	AHexenArmor *copy = Spawn<AHexenArmor> (0, 0, 0);
-	copy->AddArmorToSlot (other, health, Amount);
-	GoAwayAndDie ();
-	return copy;
-}
-
-//===========================================================================
-//
-// AHexenArmor :: CreateTossable
-//
-// Since this isn't really a single item, you can't drop it. Ever.
-//
-//===========================================================================
-
-AInventory *AHexenArmor::CreateTossable ()
-{
-	return NULL;
-}
-
-//===========================================================================
-//
-// AHexenArmor :: HandlePickup
-//
-//===========================================================================
-
-bool AHexenArmor::HandlePickup (AInventory *item)
-{
-	if (item->IsKindOf (RUNTIME_CLASS(AHexenArmor)))
-	{
-		if (AddArmorToSlot (Owner, item->health, item->Amount))
-		{
-			item->ItemFlags |= IF_PICKUPGOOD;
-		}
-		return true;
-	}
-	else if (Inventory != NULL)
-	{
-		return Inventory->HandlePickup (item);
-	}
-	return false;
-}
-
-//===========================================================================
-//
-// AHexenArmor :: AddArmorToSlot
-//
-//===========================================================================
-
-bool AHexenArmor::AddArmorToSlot (AActor *actor, int slot, int amount)
-{
-	APlayerPawn *ppawn;
-	int hits;
-
-	if (actor->player != NULL)
-	{
-		ppawn = static_cast<APlayerPawn *>(actor);
-	}
-	else
-	{
-		ppawn = NULL;
-	}
-
-	if (slot < 0 || slot > 3)
-	{
-		return false;
-	}
-	if (amount <= 0)
-	{
-		hits = SlotsIncrement[slot];
-		if (Slots[slot] < hits)
-		{
-			Slots[slot] = hits;
-			return true;
-		}
-	}
-	else
-	{
-		hits = amount * 5 * FRACUNIT;
-		fixed_t total = Slots[0]+Slots[1]+Slots[2]+Slots[3]+Slots[4];
-		fixed_t max = SlotsIncrement[0]+SlotsIncrement[1]+SlotsIncrement[2]+SlotsIncrement[3]+Slots[4]+4*5*FRACUNIT;
-		if (total < max)
-		{
-			Slots[slot] += hits;
-			return true;
-		}
-	}
-	return false;
-}
-
-//===========================================================================
-//
-// AHexenArmor :: AbsorbDamage
-//
-//===========================================================================
-
-void AHexenArmor::AbsorbDamage (int damage, int damageType, int &newdamage)
-{
-	if (damageType != MOD_WATER)
-	{
-		fixed_t savedPercent = Slots[0] + Slots[1] + Slots[2] + Slots[3] + Slots[4];
-		APlayerPawn *ppawn = Owner->player != NULL ? Owner->player->mo : NULL;
-
-		if (savedPercent)
-		{ // armor absorbed some damage
-			if (savedPercent > 100*FRACUNIT)
-			{
-				savedPercent = 100*FRACUNIT;
-			}
-			for (int i = 0; i < 4; i++)
-			{
-				if (Slots[i])
-				{
-					// 300 damage always wipes out the armor unless some was added
-					// with the dragon skin bracers.
-					if (damage < 10000)
-					{
-						Slots[i] -= Scale (damage, SlotsIncrement[i], 300);
-						if (Slots[i] < 2*FRACUNIT)
-						{
-							Slots[i] = 0;
-						}
-					}
-					else
-					{
-						Slots[i] = 0;
-					}
-				}
-			}
-			int saved = Scale (damage, savedPercent, 100*FRACUNIT);
-			if (saved > savedPercent >> (FRACBITS-1))
-			{	
-				saved = savedPercent >> (FRACBITS-1);
-			}
-			newdamage -= saved;
-		}
-	}
-	if (Inventory != NULL)
-	{
-		Inventory->AbsorbDamage (damage, damageType, newdamage);
-	}
-}
-
-IMPLEMENT_STATELESS_ACTOR (AHealth, Any, -1, 0)
-	PROP_Inventory_MaxAmount (0)
-	PROP_Inventory_PickupSound ("misc/health_pkup")
-END_DEFAULTS
 
 //===========================================================================
 //
@@ -1727,44 +1566,21 @@ END_DEFAULTS
 //
 //===========================================================================
 
-bool AHealth::TryPickup (AActor *other)
+bool AHealth::TryPickup (AActor *&other)
 {
-	player_t *player = other->player;
-	int max = MaxAmount;
-	
-	if (max == 0)
+	PrevHealth = other->player != NULL ? other->player->health : other->health;
+
+	// P_GiveBody adds one new feature, applied only if it is possible to pick up negative health:
+	// Negative values are treated as positive percentages, ie Amount -100 means 100% health, ignoring max amount.
+	if (P_GiveBody(other, Amount, MaxAmount))
 	{
-		max = MAXHEALTH + (player != NULL ? player->stamina : 0);
-		if (player->morphTics)
-		{
-			max = MAXMORPHHEALTH;
-		}
+		GoAwayAndDie();
+		return true;
 	}
-	if (player->health >= max)
-	{
-		// You should be able to pick up the Doom health bonus even if
-		// you are already full on health.
-		if (ItemFlags & IF_ALWAYSPICKUP)
-		{
-			GoAwayAndDie ();
-			return true;
-		}
-		return false;
-	}
-	player->health += Amount;
-	if (player->health > max)
-	{
-		player->health = max;
-	}
-	player->mo->health = player->health;
-	GoAwayAndDie ();
-	return true;
+	return false;
 }
 
-IMPLEMENT_STATELESS_ACTOR (AHealthPickup, Any, -1, 0)
-	PROP_Inventory_DefMaxAmount
-	PROP_Inventory_FlagsSet (IF_INVBAR)
-END_DEFAULTS
+IMPLEMENT_CLASS (AHealthPickup)
 
 //===========================================================================
 //
@@ -1827,49 +1643,71 @@ bool AHealthPickup::Use (bool pickup)
 	return P_GiveBody (Owner, health);
 }
 
+//===========================================================================
+//
+// AHealthPickup :: Serialize
+//
+//===========================================================================
+
+void AHealthPickup::Serialize (FArchive &arc)
+{
+	Super::Serialize(arc);
+	arc << autousemode;
+}
+
 // Backpack -----------------------------------------------------------------
 
 //===========================================================================
 //
-// ABackpack :: Serialize
+// ABackpackItem :: Serialize
 //
 //===========================================================================
 
-void ABackpack::Serialize (FArchive &arc)
+void ABackpackItem::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
-	if (SaveVersion >= 227)
-	{
-		arc << bDepleted;
-	}
+	arc << bDepleted;
 }
 
 //===========================================================================
 //
-// ABackpack :: CreateCopy
+// ABackpackItem :: CreateCopy
 //
 // A backpack is being added to a player who doesn't yet have one. Give them
 // every kind of ammo, and increase their max amounts.
 //
 //===========================================================================
 
-AInventory *ABackpack::CreateCopy (AActor *other)
+AInventory *ABackpackItem::CreateCopy (AActor *other)
 {
 	// Find every unique type of ammo. Give it to the player if
-	// he doesn't have it already, and double it's maximum capacity.
-	for (int i = 0; i < TypeInfo::m_NumTypes; ++i)
+	// he doesn't have it already, and double its maximum capacity.
+	for (unsigned int i = 0; i < PClass::m_Types.Size(); ++i)
 	{
-		const TypeInfo *type = TypeInfo::m_Types[i];
+		const PClass *type = PClass::m_Types[i];
 
-		if (type->ParentType == RUNTIME_CLASS(AAmmo) &&
-			((AAmmo *)GetDefaultByType (type))->BackpackAmount > 0)
+		if (type->ParentClass == RUNTIME_CLASS(AAmmo))
 		{
 			AAmmo *ammo = static_cast<AAmmo *>(other->FindInventory (type));
+			int amount = static_cast<AAmmo *>(GetDefaultByType(type))->BackpackAmount;
+			// extra ammo in baby mode and nightmare mode
+			if (!(ItemFlags&IF_IGNORESKILL))
+			{
+				amount = FixedMul(amount, G_SkillProperty(SKILLP_AmmoFactor));
+			}
+			if (amount < 0) amount = 0;
 			if (ammo == NULL)
 			{ // The player did not have the ammo. Add it.
-				ammo = static_cast<AAmmo *>(Spawn (type, 0, 0, 0));
-				ammo->Amount = bDepleted ? 0 : ammo->BackpackAmount;
-				ammo->MaxAmount = ammo->BackpackMaxAmount;
+				ammo = static_cast<AAmmo *>(Spawn (type, 0, 0, 0, NO_REPLACE));
+				ammo->Amount = bDepleted ? 0 : amount;
+				if (ammo->BackpackMaxAmount > ammo->MaxAmount)
+				{
+					ammo->MaxAmount = ammo->BackpackMaxAmount;
+				}
+				if (ammo->Amount > ammo->MaxAmount)
+				{
+					ammo->Amount = ammo->MaxAmount;
+				}
 				ammo->AttachToOwner (other);
 			}
 			else
@@ -1880,7 +1718,7 @@ AInventory *ABackpack::CreateCopy (AActor *other)
 				}
 				if (!bDepleted && ammo->Amount < ammo->MaxAmount)
 				{
-					ammo->Amount += static_cast<AAmmo*>(ammo->GetDefault())->BackpackAmount;
+					ammo->Amount += amount;
 					if (ammo->Amount > ammo->MaxAmount)
 					{
 						ammo->Amount = ammo->MaxAmount;
@@ -1894,28 +1732,34 @@ AInventory *ABackpack::CreateCopy (AActor *other)
 
 //===========================================================================
 //
-// ABackpack :: HandlePickup
+// ABackpackItem :: HandlePickup
 //
 // When the player picks up another backpack, just give them more ammo.
 //
 //===========================================================================
 
-bool ABackpack::HandlePickup (AInventory *item)
+bool ABackpackItem::HandlePickup (AInventory *item)
 {
 	// Since you already have a backpack, that means you already have every
 	// kind of ammo in your inventory, so we don't need to look at the
-	// entire TypeInfo list to discover what kinds of ammo exist, and we don't
+	// entire PClass list to discover what kinds of ammo exist, and we don't
 	// have to alter the MaxAmount either.
-	if (item->IsKindOf (RUNTIME_CLASS(ABackpack)))
+	if (item->IsKindOf (RUNTIME_CLASS(ABackpackItem)))
 	{
 		for (AInventory *probe = Owner->Inventory; probe != NULL; probe = probe->Inventory)
 		{
-			if (probe->GetClass()->ParentType == RUNTIME_CLASS(AAmmo))
+			if (probe->GetClass()->ParentClass == RUNTIME_CLASS(AAmmo))
 			{
-				if (probe->Amount < probe->MaxAmount)
+				if (probe->Amount < probe->MaxAmount || sv_unlimited_pickup)
 				{
-					probe->Amount += static_cast<AAmmo*>(probe->GetDefault())->BackpackAmount;
-					if (probe->Amount > probe->MaxAmount)
+					int amount = static_cast<AAmmo*>(probe->GetDefault())->BackpackAmount;
+					// extra ammo in baby mode and nightmare mode
+					if (!(item->ItemFlags&IF_IGNORESKILL))
+					{
+						amount = FixedMul(amount, G_SkillProperty(SKILLP_AmmoFactor));
+					}
+					probe->Amount += amount;
+					if (probe->Amount > probe->MaxAmount && !sv_unlimited_pickup)
 					{
 						probe->Amount = probe->MaxAmount;
 					}
@@ -1938,34 +1782,34 @@ bool ABackpack::HandlePickup (AInventory *item)
 
 //===========================================================================
 //
-// ABackpack :: CreateTossable
+// ABackpackItem :: CreateTossable
 //
 // The tossed backpack must not give out any more ammo, otherwise a player
 // could cheat by dropping their backpack and picking it up for more ammo.
 //
 //===========================================================================
 
-AInventory *ABackpack::CreateTossable ()
+AInventory *ABackpackItem::CreateTossable ()
 {
-	ABackpack *pack = static_cast<ABackpack *>(Super::CreateTossable());
+	ABackpackItem *pack = static_cast<ABackpackItem *>(Super::CreateTossable());
 	pack->bDepleted = true;
 	return pack;
 }
 
 //===========================================================================
 //
-// ABackpack :: DetachFromOwner
+// ABackpackItem :: DetachFromOwner
 //
 //===========================================================================
 
-void ABackpack::DetachFromOwner ()
+void ABackpackItem::DetachFromOwner ()
 {
 	// When removing a backpack, drop the player's ammo maximums to normal
 	AInventory *item;
 
 	for (item = Owner->Inventory; item != NULL; item = item->Inventory)
 	{
-		if (item->GetClass()->ParentType == RUNTIME_CLASS(AAmmo) &&
+		if (item->GetClass()->ParentClass == RUNTIME_CLASS(AAmmo) &&
 			item->MaxAmount == static_cast<AAmmo*>(item)->BackpackMaxAmount)
 		{
 			item->MaxAmount = static_cast<AInventory*>(item->GetDefault())->MaxAmount;
@@ -1979,27 +1823,13 @@ void ABackpack::DetachFromOwner ()
 
 //===========================================================================
 //
-// ABackpack :: PickupMessage
+// ABackpack
 //
 //===========================================================================
 
-const char *ABackpack::PickupMessage ()
-{
-	return GStrings("GOTBACKPACK");
-}
+IMPLEMENT_CLASS(ABackpackItem)
 
-FState ABackpack::States[] =
-{
-	S_NORMAL (BPAK, 'A',   -1, NULL 						, NULL)
-};
-
-IMPLEMENT_ACTOR (ABackpack, Doom, 8, 144)
-	PROP_HeightFixed (26)
-	PROP_Flags (MF_SPECIAL)
-	PROP_SpawnState (0)
-END_DEFAULTS
-
-IMPLEMENT_ABSTRACT_ACTOR (AMapRevealer)
+IMPLEMENT_CLASS (AMapRevealer)
 
 //===========================================================================
 //
@@ -2010,36 +1840,34 @@ IMPLEMENT_ABSTRACT_ACTOR (AMapRevealer)
 //
 //===========================================================================
 
-bool AMapRevealer::TryPickup (AActor *toucher)
+bool AMapRevealer::TryPickup (AActor *&toucher)
 {
-	level.flags |= LEVEL_ALLMAP;
+	level.flags2 |= LEVEL2_ALLMAP;
 	GoAwayAndDie ();
 	return true;
 }
 
-FState ACommunicator::States[] =
-{
-	S_NORMAL (COMM, 'A', -1, NULL, NULL)
-};
-
-IMPLEMENT_ACTOR (ACommunicator, Strife, 206, 0)
-	PROP_Flags (MF_SPECIAL|MF_NOTDMATCH)
-	PROP_SpawnState (0)
-	PROP_StrifeType (176)
-	PROP_StrifeTeaserType (168)
-	PROP_StrifeTeaserType2 (172)
-	PROP_Inventory_Icon ("I_COMM")
-	PROP_Tag ("Communicator")
-	PROP_Inventory_PickupSound ("misc/p_pkup")
-END_DEFAULTS
 
 //===========================================================================
 //
-// ACommunicator :: PickupMessage
+// AScoreItem
 //
 //===========================================================================
 
-const char *ACommunicator::PickupMessage ()
+IMPLEMENT_CLASS(AScoreItem)
+
+//===========================================================================
+//
+// AScoreItem :: TryPickup
+//
+// Adds the value (Amount) of the item to the toucher's Score property.
+//
+//===========================================================================
+
+bool AScoreItem::TryPickup (AActor *&toucher)
 {
-	return "You picked up the Communicator";
+	toucher->Score += Amount;
+	GoAwayAndDie();
+	return true;
 }
+

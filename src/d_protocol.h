@@ -2,7 +2,7 @@
 ** d_protocol.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,11 +34,7 @@
 #ifndef __D_PROTOCOL_H__
 #define __D_PROTOCOL_H__
 
-#include "doomstat.h"
 #include "doomtype.h"
-#include "doomdef.h"
-#include "m_fixed.h"
-#include "farchive.h"
 
 // The IFF routines here all work with big-endian IDs, even if the host
 // system is little-endian.
@@ -51,33 +47,35 @@
 #define UINF_ID		BIGE_ID('U','I','N','F')
 #define COMP_ID		BIGE_ID('C','O','M','P')
 #define BODY_ID		BIGE_ID('B','O','D','Y')
+#define NETD_ID		BIGE_ID('N','E','T','D')
+#define WEAP_ID		BIGE_ID('W','E','A','P')
 
 #define	ANGLE2SHORT(x)	((((x)/360) & 65535)
 #define	SHORT2ANGLE(x)	((x)*360)
 
 
 struct zdemoheader_s {
-	byte	demovermajor;
-	byte	demoverminor;
-	byte	minvermajor;
-	byte	minverminor;
-	byte	map[8];
+	BYTE	demovermajor;
+	BYTE	demoverminor;
+	BYTE	minvermajor;
+	BYTE	minverminor;
+	BYTE	map[8];
 	unsigned int rngseed;
-	byte	consoleplayer;
+	BYTE	consoleplayer;
 };
 
-struct usercmd_s
+struct usercmd_t
 {
-	byte	buttons;
-	byte	pad;
+	DWORD	buttons;
 	short	pitch;			// up/down
-	short	yaw;			// left/right	// If you haven't guessed, I just
-	short	roll;			// tilt			// ripped these from Quake2's usercmd.
+	short	yaw;			// left/right
+	short	roll;			// "tilt"
 	short	forwardmove;
 	short	sidemove;
 	short	upmove;
 };
-typedef struct usercmd_s usercmd_t;
+
+class FArchive;
 
 FArchive &operator<< (FArchive &arc, usercmd_t &cmd);
 
@@ -91,7 +89,7 @@ enum
 	UCMDF_FORWARDMOVE	= 0x08,
 	UCMDF_SIDEMOVE		= 0x10,
 	UCMDF_UPMOVE		= 0x20,
-	UCMDF_ROLL			= 0x40
+	UCMDF_ROLL			= 0x40,
 };
 
 // When changing the following enum, be sure to update Net_SkipCommand()
@@ -109,7 +107,7 @@ enum EDemoCommand
 	DEM_UINFCHANGED,	//  8 User info changed
 	DEM_SINFCHANGED,	//  9 Server/Host info changed
 	DEM_GENERICCHEAT,	// 10 Next byte is cheat to apply (see next enum)
-	DEM_GIVECHEAT,		// 11 String: item to give, Byte: quantity
+	DEM_GIVECHEAT,		// 11 String: item to give, Word: quantity
 	DEM_SAY,			// 12 Byte: who to talk to, String: message to display
 	DEM_DROPPLAYER,		// 13 Not implemented, takes a byte
 	DEM_CHANGEMAP,		// 14 Name of map to change to
@@ -136,6 +134,36 @@ enum EDemoCommand
 	DEM_WARPCHEAT,		// 35 4 bytes: 2 for x, 2 for y
 	DEM_CENTERVIEW,		// 36
 	DEM_SUMMONFRIEND,	// 37 String: Thing to fabricate
+	DEM_SPRAY,			// 38 String: The decal to spray
+	DEM_CROUCH,			// 39
+	DEM_RUNSCRIPT2,		// 40 Same as DEM_RUNSCRIPT, but always executes
+	DEM_CHECKAUTOSAVE,	// 41 Check if the user has autosaves enabled. Ignored for demoplayback.
+	DEM_DOAUTOSAVE,		// 42 An autosave should be made
+	DEM_MORPHEX,		// 43 String: The class to morph to.
+	DEM_SUMMONFOE,		// 44 String: Thing to fabricate
+	DEM_UNDONE9,		// 45
+	DEM_UNDONE10,		// 46
+	DEM_TAKECHEAT,		// 47 String: item to take, Word: quantity
+	DEM_ADDCONTROLLER,	// 48 Player to add to the controller list.
+	DEM_DELCONTROLLER,	// 49 Player to remove from the controller list.
+	DEM_KILLCLASSCHEAT,	// 50 String: Class to kill.
+	DEM_UNDONE11,		// 51
+	DEM_SUMMON2,		// 52 String: Thing to fabricate, WORD: angle offset
+	DEM_SUMMONFRIEND2,	// 53
+	DEM_SUMMONFOE2,		// 54
+	DEM_ADDSLOTDEFAULT,	// 55
+	DEM_ADDSLOT,		// 56
+	DEM_SETSLOT,		// 57
+	DEM_SUMMONMBF,		// 58
+	DEM_CONVREPLY,		// 59 Word: Dialogue node, Byte: Reply number
+	DEM_CONVCLOSE,		// 60
+	DEM_CONVNULL,		// 61
+	DEM_RUNSPECIAL,		// 62 Byte: Special number, Byte: Arg count, Ints: Args
+	DEM_SETPITCHLIMIT,	// 63 Byte: Up limit, Byte: Down limit (in degrees)
+	DEM_ADVANCEINTER,	// 64 Advance intermission screen state
+	DEM_RUNNAMEDSCRIPT,	// 65 String: Script name, Byte: Arg count + Always flag; each arg is a 4-byte int
+	DEM_REVERTCAMERA,	// 66
+	DEM_SETSLOTPNUM,	// 67 Byte: player number, the rest is the same as DEM_SETSLOT
 };
 
 // The following are implemented by cht_DoCheat in m_cheat.cpp
@@ -173,35 +201,51 @@ enum ECheatCommand
 	CHT_PUZZLE,
 	CHT_MDK,			// Kill actor player is aiming at
 	CHT_ANUBIS,
-	CHT_NOMOMENTUM,
+	CHT_NOVELOCITY,
 	CHT_DONNYTRUMP,
 	CHT_LEGO,
 	CHT_RESSURECT,		// [GRB]
+	CHT_CLEARFROZENPROPS,
+	CHT_FREEZE,
+	CHT_GIMMIEA,
+	CHT_GIMMIEB,
+	CHT_GIMMIEC,
+	CHT_GIMMIED,
+	CHT_GIMMIEE,
+	CHT_GIMMIEF,
+	CHT_GIMMIEG,
+	CHT_GIMMIEH,
+	CHT_GIMMIEI,
+	CHT_GIMMIEJ,
+	CHT_GIMMIEZ,
+	CHT_BUDDHA,
+	CHT_NOCLIP2
 };
 
-void StartChunk (int id, byte **stream);
-void FinishChunk (byte **stream);
-void SkipChunk (byte **stream);
+void StartChunk (int id, BYTE **stream);
+void FinishChunk (BYTE **stream);
+void SkipChunk (BYTE **stream);
 
-int UnpackUserCmd (usercmd_t *ucmd, const usercmd_t *basis, byte **stream);
-int PackUserCmd (const usercmd_t *ucmd, const usercmd_t *basis, byte **stream);
-int WriteUserCmdMessage (usercmd_t *ucmd, const usercmd_t *basis, byte **stream);
+int UnpackUserCmd (usercmd_t *ucmd, const usercmd_t *basis, BYTE **stream);
+int PackUserCmd (const usercmd_t *ucmd, const usercmd_t *basis, BYTE **stream);
+int WriteUserCmdMessage (usercmd_t *ucmd, const usercmd_t *basis, BYTE **stream);
 
 struct ticcmd_t;
 
-int SkipTicCmd (byte **stream, int count);
-void ReadTicCmd (byte **stream, int player, int tic);
+int SkipTicCmd (BYTE **stream, int count);
+void ReadTicCmd (BYTE **stream, int player, int tic);
 void RunNetSpecs (int player, int buf);
 
-int ReadByte (byte **stream);
-int ReadWord (byte **stream);
-int ReadLong (byte **stream);
-float ReadFloat (byte **stream);
-char *ReadString (byte **stream);
-void WriteByte (byte val, byte **stream);
-void WriteWord (short val, byte **stream);
-void WriteLong (int val, byte **stream);
-void WriteFloat (float val, byte **stream);
-void WriteString (const char *string, byte **stream);
+int ReadByte (BYTE **stream);
+int ReadWord (BYTE **stream);
+int ReadLong (BYTE **stream);
+float ReadFloat (BYTE **stream);
+char *ReadString (BYTE **stream);
+const char *ReadStringConst(BYTE **stream);
+void WriteByte (BYTE val, BYTE **stream);
+void WriteWord (short val, BYTE **stream);
+void WriteLong (int val, BYTE **stream);
+void WriteFloat (float val, BYTE **stream);
+void WriteString (const char *string, BYTE **stream);
 
 #endif //__D_PROTOCOL_H__

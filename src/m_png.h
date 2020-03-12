@@ -1,3 +1,5 @@
+#ifndef __M_PNG_H
+#define __M_PNG_H
 /*
 ** m_png.h
 **
@@ -31,6 +33,8 @@
 **
 */
 
+#include <stdio.h>
+#include "doomtype.h"
 #include "v_video.h"
 
 // PNG Writing --------------------------------------------------------------
@@ -39,7 +43,8 @@
 // The passed file should be a newly created file.
 // This function writes the PNG signature and the IHDR, gAMA, PLTE, and IDAT
 // chunks.
-bool M_CreatePNG (FILE *file, const DCanvas *canvas, const PalEntry *pal);
+bool M_CreatePNG (FILE *file, const BYTE *buffer, const PalEntry *pal,
+				  ESSType color_type, int width, int height, int pitch);
 
 // Creates a grayscale 1x1 PNG file. Used for savegames without savepics.
 bool M_CreateDummyPNG (FILE *file);
@@ -52,6 +57,8 @@ bool M_AppendPNGText (FILE *file, const char *keyword, const char *text);
 
 // Appends the IEND chunk to a PNG file.
 bool M_FinishPNG (FILE *file);
+
+bool M_SaveBitmap(const BYTE *from, ESSType color_type, int width, int height, int pitch, FILE *file);
 
 // PNG Reading --------------------------------------------------------------
 
@@ -98,11 +105,14 @@ unsigned int M_NextPNGChunk (PNGHandle *png, DWORD chunkID);
 char *M_GetPNGText (PNGHandle *png, const char *keyword);
 bool M_GetPNGText (PNGHandle *png, const char *keyword, char *buffer, size_t buffsize);
 
-// Creates a simple canvas containing the contents of the PNG file's IDAT
-// chunk(s). Only 8-bit images are supported.
-DCanvas *M_CreateCanvasFromPNG (PNGHandle *png);
-
 // The file must be positioned at the start of the first IDAT. It reads
 // image data into the provided buffer. Returns true on success.
 bool M_ReadIDAT (FileReader *file, BYTE *buffer, int width, int height, int pitch,
 				 BYTE bitdepth, BYTE colortype, BYTE interlace, unsigned int idatlen);
+
+
+class FTexture;
+
+FTexture *PNGTexture_CreateFromFile(PNGHandle *png, const FString &filename);
+
+#endif

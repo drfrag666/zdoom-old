@@ -2,7 +2,7 @@
 ** v_font.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,13 +35,15 @@
 #define __V_FONT_H__
 
 #include "doomtype.h"
-#include "farchive.h"
 
 class DCanvas;
+struct FRemapTable;
 class FTexture;
+class FArchive;
 
 enum EColorRange
 {
+	CR_UNDEFINED = -1,
 	CR_BRICK,
 	CR_TAN,
 	CR_GRAY,
@@ -55,91 +57,96 @@ enum EColorRange
 	CR_WHITE,
 	CR_YELLOW,
 	CR_UNTRANSLATED,
+	CR_BLACK,
+	CR_LIGHTBLUE,
+	CR_CREAM,
+	CR_OLIVE,
+	CR_DARKGREEN,
+	CR_DARKRED,
+	CR_DARKBROWN,
+	CR_PURPLE,
+	CR_DARKGRAY,
+	CR_CYAN,
 	NUM_TEXT_COLORS
 };
 
-inline FArchive &operator<< (FArchive &arc, EColorRange &i)
-{
-	BYTE val = (BYTE)i;
-	arc << val;
-	i = (EColorRange)val;
-	return arc;
-}
+extern int NumTextColors;
+
 
 class FFont
 {
 public:
-	FFont (const char *fontname, const char *nametemplate, int first, int count, int base);
-	~FFont ();
+	FFont (const char *fontname, const char *nametemplate, int first, int count, int base, int fdlump, int spacewidth=-1);
+	virtual ~FFont ();
 
-	FTexture *GetChar (int code, int *const width) const;
-	int GetCharWidth (int code) const;
-	byte *GetColorTranslation (EColorRange range) const;
+	virtual FTexture *GetChar (int code, int *const width) const;
+	virtual int GetCharWidth (int code) const;
+	FRemapTable *GetColorTranslation (EColorRange range) const;
+	int GetLump() const { return Lump; }
 	int GetSpaceWidth () const { return SpaceWidth; }
 	int GetHeight () const { return FontHeight; }
 	int GetDefaultKerning () const { return GlobalKerning; }
+	virtual void LoadTranslations();
+	void Preload() const;
 
 	static FFont *FindFont (const char *fontname);
+	static void StaticPreloadFonts();
 
 	// Return width of string in pixels (unscaled)
-	int StringWidth (const byte *str) const;
-	inline int StringWidth (const char *str) const { return StringWidth ((const byte *)str); }
+	int StringWidth (const BYTE *str) const;
+	inline int StringWidth (const char *str) const { return StringWidth ((const BYTE *)str); }
+
+	int GetCharCode(int code, bool needpic) const;
+	char GetCursor() const { return Cursor; }
+	void SetCursor(char c) { Cursor = c; }
 
 protected:
-	FFont ();
+	FFont (int lump);
 
-	void BuildTranslations (const double *luminosity, const BYTE *identity);
+	void BuildTranslations (const double *luminosity, const BYTE *identity,
+		const void *ranges, int total_colors, const PalEntry *palette);
+	void FixXMoves();
 
-	static int SimpleTranslation (byte *colorsused, byte *translation, byte *identity, double **luminosity);
+	static int SimpleTranslation (BYTE *colorsused, BYTE *translation,
+		BYTE *identity, double **luminosity);
 
 	int FirstChar, LastChar;
 	int SpaceWidth;
 	int FontHeight;
 	int GlobalKerning;
+	char Cursor;
 	struct CharData
 	{
 		FTexture *Pic;
+		int XMove;
 	} *Chars;
 	int ActiveColors;
-	BYTE *Ranges;
+	TArray<FRemapTable> Ranges;
 	BYTE *PatchRemap;
 
+	int Lump;
 	char *Name;
 	FFont *Next;
 
 	static FFont *FirstFont;
+	friend struct FontsDeleter;
 
-#if defined(_MSC_VER) && _MSC_VER < 1310
-	template<> friend FArchive &operator<< (FArchive &arc, FFont* &font);
-#else
+	friend void V_ClearFonts();
+	friend void V_RetranslateFonts();
+
 	friend FArchive &SerializeFFontPtr (FArchive &arc, FFont* &font);
-#endif
 };
 
-#if !defined(_MSC_VER) || _MSC_VER >= 1310
-template<> inline FArchive &operator<< <FFont> (FArchive &arc, FFont* &font)
-{
-	return SerializeFFontPtr (arc, font);
-}
-#endif
 
-class FSingleLumpFont : public FFont
-{
-public:
-	FSingleLumpFont (const char *fontname, int lump);
+extern FFont *SmallFont, *SmallFont2, *BigFont, *ConFont, *IntermissionFont;
 
-protected:
-	void BuildTranslations2 ();
-	void FixupPalette (BYTE *identity, double *luminosity, const BYTE *palette, bool rescale);
-	void LoadFON1 (int lump, const BYTE *data);
-	void LoadFON2 (int lump, const BYTE *data);
-	void CreateFontFromPic (int picnum);
-};
-
-void RecordTextureColors (FTexture *pic, byte *colorsused);
-
-extern FFont *SmallFont, *SmallFont2, *BigFont, *ConFont;
-
-void V_InitCustomFonts ();
+void V_InitFonts();
+void V_ClearFonts();
+EColorRange V_FindFontColor (FName name);
+PalEntry V_LogColorFromColorRange (EColorRange range);
+EColorRange V_ParseFontColor (const BYTE *&color_value, int normalcolor, int boldcolor);
+FFont *V_GetFont(const char *);
+void V_InitFontColors();
+void V_RetranslateFonts();
 
 #endif //__V_FONT_H__

@@ -1,7 +1,14 @@
 #ifndef __P_ENEMY_H__
 #define __P_ENEMY_H__
 
-#include "r_defs.h"
+#include "thingdef/thingdef.h"
+#include "tables.h"
+
+struct sector_t;
+class AActor;
+class AInventory;
+struct PClass;
+
 
 enum dirtype_t
 {
@@ -19,45 +26,62 @@ enum dirtype_t
 
 extern fixed_t xspeed[8], yspeed[8];
 
-bool P_HitFriend (AActor *self);
-void P_NoiseAlert (AActor *target, AActor *emmiter, bool splash=false);
-bool P_CheckMeleeRange2 (AActor *actor);
-BOOL P_Move (AActor *actor);
-BOOL P_TryWalk (AActor *actor);
-void P_NewChaseDir (AActor *actor);
-BOOL P_LookForPlayers (AActor *actor, BOOL allaround);
-AInventory *P_DropItem (AActor *source, const TypeInfo *type, int special, int chance);
-inline AInventory *P_DropItem (AActor *source, const char *type, int special, int chance)
+enum LO_Flags
 {
-	return P_DropItem (source, TypeInfo::FindType (type), special, chance);
-}
+	LOF_NOSIGHTCHECK = 1,
+	LOF_NOSOUNDCHECK = 2,
+	LOF_DONTCHASEGOAL = 4,
+	LOF_NOSEESOUND = 8,
+	LOF_FULLVOLSEESOUND = 16,
+    LOF_NOJUMP = 32,
+};
+
+struct FLookExParams
+{
+	angle_t fov;
+	fixed_t mindist;
+	fixed_t maxdist;
+	fixed_t maxheardist;
+	int flags;
+	FState *seestate;
+};
+
+void P_DaggerAlert (AActor *target, AActor *emitter);
+void P_RecursiveSound (sector_t *sec, AActor *soundtarget, bool splash, int soundblocks, AActor *emitter=NULL, fixed_t maxdist=0);
+bool P_HitFriend (AActor *self);
+void P_NoiseAlert (AActor *target, AActor *emmiter, bool splash=false, fixed_t maxdist=0);
+bool P_CheckMeleeRange2 (AActor *actor);
+bool P_Move (AActor *actor);
+bool P_TryWalk (AActor *actor);
+void P_NewChaseDir (AActor *actor);
+AInventory *P_DropItem (AActor *source, const PClass *type, int special, int chance);
 void P_TossItem (AActor *item);
+bool P_LookForPlayers (AActor *actor, INTBOOL allaround, FLookExParams *params);
+void A_Weave(AActor *self, int xyspeed, int zspeed, fixed_t xydist, fixed_t zdist);
+void A_Unblock(AActor *self, bool drop);
 
-void A_Look (AActor *actor);
-void A_Wander (AActor *actor);
-void A_Look2 (AActor *actor);
-void A_Chase (AActor *actor);
-void A_FastChase (AActor *actor);
-void A_FaceTarget (AActor *actor);
-void A_MonsterRail (AActor *actor);
-void A_Scream (AActor *actor);
-void A_XScream (AActor *actor);
-void A_Pain (AActor *actor);
-void A_Die (AActor *actor);
-void A_Detonate (AActor *mo);
-void A_Explode (AActor *thing);
-void A_ExplodeAndAlert (AActor *thing);
-void A_Mushroom (AActor *actor);
-void A_BossDeath (AActor *actor);
-void A_FireScream (AActor *mo);
-void A_PlayerScream (AActor *mo);
-void A_ClassBossHealth (AActor *);
+DECLARE_ACTION(A_Look)
+DECLARE_ACTION(A_Wander)
+DECLARE_ACTION(A_BossDeath)
+DECLARE_ACTION(A_Pain)
+DECLARE_ACTION(A_MonsterRail)
+DECLARE_ACTION(A_NoBlocking)
+DECLARE_ACTION(A_Scream)
+DECLARE_ACTION(A_FreezeDeath)
+DECLARE_ACTION(A_FreezeDeathChunks)
+DECLARE_ACTION(A_BossDeath)
 
-bool A_RaiseMobj (AActor *);
-bool A_SinkMobj (AActor *);
+void A_Chase(AActor *self);
+void A_FaceTarget (AActor *actor, angle_t max_turn = 0, angle_t max_pitch = ANGLE_270);
+
+bool A_RaiseMobj (AActor *, fixed_t speed);
+bool A_SinkMobj (AActor *, fixed_t speed);
 
 bool CheckBossDeath (AActor *);
 int P_Massacre ();
-BOOL P_CheckMissileRange (AActor *actor);
+bool P_CheckMissileRange (AActor *actor);
+
+#define SKULLSPEED (20*FRACUNIT)
+void A_SkullAttack(AActor *self, fixed_t speed);
 
 #endif //__P_ENEMY_H__

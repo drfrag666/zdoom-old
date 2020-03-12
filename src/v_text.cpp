@@ -3,7 +3,7 @@
 ** Draws text to a canvas. Also has a text line-breaker thingy.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -48,32 +48,27 @@
 #include "templates.h"
 
 //
-// SetFont
+// DrawChar
 //
-// Set the canvas's font
+// Write a single character using the given font
 //
-void DCanvas::SetFont (FFont *font)
+void STACK_ARGS DCanvas::DrawChar (FFont *font, int normalcolor, int x, int y, BYTE character, ...)
 {
-	Font = font;
-}
-
-void STACK_ARGS DCanvas::DrawChar (int normalcolor, int x, int y, byte character, ...)
-{
-	if (Font == NULL)
+	if (font == NULL)
 		return;
 
-	if (normalcolor >= NUM_TEXT_COLORS)
+	if (normalcolor >= NumTextColors)
 		normalcolor = CR_UNTRANSLATED;
 
 	FTexture *pic;
 	int dummy;
 
-	if (NULL != (pic = Font->GetChar (character, &dummy)))
+	if (NULL != (pic = font->GetChar (character, &dummy)))
 	{
-		const BYTE *range = Font->GetColorTranslation ((EColorRange)normalcolor);
+		const FRemapTable *range = font->GetColorTranslation ((EColorRange)normalcolor);
 		va_list taglist;
 		va_start (taglist, character);
-		DrawTexture (pic, x, y, DTA_Translation, range, TAG_MORE, taglist);
+		DrawTexture (pic, x, y, DTA_Translation, range, TAG_MORE, &taglist);
 		va_end (taglist);
 	}
 }
@@ -81,38 +76,40 @@ void STACK_ARGS DCanvas::DrawChar (int normalcolor, int x, int y, byte character
 //
 // DrawText
 //
-// Write a string using the current font
+// Write a string using the given font
 //
-void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *string, ...)
+void DCanvas::DrawTextV(FFont *font, int normalcolor, int x, int y, const char *string, va_list taglist)
 {
+	INTBOOL boolval;
 	va_list tags;
-	DWORD tag;
-	BOOL boolval;
+	uint32 tag;
 
+	int			maxstrlen = INT_MAX;
 	int 		w, maxwidth;
-	const byte *ch;
+	const BYTE *ch;
 	int 		c;
 	int 		cx;
 	int 		cy;
 	int			boldcolor;
-	const byte *range;
+	const FRemapTable *range;
 	int			height;
+	int			forcedwidth = 0;
 	int			scalex, scaley;
 	int			kerning;
 	FTexture *pic;
 
-	if (Font == NULL || string == NULL)
+	if (font == NULL || string == NULL)
 		return;
 
-	if (normalcolor >= NUM_TEXT_COLORS)
+	if (normalcolor >= NumTextColors)
 		normalcolor = CR_UNTRANSLATED;
-	boldcolor = normalcolor ? normalcolor - 1 : NUM_TEXT_COLORS - 1;
+	boldcolor = normalcolor ? normalcolor - 1 : NumTextColors - 1;
 
-	range = Font->GetColorTranslation ((EColorRange)normalcolor);
-	height = Font->GetHeight () + 1;
-	kerning = Font->GetDefaultKerning ();
+	range = font->GetColorTranslation ((EColorRange)normalcolor);
+	height = font->GetHeight () + 1;
+	kerning = font->GetDefaultKerning ();
 
-	ch = (const byte *)string;
+	ch = (const BYTE *)string;
 	cx = x;
 	cy = y;
 
@@ -120,12 +117,16 @@ void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *st
  	maxwidth = Width;
 	scalex = scaley = 1;
 
-	va_start (tags, string);
-	tag = va_arg (tags, DWORD);
+#ifndef NO_VA_COPY
+	va_copy(tags, taglist);
+#else
+	tags = taglist;
+#endif
+	tag = va_arg(tags, uint32);
 
 	while (tag != TAG_DONE)
 	{
-		va_list more_p;
+		va_list *more_p;
 		DWORD data;
 		void *ptrval;
 
@@ -137,35 +138,51 @@ void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *st
 			break;
 
 		case TAG_MORE:
-			more_p = va_arg (tags, va_list);
+			more_p = va_arg (tags, va_list*);
 			va_end (tags);
-			tags = more_p;
-			break;;
+#ifndef NO_VA_COPY
+			va_copy (tags, *more_p);
+#else
+			tags = *more_p;
+#endif
+			break;
 
+		// We don't handle these. :(
 		case DTA_DestWidth:
 		case DTA_DestHeight:
 			*(DWORD *)tags = TAG_IGNORE;
 			data = va_arg (tags, DWORD);
 			break;
 
+		// Translation is specified explicitly by the text.
 		case DTA_Translation:
 			*(DWORD *)tags = TAG_IGNORE;
 			ptrval = va_arg (tags, void*);
 			break;
 
+		case DTA_CleanNoMove_1:
+			boolval = va_arg (tags, INTBOOL);
+			if (boolval)
+			{
+				scalex = CleanXfac_1;
+				scaley = CleanYfac_1;
+				maxwidth = Width - (Width % scalex);
+			}
+			break;
+
 		case DTA_CleanNoMove:
-			boolval = va_arg (tags, BOOL);
+			boolval = va_arg (tags, INTBOOL);
 			if (boolval)
 			{
 				scalex = CleanXfac;
 				scaley = CleanYfac;
-				maxwidth = Width - (Width % CleanYfac);
+				maxwidth = Width - (Width % scalex);
 			}
 			break;
 
 		case DTA_Clean:
 		case DTA_320x200:
-			boolval = va_arg (tags, BOOL);
+			boolval = va_arg (tags, INTBOOL);
 			if (boolval)
 			{
 				scalex = scaley = 1;
@@ -177,13 +194,26 @@ void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *st
 			maxwidth = va_arg (tags, int);
 			scalex = scaley = 1;
 			break;
+
+		case DTA_TextLen:
+			maxstrlen = va_arg (tags, int);
+			break;
+
+		case DTA_CellX:
+			forcedwidth = va_arg (tags, int);
+			break;
+
+		case DTA_CellY:
+			height = va_arg (tags, int);
+			break;
 		}
-		tag = va_arg (tags, DWORD);
+		tag = va_arg (tags, uint32);
 	}
+	va_end(tags);
 
 	height *= scaley;
 		
-	for (;;)
+	while ((const char *)ch - string < maxstrlen)
 	{
 		c = *ch++;
 		if (!c)
@@ -191,29 +221,11 @@ void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *st
 
 		if (c == TEXTCOLOR_ESCAPE)
 		{
-			int newcolor = toupper(*ch++);
-
-			if (newcolor == 0)
+			EColorRange newcolor = V_ParseFontColor (ch, normalcolor, boldcolor);
+			if (newcolor != CR_UNDEFINED)
 			{
-				return;
+				range = font->GetColorTranslation (newcolor);
 			}
-			else if (newcolor == '-')
-			{
-				newcolor = normalcolor;
-			}
-			else if (newcolor >= 'A' && newcolor < NUM_TEXT_COLORS + 'A')
-			{
-				newcolor -= 'A';
-			}
-			else if (newcolor == '+')
-			{
-				newcolor = boldcolor;
-			}
-			else
-			{
-				continue;
-			}
-			range = Font->GetColorTranslation ((EColorRange)newcolor);
 			continue;
 		}
 		
@@ -224,15 +236,48 @@ void STACK_ARGS DCanvas::DrawText (int normalcolor, int x, int y, const char *st
 			continue;
 		}
 
-		if (NULL != (pic = Font->GetChar (c, &w)))
+		if (NULL != (pic = font->GetChar (c, &w)))
 		{
-			va_list taglist;
-			va_start (taglist, string);
-			DrawTexture (pic, cx, cy, DTA_Translation, range, TAG_MORE, taglist);
-			va_end (taglist);
+#ifndef NO_VA_COPY
+			va_copy(tags, taglist);
+#else
+			tags = taglist;
+#endif
+			if (forcedwidth)
+			{
+				w = forcedwidth;
+				DrawTexture (pic, cx, cy,
+					DTA_Translation, range,
+					DTA_DestWidth, forcedwidth,
+					DTA_DestHeight, height,
+					TAG_MORE, &tags);
+			}
+			else
+			{
+				DrawTexture (pic, cx, cy,
+					DTA_Translation, range,
+					TAG_MORE, &tags);
+			}
+			va_end (tags);
 		}
 		cx += (w + kerning) * scalex;
 	}
+	va_end(taglist);
+}
+
+void STACK_ARGS DCanvas::DrawText (FFont *font, int normalcolor, int x, int y, const char *string, ...)
+{
+	va_list tags;
+	va_start(tags, string);
+	DrawTextV(font, normalcolor, x, y, string, tags);
+}
+
+// A synonym so that this can still be used in files that #include Windows headers
+void STACK_ARGS DCanvas::DrawTextA (FFont *font, int normalcolor, int x, int y, const char *string, ...)
+{
+	va_list tags;
+	va_start(tags, string);
+	DrawTextV(font, normalcolor, x, y, string, tags);
 }
 
 //
@@ -247,8 +292,18 @@ int FFont::StringWidth (const BYTE *string) const
 	{
 		if (*string == TEXTCOLOR_ESCAPE)
 		{
-			if (*(++string))
+			++string;
+			if (*string == '[')
+			{
+				while (*string != '\0' && *string != ']')
+				{
+					++string;
+				}
+			}
+			if (*string != '\0')
+			{
 				++string;
+			}
 			continue;
 		}
 		else if (*string == '\n')
@@ -270,56 +325,53 @@ int FFont::StringWidth (const BYTE *string) const
 //
 // Break long lines of text into multiple lines no longer than maxwidth pixels
 //
-static void breakit (brokenlines_t *line, const byte *start, const byte *string, bool keepspace, char linecolor)
+static void breakit (FBrokenLines *line, FFont *font, const BYTE *start, const BYTE *stop, FString &linecolor)
 {
-	int extra;
-
-	// Leave out trailing white space
-	if (!keepspace)
+	if (!linecolor.IsEmpty())
 	{
-		while (string > start && isspace (*(string - 1)))
-			string--;
+		line->Text = TEXTCOLOR_ESCAPE;
+		line->Text += linecolor;
 	}
-
-	if (linecolor == 0)
-	{
-		extra = 0;
-	}
-	else
-	{
-		extra = 2;
-	}
-
-	line->string = new char[string - start + extra + 1];
-	if (linecolor)
-	{
-		line->string[0] = TEXTCOLOR_ESCAPE;
-		line->string[1] = linecolor;
-	}
-	strncpy (line->string + extra, (char *)start, string - start);
-	line->string[string - start + extra] = 0;
-	line->width = screen->Font->StringWidth (line->string);
+	line->Text.AppendCStrPart ((const char *)start, stop - start);
+	line->Width = font->StringWidth (line->Text);
 }
 
-brokenlines_t *V_BreakLines (int maxwidth, const byte *string, bool keepspace)
+FBrokenLines *V_BreakLines (FFont *font, int maxwidth, const BYTE *string)
 {
-	brokenlines_t lines[128];	// Support up to 128 lines (should be plenty)
+	FBrokenLines lines[128];	// Support up to 128 lines (should be plenty)
 
-	const byte *space = NULL, *start = string;
-	int i, c, w, nw;
-	char lastcolor = 0, linecolor = 0;
-	BOOL lastWasSpace = false;
-	int kerning = screen->Font->GetDefaultKerning ();
+	const BYTE *space = NULL, *start = string;
+	size_t i, ii;
+	int c, w, nw;
+	FString lastcolor, linecolor;
+	bool lastWasSpace = false;
+	int kerning = font->GetDefaultKerning ();
 
 	i = w = 0;
 
-	while ( (c = *string++) && i < 128 )
+	while ( (c = *string++) && i < countof(lines) )
 	{
 		if (c == TEXTCOLOR_ESCAPE)
 		{
 			if (*string)
 			{
-				lastcolor = *string++;
+				if (*string == '[')
+				{
+					const BYTE *start = string;
+					while (*string != ']' && *string != '\0')
+					{
+						string++;
+					}
+					if (*string != '\0')
+					{
+						string++;
+					}
+					lastcolor = FString((const char *)start, string - start);
+				}
+				else
+				{
+					lastcolor = *string++;
+				}
 			}
 			continue;
 		}
@@ -337,23 +389,19 @@ brokenlines_t *V_BreakLines (int maxwidth, const byte *string, bool keepspace)
 			lastWasSpace = false;
 		}
 
-		nw = screen->Font->GetCharWidth (c);
+		nw = font->GetCharWidth (c);
 
 		if ((w > 0 && w + nw > maxwidth) || c == '\n')
 		{ // Time to break the line
 			if (!space)
 				space = string - 1;
 
-			lines[i].nlterminated = (c == '\n');
-			breakit (&lines[i], start, space, keepspace, linecolor);
+			breakit (&lines[i], font, start, space, linecolor);
 			if (c == '\n')
 			{
-				linecolor = lastcolor = 0;
+				lastcolor = "";		// Why, oh why, did I do it like this?
 			}
-			else
-			{
-				linecolor = lastcolor;
-			}
+			linecolor = lastcolor;
 
 			i++;
 			w = 0;
@@ -376,47 +424,38 @@ brokenlines_t *V_BreakLines (int maxwidth, const byte *string, bool keepspace)
 		}
 	}
 
-	if (string - start > 1)
+	// String here is pointing one character after the '\0'
+	if (i < countof(lines) && --string - start >= 1)
 	{
-		const byte *s = start;
+		const BYTE *s = start;
 
 		while (s < string)
 		{
-			if (keepspace || !isspace (*s))
+			// If there is any non-white space in the remainder of the string, add it.
+			if (!isspace (*s++))
 			{
-				lines[i].nlterminated = (*s == '\n');
-				s++;
-				breakit (&lines[i++], start, string, keepspace, linecolor);
+				breakit (&lines[i++], font, start, string, linecolor);
 				break;
 			}
-			s++;
 		}
 	}
 
+	// Make a copy of the broken lines and return them
+	FBrokenLines *broken = new FBrokenLines[i+1];
+
+	for (ii = 0; ii < i; ++ii)
 	{
-		// Make a copy of the broken lines and return them
-		brokenlines_t *broken = new brokenlines_t[i+1];
-
-		memcpy (broken, lines, sizeof(brokenlines_t) * i);
-		broken[i].string = NULL;
-		broken[i].width = -1;
-
-		return broken;
+		broken[ii] = lines[ii];
 	}
+	broken[ii].Width = -1;
+
+	return broken;
 }
 
-void V_FreeBrokenLines (brokenlines_t *lines)
+void V_FreeBrokenLines (FBrokenLines *lines)
 {
 	if (lines)
 	{
-		int i = 0;
-
-		while (lines[i].width != -1)
-		{
-			delete[] lines[i].string;
-			lines[i].string = NULL;
-			i++;
-		}
 		delete[] lines;
 	}
 }

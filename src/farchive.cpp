@@ -3,7 +3,7 @@
 ** Implements an archiver for DObject serialization.
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2009 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -43,10 +43,10 @@
 #include <stddef.h>
 #include <string.h>
 #include <zlib.h>
+#include <stdlib.h>
 
 #include "doomtype.h"
 #include "farchive.h"
-#include "m_alloc.h"
 #include "m_swap.h"
 #include "m_crc32.h"
 #include "cmdlib.h"
@@ -54,8 +54,8 @@
 #include "c_cvars.h"
 #include "c_dispatch.h"
 #include "d_player.h"
+#include "m_misc.h"
 #include "dobject.h"
-#include "r_local.h"
 
 // These are special tokens found in the data stream of an archive.
 // Whenever a new object is encountered, it gets created using new and
@@ -79,23 +79,54 @@
 #define NEW_SPRITE			((BYTE)11)	// A new sprite name follows
 #define OLD_SPRITE			((BYTE)12)	// Reference to an old sprite name follows
 
-#ifdef WORDS_BIGENDIAN
-#define SWAP_WORD(x)
-#define SWAP_DWORD(x)
-#define SWAP_QWORD(x)
-#define SWAP_FLOAT(x)
-#define SWAP_DOUBLE(x)
+#ifdef __BIG_ENDIAN__
+static inline WORD SWAP_WORD(WORD x) { return x; }
+static inline DWORD SWAP_DWORD(DWORD x) { return x; }
+static inline QWORD SWAP_QWORD(QWORD x) { return x; }
+static inline void SWAP_FLOAT(float x) { }
+static inline void SWAP_DOUBLE(double &dst, double src) { dst = src; }
 #else
-#define SWAP_WORD(x)		{ x = (((x)<<8) | ((x)>>8)); }
-#define SWAP_DWORD(x)		{ x = (((x)>>24) | (((x)>>8)&0xff00) | ((x)<<8)&0xff0000 | ((x)<<24)); }
-#if 0
-#define SWAP_QWORD(x)		{ x = (((x)>>56) | (((x)>>40)&(0xff<<8)) | (((x)>>24)&(0xff<<16)) | (((x)>>8)&(0xff<<24)) |\
-								   (((x)<<8)&(QWORD)0xff00000000) | (((x)<<24)&(QWORD)0xff0000000000) | (((x)<<40)&(QWORD)0xff000000000000) | ((x)<<56))); }
+#ifdef _MSC_VER
+static inline WORD  SWAP_WORD(WORD x)		{ return _byteswap_ushort(x); }
+static inline DWORD SWAP_DWORD(DWORD x)		{ return _byteswap_ulong(x); }
+static inline QWORD SWAP_QWORD(QWORD x)		{ return _byteswap_uint64(x); }
+static inline void SWAP_DOUBLE(double &dst, double &src)
+{
+	union twiddle { QWORD q; double d; } tdst, tsrc;
+	tsrc.d = src;
+	tdst.q = _byteswap_uint64(tsrc.q);
+	dst = tdst.d;
+}
 #else
-#define SWAP_QWORD(x)		{ DWORD *y = (DWORD *)&x; DWORD t=y[0]; y[0]=y[1]; y[1]=t; SWAP_DWORD(y[0]); SWAP_DWORD(y[1]); }
+static inline WORD  SWAP_WORD(WORD x)		{ return (((x)<<8) | ((x)>>8)); }
+static inline DWORD SWAP_DWORD(DWORD x)		{ return x = (((x)>>24) | (((x)>>8)&0xff00) | (((x)<<8)&0xff0000) | ((x)<<24)); }
+static inline QWORD SWAP_QWORD(QWORD x)
+{
+	union { QWORD q; DWORD d[2]; } t, u;
+	t.q = x;
+	u.d[0] = SWAP_DWORD(t.d[1]);
+	u.d[1] = SWAP_DWORD(t.d[0]);
+	return u.q;
+}
+static inline void SWAP_DOUBLE(double &dst, double &src)
+{
+	union twiddle { double f; DWORD d[2]; } tdst, tsrc;
+	DWORD t;
+
+	tsrc.f = src;
+	t = tsrc.d[0];
+	tdst.d[0] = SWAP_DWORD(tsrc.d[1]);
+	tdst.d[1] = SWAP_DWORD(t);
+	dst = tdst.f;
+}
 #endif
-#define SWAP_FLOAT(x)		{ DWORD dw = *(DWORD *)&x; SWAP_DWORD(dw); x = *(float *)&dw; }
-#define SWAP_DOUBLE(x)		{ QWORD qw = *(QWORD *)&x; SWAP_QWORD(qw); x = *(double *)&qw; }
+static inline void SWAP_FLOAT(float &x)
+{
+	union twiddle { DWORD i; float f; } t;
+	t.f = x;
+	t.i = SWAP_DWORD(t.i);
+	x = t.f;
+}
 #endif
 
 // Output buffer size for compression; need some extra space.
@@ -110,6 +141,7 @@ void FCompressedFile::BeEmpty ()
 	m_Buffer = NULL;
 	m_File = NULL;
 	m_NoCompress = false;
+	m_Mode = ENotOpen;
 }
 
 static const char LZOSig[4] = { 'F', 'L', 'Z', 'O' };
@@ -175,13 +207,13 @@ void FCompressedFile::PostOpen ()
 		{
 			DWORD sizes[2];
 			fread (sizes, sizeof(DWORD), 2, m_File);
-			SWAP_DWORD (sizes[0]);
-			SWAP_DWORD (sizes[1]);
+			sizes[0] = SWAP_DWORD (sizes[0]);
+			sizes[1] = SWAP_DWORD (sizes[1]);
 			unsigned int len = sizes[0] == 0 ? sizes[1] : sizes[0];
-			m_Buffer = (byte *)Malloc (len+8);
+			m_Buffer = (BYTE *)M_Malloc (len+8);
 			fread (m_Buffer+8, len, 1, m_File);
-			SWAP_DWORD (sizes[0]);
-			SWAP_DWORD (sizes[1]);
+			sizes[0] = SWAP_DWORD (sizes[0]);
+			sizes[1] = SWAP_DWORD (sizes[1]);
 			((DWORD *)m_Buffer)[0] = sizes[0];
 			((DWORD *)m_Buffer)[1] = sizes[1];
 			Explode ();
@@ -203,7 +235,10 @@ void FCompressedFile::Close ()
 		m_File = NULL;
 	}
 	if (m_Buffer)
-		free (m_Buffer);
+	{
+		M_Free (m_Buffer);
+		m_Buffer = NULL;
+	}
 	BeEmpty ();
 }
 
@@ -232,7 +267,7 @@ FFile &FCompressedFile::Write (const void *mem, unsigned int len)
 				m_MaxBufferSize = m_MaxBufferSize ? m_MaxBufferSize * 2 : 16384;
 			}
 			while (m_Pos + len > m_MaxBufferSize);
-			m_Buffer = (byte *)Realloc (m_Buffer, m_MaxBufferSize);
+			m_Buffer = (BYTE *)M_Realloc (m_Buffer, m_MaxBufferSize);
 		}
 		if (len == 1)
 			m_Buffer[m_Pos] = *(BYTE *)mem;
@@ -299,7 +334,7 @@ void FCompressedFile::Implode ()
 	uLong outlen;
 	uLong len = m_BufferSize;
 	Byte *compressed = NULL;
-	byte *oldbuf = m_Buffer;
+	BYTE *oldbuf = m_Buffer;
 	int r;
 
 	if (!nofilecompression && !m_NoCompress)
@@ -333,7 +368,7 @@ void FCompressedFile::Implode ()
 	}
 
 	m_MaxBufferSize = m_BufferSize = ((outlen == 0) ? len : outlen);
-	m_Buffer = (BYTE *)Malloc (m_BufferSize + 8);
+	m_Buffer = (BYTE *)M_Malloc (m_BufferSize + 8);
 	m_Pos = 0;
 
 	DWORD *lens = (DWORD *)(m_Buffer);
@@ -346,7 +381,7 @@ void FCompressedFile::Implode ()
 		memcpy (m_Buffer + 8, compressed, outlen);
 	if (compressed)
 		delete[] compressed;
-	free (oldbuf);
+	M_Free (oldbuf);
 }
 
 void FCompressedFile::Explode ()
@@ -360,7 +395,7 @@ void FCompressedFile::Explode ()
 		cprlen = BigLong(ints[0]);
 		expandsize = BigLong(ints[1]);
 		
-		expand = (unsigned char *)Malloc (expandsize);
+		expand = (unsigned char *)M_Malloc (expandsize);
 		if (cprlen)
 		{
 			int r;
@@ -370,8 +405,8 @@ void FCompressedFile::Explode ()
 			r = uncompress (expand, &newlen, m_Buffer + 8, cprlen);
 			if (r != Z_OK || newlen != expandsize)
 			{
-				free (expand);
-				I_Error ("Could not decompress cfile");
+				M_Free (expand);
+				I_Error ("Could not decompress buffer: %s", M_ZLibError(r).GetChars());
 			}
 		}
 		else
@@ -379,7 +414,7 @@ void FCompressedFile::Explode ()
 			memcpy (expand, m_Buffer + 8, expandsize);
 		}
 		if (FreeOnExplode ())
-			free (m_Buffer);
+			M_Free (m_Buffer);
 		m_Buffer = expand;
 		m_BufferSize = expandsize;
 	}
@@ -399,6 +434,14 @@ FCompressedMemFile::FCompressedMemFile (const char *name, EOpenMode mode)
 	m_ImplodedBuffer = NULL;
 }
 */
+
+FCompressedMemFile::~FCompressedMemFile ()
+{
+	if (m_ImplodedBuffer != NULL)
+	{
+		M_Free (m_ImplodedBuffer);
+	}
+}
 
 bool FCompressedMemFile::Open (const char *name, EOpenMode mode)
 {
@@ -443,7 +486,7 @@ bool FCompressedMemFile::Open ()
 	m_Mode = EWriting;
 	m_BufferSize = 0;
 	m_MaxBufferSize = 16384;
-	m_Buffer = (unsigned char *)Malloc (16384);
+	m_Buffer = (unsigned char *)M_Malloc (16384);
 	m_Pos = 0;
 	return true;
 }
@@ -455,7 +498,18 @@ bool FCompressedMemFile::Reopen ()
 		m_Mode = EReading;
 		m_Buffer = m_ImplodedBuffer;
 		m_SourceFromMem = true;
-		Explode ();
+		try
+		{
+			Explode ();
+		}
+		catch(...)
+		{
+			// If we just leave things as they are, m_Buffer and m_ImplodedBuffer
+			// both point to the same memory block and both will try to free it.
+			m_Buffer = NULL;
+			m_SourceFromMem = false;
+			throw;
+		}
 		m_SourceFromMem = false;
 		return true;
 	}
@@ -483,10 +537,8 @@ void FCompressedMemFile::Serialize (FArchive &arc)
 		arc.Write (ZSig, 4);
 
 		DWORD sizes[2];
-		sizes[0] = ((DWORD *)m_ImplodedBuffer)[0];
-		sizes[1] = ((DWORD *)m_ImplodedBuffer)[1];
-		SWAP_DWORD (sizes[0]);
-		SWAP_DWORD (sizes[1]);
+		sizes[0] = SWAP_DWORD (((DWORD *)m_ImplodedBuffer)[0]);
+		sizes[1] = SWAP_DWORD (((DWORD *)m_ImplodedBuffer)[1]);
 		arc.Write (m_ImplodedBuffer, (sizes[0] ? sizes[0] : sizes[1])+8);
 	}
 	else
@@ -505,11 +557,9 @@ void FCompressedMemFile::Serialize (FArchive &arc)
 		arc << sizes[0] << sizes[1];
 		DWORD len = sizes[0] == 0 ? sizes[1] : sizes[0];
 
-		m_Buffer = (BYTE *)Malloc (len+8);
-		SWAP_DWORD (sizes[0]);
-		SWAP_DWORD (sizes[1]);
-		((DWORD *)m_Buffer)[0] = sizes[0];
-		((DWORD *)m_Buffer)[1] = sizes[1];
+		m_Buffer = (BYTE *)M_Malloc (len+8);
+		((DWORD *)m_Buffer)[0] = SWAP_DWORD(sizes[0]);
+		((DWORD *)m_Buffer)[1] = SWAP_DWORD(sizes[1]);
 		arc.Read (m_Buffer+8, len);
 		m_ImplodedBuffer = m_Buffer;
 		m_Buffer = NULL;
@@ -522,16 +572,30 @@ bool FCompressedMemFile::IsOpen () const
 	return !!m_Buffer;
 }
 
+void FCompressedMemFile::GetSizes(unsigned int &compressed, unsigned int &uncompressed) const
+{
+	if (m_ImplodedBuffer != NULL)
+	{
+		compressed = BigLong(*(unsigned int *)m_ImplodedBuffer);
+		uncompressed = BigLong(*(unsigned int *)(m_ImplodedBuffer + 4));
+	}
+	else
+	{
+		compressed = 0;
+		uncompressed = m_BufferSize;
+	}
+}
+
 FPNGChunkFile::FPNGChunkFile (FILE *file, DWORD id)
 	: FCompressedFile (file, EWriting, true, false), m_ChunkID (id)
 {
 }
 
-FPNGChunkFile::FPNGChunkFile (FILE *file, DWORD id, unsigned int chunklen)
+FPNGChunkFile::FPNGChunkFile (FILE *file, DWORD id, size_t chunklen)
 	: FCompressedFile (file, EReading, true, false), m_ChunkID (id)
 {
-	m_Buffer = (byte *)Malloc (chunklen);
-	m_BufferSize = chunklen;
+	m_Buffer = (BYTE *)M_Malloc (chunklen);
+	m_BufferSize = (unsigned int)chunklen;
 	fread (m_Buffer, chunklen, 1, m_File);
 	// Skip the CRC for now. Maybe later it will be used.
 	fseek (m_File, 4, SEEK_CUR);
@@ -554,7 +618,7 @@ void FPNGChunkFile::Close ()
 			data[1] = m_ChunkID;
 			fwrite (data, 8, 1, m_File);
 			fwrite (m_Buffer, m_BufferSize, 1, m_File);
-			SWAP_DWORD (crc);
+			crc = SWAP_DWORD (crc);
 			fwrite (&crc, 4, 1, m_File);
 		}
 		m_File = NULL;
@@ -568,7 +632,7 @@ FPNGChunkArchive::FPNGChunkArchive (FILE *file, DWORD id)
 	AttachToFile (Chunk);
 }
 
-FPNGChunkArchive::FPNGChunkArchive (FILE *file, DWORD id, unsigned int len)
+FPNGChunkArchive::FPNGChunkArchive (FILE *file, DWORD id, size_t len)
 	: FArchive (), Chunk (file, id, len)
 {
 	AttachToFile (Chunk);
@@ -598,7 +662,7 @@ FArchive::FArchive (FFile &file)
 
 void FArchive::AttachToFile (FFile &file)
 {
-	int i;
+	unsigned int i;
 
 	m_HubTravel = false;
 	m_File = &file;
@@ -616,8 +680,8 @@ void FArchive::AttachToFile (FFile &file)
 	}
 	m_Persistent = file.IsPersistent();
 	m_TypeMap = NULL;
-	m_TypeMap = new TypeMap[TypeInfo::m_NumTypes];
-	for (i = 0; i < TypeInfo::m_NumTypes; i++)
+	m_TypeMap = new TypeMap[PClass::m_Types.Size()];
+	for (i = 0; i < PClass::m_Types.Size(); i++)
 	{
 		m_TypeMap[i].toArchive = TypeMap::NO_INDEX;
 		m_TypeMap[i].toCurrent = NULL;
@@ -642,7 +706,7 @@ FArchive::~FArchive ()
 	if (m_TypeMap)
 		delete[] m_TypeMap;
 	if (m_ObjectMap)
-		free (m_ObjectMap);
+		M_Free (m_ObjectMap);
 	if (m_SpriteMap)
 		delete[] m_SpriteMap;
 }
@@ -663,7 +727,7 @@ void FArchive::Close ()
 	{
 		m_File->Close ();
 		m_File = NULL;
-		DPrintf ("Processed %ld objects\n", m_ObjectCount);
+		DPrintf ("Processed %u objects\n", m_ObjectCount);
 	}
 }
 
@@ -740,7 +804,7 @@ const char *FArchive::ReadName ()
 		DWORD index = ReadCount ();
 		if (index >= m_Names.Size())
 		{
-			I_Error ("Name %lu has not been read yet\n", index);
+			I_Error ("Name %u has not been read yet\n", index);
 		}
 		return &m_NameStorage[m_Names[index].StringStart];
 	}
@@ -810,6 +874,32 @@ FArchive &FArchive::operator<< (char *&str)
 	return *this;
 }
 
+FArchive &FArchive::operator<< (FString &str)
+{
+	if (m_Storing)
+	{
+		WriteString (str.GetChars());
+	}
+	else
+	{
+		DWORD size = ReadCount();
+
+		if (size == 0)
+		{
+			str = "";
+		}
+		else
+		{
+			char *str2 = (char *)alloca(size*sizeof(char));
+			size--;
+			Read (str2, size);
+			str2[size] = 0;
+			str = str2;
+		}
+	}
+	return *this;
+}
+
 FArchive &FArchive::operator<< (BYTE &c)
 {
 	if (m_Storing)
@@ -823,14 +913,13 @@ FArchive &FArchive::operator<< (WORD &w)
 {
 	if (m_Storing)
 	{
-		WORD temp = w;
-		SWAP_WORD(temp);
+		WORD temp = SWAP_WORD(w);
 		Write (&temp, sizeof(WORD));
 	}
 	else
 	{
 		Read (&w, sizeof(WORD));
-		SWAP_WORD(w);
+		w = SWAP_WORD(w);
 	}
 	return *this;
 }
@@ -839,14 +928,13 @@ FArchive &FArchive::operator<< (DWORD &w)
 {
 	if (m_Storing)
 	{
-		DWORD temp = w;
-		SWAP_DWORD(temp);
+		DWORD temp = SWAP_DWORD(w);
 		Write (&temp, sizeof(DWORD));
 	}
 	else
 	{
 		Read (&w, sizeof(DWORD));
-		SWAP_DWORD(w);
+		w = SWAP_DWORD(w);
 	}
 	return *this;
 }
@@ -855,14 +943,13 @@ FArchive &FArchive::operator<< (QWORD &w)
 {
 	if (m_Storing)
 	{
-		QWORD temp = w;
-		SWAP_QWORD(temp);
+		QWORD temp = SWAP_QWORD(w);
 		Write (&temp, sizeof(QWORD));
 	}
 	else
 	{
 		Read (&w, sizeof(QWORD));
-		SWAP_QWORD(w);
+		w = SWAP_QWORD(w);
 	}
 	return *this;
 }
@@ -887,57 +974,74 @@ FArchive &FArchive::operator<< (double &w)
 {
 	if (m_Storing)
 	{
-		double temp = w;
-		SWAP_DOUBLE(temp);
+		double temp;
+		SWAP_DOUBLE(temp,w);
 		Write (&temp, sizeof(double));
 	}
 	else
 	{
 		Read (&w, sizeof(double));
-		SWAP_DOUBLE(w);
+		SWAP_DOUBLE(w,w);
+	}
+	return *this;
+}
+
+FArchive &FArchive::operator<< (FName &n)
+{ // In an archive, a "name" is a string that might be stored multiple times,
+  // so it is only stored once. It is still treated as a normal string. In the
+  // rest of the game, a name is a unique identifier for a number.
+	if (m_Storing)
+	{
+		WriteName (n.GetChars());
+	}
+	else
+	{
+		n = FName(ReadName());
 	}
 	return *this;
 }
 
 FArchive &FArchive::SerializePointer (void *ptrbase, BYTE **ptr, DWORD elemSize)
 {
-	WORD w;
+	DWORD w;
 
 	if (m_Storing)
 	{
-		if (*ptr)
+		if (*(void **)ptr)
 		{
-			w = (*ptr - (byte *)ptrbase) / elemSize;
-			SWAP_WORD(w);
+			w = DWORD(((size_t)*ptr - (size_t)ptrbase) / elemSize);
 		}
 		else
 		{
-			w = 0xffff;
+			w = ~0u;
 		}
-		Write (&w, sizeof(WORD));
+		WriteCount (w);
 	}
 	else
 	{
-		Read (&w, sizeof(WORD));
-		SWAP_WORD (w);
-		if (w != 0xffff)
+		w = ReadCount ();
+		if (w != ~0u)
 		{
-			*ptr = (byte *)ptrbase + w * elemSize;
+			*(void **)ptr = (BYTE *)ptrbase + w * elemSize;
 		}
 		else
 		{
-			*ptr = NULL;
+			*(void **)ptr = NULL;
 		}
 	}
 	return *this;
 }
 
-FArchive &FArchive::SerializeObject (DObject *&object, TypeInfo *type)
+FArchive &FArchive::SerializeObject (DObject *&object, PClass *type)
 {
 	if (IsStoring ())
+	{
 		return WriteObject (object);
+	}
 	else
+	{
 		return ReadObject (object, type);
+	}
 }
 
 FArchive &FArchive::WriteObject (DObject *obj)
@@ -955,9 +1059,16 @@ FArchive &FArchive::WriteObject (DObject *obj)
 		id[0] = M1_OBJ;
 		Write (id, 1);
 	}
+	else if (obj->ObjectFlags & OF_EuthanizeMe)
+	{
+		// Objects that want to die are not saved to the archive, but
+		// we leave the pointers to them alone.
+		id[0] = NULL_OBJ;
+		Write (id, 1);
+	}
 	else
 	{
-		const TypeInfo *type = RUNTIME_TYPE(obj);
+		const PClass *type = RUNTIME_TYPE(obj);
 
 		if (type == RUNTIME_CLASS(DObject))
 		{
@@ -966,7 +1077,7 @@ FArchive &FArchive::WriteObject (DObject *obj)
 			id[0] = NULL_OBJ;
 			Write (id, 1);
 		}
-		else if (m_TypeMap[type->TypeIndex].toArchive == TypeMap::NO_INDEX)
+		else if (m_TypeMap[type->ClassIndex].toArchive == TypeMap::NO_INDEX)
 		{
 			// No instances of this class have been written out yet.
 			// Write out the class, then write out the object. If this
@@ -988,6 +1099,7 @@ FArchive &FArchive::WriteObject (DObject *obj)
 			WriteClass (type);
 //			Printf ("Make class %s (%u)\n", type->Name, m_File->Tell());
 			MapObject (obj);
+			obj->SerializeUserVars (*this);
 			obj->Serialize (*this);
 			obj->CheckIfSerialized ();
 		}
@@ -1016,9 +1128,10 @@ FArchive &FArchive::WriteObject (DObject *obj)
 					id[0] = NEW_OBJ;
 					Write (id, 1);
 				}
-				WriteCount (m_TypeMap[type->TypeIndex].toArchive);
+				WriteCount (m_TypeMap[type->ClassIndex].toArchive);
 //				Printf ("Reuse class %s (%u)\n", type->Name, m_File->Tell());
 				MapObject (obj);
+				obj->SerializeUserVars (*this);
 				obj->Serialize (*this);
 				obj->CheckIfSerialized ();
 			}
@@ -1033,10 +1146,10 @@ FArchive &FArchive::WriteObject (DObject *obj)
 	return *this;
 }
 
-FArchive &FArchive::ReadObject (DObject* &obj, TypeInfo *wanttype)
+FArchive &FArchive::ReadObject (DObject* &obj, PClass *wanttype)
 {
 	BYTE objHead;
-	const TypeInfo *type;
+	const PClass *type;
 	BYTE playerNum;
 	DWORD index;
 
@@ -1056,7 +1169,7 @@ FArchive &FArchive::ReadObject (DObject* &obj, TypeInfo *wanttype)
 		index = ReadCount ();
 		if (index >= m_ObjectCount)
 		{
-			I_Error ("Object reference too high (%lu; max is %lu)\n", index, m_ObjectCount);
+			I_Error ("Object reference too high (%u; max is %u)\n", index, m_ObjectCount);
 		}
 		obj = (DObject *)m_ObjectMap[index].object;
 		break;
@@ -1072,14 +1185,21 @@ FArchive &FArchive::ReadObject (DObject* &obj, TypeInfo *wanttype)
 
 			// But also create a new one so that we can get past the one
 			// stored in the archive.
-			DObject *tempobj = type->CreateNew ();
+			AActor *tempobj = static_cast<AActor *>(type->CreateNew ());
 			MapObject (obj != NULL ? obj : tempobj);
+			tempobj->SerializeUserVars (*this);
 			tempobj->Serialize (*this);
 			tempobj->CheckIfSerialized ();
 			// If this player is not present anymore, keep the new body
 			// around just so that the load will succeed.
 			if (obj != NULL)
 			{
+				// When the temporary player's inventory items were loaded,
+				// they became owned by the real player. Undo that now.
+				for (AInventory *item = tempobj->Inventory; item != NULL; item = item->Inventory)
+				{
+					item->Owner = tempobj;
+				}
 				tempobj->Destroy ();
 			}
 			else
@@ -1095,6 +1215,7 @@ FArchive &FArchive::ReadObject (DObject* &obj, TypeInfo *wanttype)
 //		Printf ("New class: %s (%u)\n", type->Name, m_File->Tell());
 		obj = type->CreateNew ();
 		MapObject (obj);
+		obj->SerializeUserVars (*this);
 		obj->Serialize (*this);
 		obj->CheckIfSerialized ();
 		break;
@@ -1107,12 +1228,18 @@ FArchive &FArchive::ReadObject (DObject* &obj, TypeInfo *wanttype)
 //			Printf ("Use player class: %s (%u)\n", type->Name, m_File->Tell());
 			obj = players[playerNum].mo;
 
-			DObject *tempobj = type->CreateNew ();
+			AActor *tempobj = static_cast<AActor *>(type->CreateNew ());
 			MapObject (obj != NULL ? obj : tempobj);
+			tempobj->SerializeUserVars (*this);
 			tempobj->Serialize (*this);
 			tempobj->CheckIfSerialized ();
 			if (obj != NULL)
 			{
+				for (AInventory *item = tempobj->Inventory;
+					item != NULL; item = item->Inventory)
+				{
+					item->Owner = tempobj;
+				}
 				tempobj->Destroy ();
 			}
 			else
@@ -1128,6 +1255,7 @@ FArchive &FArchive::ReadObject (DObject* &obj, TypeInfo *wanttype)
 //		Printf ("Use class: %s (%u)\n", type->Name, m_File->Tell());
 		obj = type->CreateNew ();
 		MapObject (obj);
+		obj->SerializeUserVars (*this);
 		obj->Serialize (*this);
 		obj->CheckIfSerialized ();
 		break;
@@ -1176,7 +1304,7 @@ int FArchive::ReadSprite ()
 		DWORD index = ReadCount ();
 		if (index >= m_NumSprites)
 		{
-			I_Error ("Sprite %lu has not been read yet\n", index);
+			I_Error ("Sprite %u has not been read yet\n", index);
 		}
 		return m_SpriteMap[index];
 	}
@@ -1188,11 +1316,11 @@ int FArchive::ReadSprite ()
 		Read (&name, 4);
 		hint = ReadCount ();
 
-		if (hint >= NumStdSprites || *(DWORD *)&sprites[hint].name != name)
+		if (hint >= NumStdSprites || sprites[hint].dwName != name)
 		{
 			for (hint = NumStdSprites; hint-- != 0; )
 			{
-				if (*(DWORD *)&sprites[hint].name == name)
+				if (sprites[hint].dwName == name)
 				{
 					break;
 				}
@@ -1258,77 +1386,80 @@ DWORD FArchive::FindName (const char *name, unsigned int bucket) const
 	return (DWORD)map;
 }
 
-DWORD FArchive::WriteClass (const TypeInfo *info)
+DWORD FArchive::WriteClass (const PClass *info)
 {
-	if (m_ClassCount >= TypeInfo::m_NumTypes)
+	if (m_ClassCount >= PClass::m_Types.Size())
 	{
 		I_Error ("Too many unique classes have been written.\nOnly %u were registered\n",
-			TypeInfo::m_NumTypes);
+			PClass::m_Types.Size());
 	}
-	if (m_TypeMap[info->TypeIndex].toArchive != TypeMap::NO_INDEX)
+	if (m_TypeMap[info->ClassIndex].toArchive != TypeMap::NO_INDEX)
 	{
-		I_Error ("Attempt to write '%s' twice.\n", info->Name);
+		I_Error ("Attempt to write '%s' twice.\n", info->TypeName.GetChars());
 	}
-	m_TypeMap[info->TypeIndex].toArchive = m_ClassCount;
+	m_TypeMap[info->ClassIndex].toArchive = m_ClassCount;
 	m_TypeMap[m_ClassCount].toCurrent = info;
-	WriteString (info->Name);
+	WriteString (info->TypeName.GetChars());
 	return m_ClassCount++;
 }
 
-const TypeInfo *FArchive::ReadClass ()
+const PClass *FArchive::ReadClass ()
 {
 	struct String {
 		String() { val = NULL; }
 		~String() { if (val) delete[] val; }
 		char *val;
 	} typeName;
-	int i;
 
-	if (m_ClassCount >= TypeInfo::m_NumTypes)
+	if (m_ClassCount >= PClass::m_Types.Size())
 	{
 		I_Error ("Too many unique classes have been read.\nOnly %u were registered\n",
-			TypeInfo::m_NumTypes);
+			PClass::m_Types.Size());
 	}
 	operator<< (typeName.val);
-	for (i = 0; i < TypeInfo::m_NumTypes; i++)
+	FName zaname(typeName.val, true);
+	if (zaname != NAME_None)
 	{
-		if (!strcmp (TypeInfo::m_Types[i]->Name, typeName.val))
+		for (unsigned int i = PClass::m_Types.Size(); i-- > 0; )
 		{
-			m_TypeMap[i].toArchive = m_ClassCount;
-			m_TypeMap[m_ClassCount].toCurrent = TypeInfo::m_Types[i];
-			m_ClassCount++;
-			return TypeInfo::m_Types[i];
+			if (PClass::m_Types[i]->TypeName == zaname)
+			{
+				m_TypeMap[i].toArchive = m_ClassCount;
+				m_TypeMap[m_ClassCount].toCurrent = PClass::m_Types[i];
+				m_ClassCount++;
+				return PClass::m_Types[i];
+			}
 		}
 	}
 	I_Error ("Unknown class '%s'\n", typeName.val);
 	return NULL;
 }
 
-const TypeInfo *FArchive::ReadClass (const TypeInfo *wanttype)
+const PClass *FArchive::ReadClass (const PClass *wanttype)
 {
-	const TypeInfo *type = ReadClass ();
+	const PClass *type = ReadClass ();
 	if (!type->IsDescendantOf (wanttype))
 	{
 		I_Error ("Expected to extract an object of type '%s'.\n"
 				 "Found one of type '%s' instead.\n",
-			wanttype->Name, type->Name);
+			wanttype->TypeName.GetChars(), type->TypeName.GetChars());
 	}
 	return type;
 }
 
-const TypeInfo *FArchive::ReadStoredClass (const TypeInfo *wanttype)
+const PClass *FArchive::ReadStoredClass (const PClass *wanttype)
 {
 	DWORD index = ReadCount ();
 	if (index >= m_ClassCount)
 	{
-		I_Error ("Class reference too high (%lu; max is %lu)\n", index, m_ClassCount);
+		I_Error ("Class reference too high (%u; max is %u)\n", index, m_ClassCount);
 	}
-	const TypeInfo *type = m_TypeMap[index].toCurrent;
+	const PClass *type = m_TypeMap[index].toCurrent;
 	if (!type->IsDescendantOf (wanttype))
 	{
 		I_Error ("Expected to extract an object of type '%s'.\n"
 				 "Found one of type '%s' instead.\n",
-			wanttype->Name, type->Name);
+			wanttype->TypeName.GetChars(), type->TypeName.GetChars());
 	}
 	return type;
 }
@@ -1340,7 +1471,7 @@ DWORD FArchive::MapObject (const DObject *obj)
 	if (m_ObjectCount >= m_MaxObjectCount)
 	{
 		m_MaxObjectCount = m_MaxObjectCount ? m_MaxObjectCount * 2 : 1024;
-		m_ObjectMap = (ObjectMap *)Realloc (m_ObjectMap, sizeof(ObjectMap)*m_MaxObjectCount);
+		m_ObjectMap = (ObjectMap *)M_Realloc (m_ObjectMap, sizeof(ObjectMap)*m_MaxObjectCount);
 		for (i = m_ObjectCount; i < m_MaxObjectCount; i++)
 		{
 			m_ObjectMap[i].hashNext = ~0;
@@ -1365,15 +1496,15 @@ DWORD FArchive::HashObject (const DObject *obj) const
 
 DWORD FArchive::FindObjectIndex (const DObject *obj) const
 {
-	size_t index = m_ObjectHash[HashObject (obj)];
+	DWORD index = m_ObjectHash[HashObject (obj)];
 	while (index != TypeMap::NO_INDEX && m_ObjectMap[index].object != obj)
 	{
 		index = m_ObjectMap[index].hashNext;
 	}
-	return (DWORD)index;
+	return index;
 }
 
-void FArchive::UserWriteClass (const TypeInfo *type)
+void FArchive::UserWriteClass (const PClass *type)
 {
 	BYTE id;
 
@@ -1384,7 +1515,7 @@ void FArchive::UserWriteClass (const TypeInfo *type)
 	}
 	else
 	{
-		if (m_TypeMap[type->TypeIndex].toArchive == TypeMap::NO_INDEX)
+		if (m_TypeMap[type->ClassIndex].toArchive == TypeMap::NO_INDEX)
 		{
 			id = 1;
 			Write (&id, 1);
@@ -1394,12 +1525,12 @@ void FArchive::UserWriteClass (const TypeInfo *type)
 		{
 			id = 0;
 			Write (&id, 1);
-			WriteCount (m_TypeMap[type->TypeIndex].toArchive);
+			WriteCount (m_TypeMap[type->ClassIndex].toArchive);
 		}
 	}
 }
 
-void FArchive::UserReadClass (const TypeInfo *&type)
+void FArchive::UserReadClass (const PClass *&type)
 {
 	BYTE newclass;
 
@@ -1419,4 +1550,42 @@ void FArchive::UserReadClass (const TypeInfo *&type)
 		I_Error ("Unknown class type %d in archive.\n", newclass);
 		break;
 	}
+}
+
+FArchive &operator<< (FArchive &arc, const PClass * &info)
+{
+	if (arc.IsStoring ())
+	{
+		arc.UserWriteClass (info);
+	}
+	else
+	{
+		arc.UserReadClass (info);
+	}
+	return arc;
+}
+
+FArchive &operator<< (FArchive &arc, sector_t *&sec)
+{
+	return arc.SerializePointer (sectors, (BYTE **)&sec, sizeof(*sectors));
+}
+
+FArchive &operator<< (FArchive &arc, const sector_t *&sec)
+{
+	return arc.SerializePointer (sectors, (BYTE **)&sec, sizeof(*sectors));
+}
+
+FArchive &operator<< (FArchive &arc, line_t *&line)
+{
+	return arc.SerializePointer (lines, (BYTE **)&line, sizeof(*lines));
+}
+
+FArchive &operator<< (FArchive &arc, vertex_t *&vert)
+{
+	return arc.SerializePointer (vertexes, (BYTE **)&vert, sizeof(*vertexes));
+}
+
+FArchive &operator<< (FArchive &arc, side_t *&side)
+{
+	return arc.SerializePointer (sides, (BYTE **)&side, sizeof(*sides));
 }

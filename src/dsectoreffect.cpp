@@ -25,33 +25,37 @@
 #include "dsectoreffect.h"
 #include "gi.h"
 #include "p_local.h"
+#include "p_3dmidtex.h"
+#include "r_data/r_interpolate.h"
+#include "statnums.h"
+#include "farchive.h"
 
 IMPLEMENT_CLASS (DSectorEffect)
 
 DSectorEffect::DSectorEffect ()
+: DThinker(STAT_SECTOREFFECT)
 {
 	m_Sector = NULL;
 }
 
-DSectorEffect::~DSectorEffect ()
+void DSectorEffect::Destroy()
 {
 	if (m_Sector)
 	{
 		if (m_Sector->floordata == this)
 		{
 			m_Sector->floordata = NULL;
-			stopinterpolation (INTERP_SectorFloor, m_Sector);
 		}
 		if (m_Sector->ceilingdata == this)
 		{
 			m_Sector->ceilingdata = NULL;
-			stopinterpolation (INTERP_SectorCeiling, m_Sector);
 		}
 		if (m_Sector->lightingdata == this)
 		{
 			m_Sector->lightingdata = NULL;
 		}
 	}
+	Super::Destroy();
 }
 
 DSectorEffect::DSectorEffect (sector_t *sector)
@@ -65,7 +69,9 @@ void DSectorEffect::Serialize (FArchive &arc)
 	arc << m_Sector;
 }
 
-IMPLEMENT_CLASS (DMover)
+IMPLEMENT_POINTY_CLASS (DMover)
+	DECLARE_POINTER(interpolation)
+END_POINTERS
 
 DMover::DMover ()
 {
@@ -74,7 +80,31 @@ DMover::DMover ()
 DMover::DMover (sector_t *sector)
 	: DSectorEffect (sector)
 {
+	interpolation = NULL;
 }
+
+void DMover::Destroy()
+{
+	StopInterpolation();
+	Super::Destroy();
+}
+
+void DMover::Serialize (FArchive &arc)
+{
+	Super::Serialize (arc);
+	arc << interpolation;
+}
+
+void DMover::StopInterpolation()
+{
+	if (interpolation != NULL)
+	{
+		interpolation->DelRef();
+		interpolation = NULL;
+	}
+}
+
+
 
 IMPLEMENT_CLASS (DMovingFloor)
 
@@ -86,7 +116,7 @@ DMovingFloor::DMovingFloor (sector_t *sector)
 	: DMover (sector)
 {
 	sector->floordata = this;
-	setinterpolation (INTERP_SectorFloor, sector);
+	interpolation = sector->SetInterpolation(sector_t::FloorMove, true);
 }
 
 IMPLEMENT_CLASS (DMovingCeiling)
@@ -99,7 +129,23 @@ DMovingCeiling::DMovingCeiling (sector_t *sector)
 	: DMover (sector)
 {
 	sector->ceilingdata = this;
-	setinterpolation (INTERP_SectorCeiling, sector);
+	interpolation = sector->SetInterpolation(sector_t::CeilingMove, true);
+}
+
+bool DMover::MoveAttached(int crush, fixed_t move, int floorOrCeiling, bool resetfailed)
+{
+	if (!P_Scroll3dMidtex(m_Sector, crush, move, !!floorOrCeiling) && resetfailed)
+	{
+		P_Scroll3dMidtex(m_Sector, crush, -move, !!floorOrCeiling);
+		return false;
+	}
+	if (!P_MoveLinkedSectors(m_Sector, crush, move, !!floorOrCeiling) && resetfailed)
+	{
+		P_MoveLinkedSectors(m_Sector, crush, -move, !!floorOrCeiling);
+		P_Scroll3dMidtex(m_Sector, crush, -move, !!floorOrCeiling);
+		return false;
+	}
+	return true;
 }
 
 //
@@ -109,10 +155,12 @@ DMovingCeiling::DMovingCeiling (sector_t *sector)
 //		dest is the desired d value for the plane
 //
 DMover::EResult DMover::MovePlane (fixed_t speed, fixed_t dest, int crush,
-								   int floorOrCeiling, int direction)
+								   int floorOrCeiling, int direction, bool hexencrush)
 {
 	bool	 	flag;
 	fixed_t 	lastpos;
+	fixed_t		movedest;
+	fixed_t		move;
 	//fixed_t		destheight;	//jff 02/04/98 used to keep floors/ceilings
 							// from moving thru each other
 	switch (floorOrCeiling)
@@ -124,37 +172,45 @@ DMover::EResult DMover::MovePlane (fixed_t speed, fixed_t dest, int crush,
 		{
 		case -1:
 			// DOWN
-			m_Sector->floorplane.ChangeHeight (-speed);
-			if (m_Sector->floorplane.d >= dest)
+			movedest = m_Sector->floorplane.GetChangedHeight (-speed);
+			if (movedest >= dest)
 			{
+				move = m_Sector->floorplane.HeightDiff (lastpos, dest);
+
+				if (!MoveAttached(crush, move, 0, true)) return crushed;
+
 				m_Sector->floorplane.d = dest;
-				flag = P_ChangeSector (m_Sector, crush,
-					m_Sector->floorplane.HeightDiff (lastpos), 0);
+				flag = P_ChangeSector (m_Sector, crush, move, 0, false);
 				if (flag)
 				{
 					m_Sector->floorplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush,
-						m_Sector->floorplane.HeightDiff (dest), 0);
+					P_ChangeSector (m_Sector, crush, -move, 0, true);
+					MoveAttached(crush, -move, 0, false);
 				}
 				else
 				{
-					m_Sector->floortexz += m_Sector->floorplane.HeightDiff (lastpos);
+					m_Sector->ChangePlaneTexZ(sector_t::floor, move);
 					m_Sector->AdjustFloorClip ();
 				}
 				return pastdest;
 			}
 			else
 			{
-				flag = P_ChangeSector (m_Sector, crush, -speed, 0);
+				if (!MoveAttached(crush, -speed, 0, true)) return crushed;
+
+				m_Sector->floorplane.d = movedest;
+
+				flag = P_ChangeSector (m_Sector, crush, -speed, 0, false);
 				if (flag)
 				{
 					m_Sector->floorplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush, speed, 0);
+					P_ChangeSector (m_Sector, crush, speed, 0, true);
+					MoveAttached(crush, speed, 0, false);
 					return crushed;
 				}
 				else
 				{
-					m_Sector->floortexz += m_Sector->floorplane.HeightDiff (lastpos);
+					m_Sector->ChangePlaneTexZ(sector_t::floor, m_Sector->floorplane.HeightDiff (lastpos));
 					m_Sector->AdjustFloorClip ();
 				}
 			}
@@ -167,46 +223,57 @@ DMover::EResult DMover::MovePlane (fixed_t speed, fixed_t dest, int crush,
 			//destheight = (dest < m_Sector->ceilingheight) ? dest : m_Sector->ceilingheight;
 			if ((m_Sector->ceilingplane.a | m_Sector->ceilingplane.b |
 				 m_Sector->floorplane.a | m_Sector->floorplane.b) == 0 &&
-				-dest > m_Sector->ceilingplane.d)
+				(!(i_compatflags2 & COMPATF2_FLOORMOVE) && -dest > m_Sector->ceilingplane.d))
 			{
 				dest = -m_Sector->ceilingplane.d;
 			}
-			m_Sector->floorplane.ChangeHeight (speed);
-			if (m_Sector->floorplane.d < dest)
+
+			movedest = m_Sector->floorplane.GetChangedHeight (speed);
+
+			if (movedest <= dest)
 			{
+				move = m_Sector->floorplane.HeightDiff (lastpos, dest);
+
+				if (!MoveAttached(crush, move, 0, true)) return crushed;
+
 				m_Sector->floorplane.d = dest;
-				flag = P_ChangeSector (m_Sector, crush,
-					m_Sector->floorplane.HeightDiff (lastpos), 0);
+
+				flag = P_ChangeSector (m_Sector, crush, move, 0, false);
 				if (flag)
 				{
 					m_Sector->floorplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush,
-						m_Sector->floorplane.HeightDiff (dest), 0);
+					P_ChangeSector (m_Sector, crush, -move, 0, true);
+					MoveAttached(crush, -move, 0, false);
 				}
 				else
 				{
-					m_Sector->floortexz += m_Sector->floorplane.HeightDiff (lastpos);
+					m_Sector->ChangePlaneTexZ(sector_t::floor, move);
 					m_Sector->AdjustFloorClip ();
 				}
 				return pastdest;
 			}
 			else
 			{
+				if (!MoveAttached(crush, speed, 0, true)) return crushed;
+
+				m_Sector->floorplane.d = movedest;
+
 				// COULD GET CRUSHED
-				flag = P_ChangeSector (m_Sector, crush, speed, 0);
+				flag = P_ChangeSector (m_Sector, crush, speed, 0, false);
 				if (flag)
 				{
-					if (crush >= 0 && gameinfo.gametype != GAME_Hexen)
+					if (crush >= 0 && !hexencrush)
 					{
-						m_Sector->floortexz += m_Sector->floorplane.HeightDiff (lastpos);
+						m_Sector->ChangePlaneTexZ(sector_t::floor, m_Sector->floorplane.HeightDiff (lastpos));
 						m_Sector->AdjustFloorClip ();
 						return crushed;
 					}
 					m_Sector->floorplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush, -speed, 0);
+					P_ChangeSector (m_Sector, crush, -speed, 0, true);
+					MoveAttached(crush, -speed, 0, false);
 					return crushed;
 				}
-				m_Sector->floortexz += m_Sector->floorplane.HeightDiff (lastpos);
+				m_Sector->ChangePlaneTexZ(sector_t::floor, m_Sector->floorplane.HeightDiff (lastpos));
 				m_Sector->AdjustFloorClip ();
 			}
 			break;
@@ -225,81 +292,95 @@ DMover::EResult DMover::MovePlane (fixed_t speed, fixed_t dest, int crush,
 			//destheight = (dest > m_Sector->floorheight) ? dest : m_Sector->floorheight;
 			if ((m_Sector->ceilingplane.a | m_Sector->ceilingplane.b |
 				 m_Sector->floorplane.a | m_Sector->floorplane.b) == 0 &&
-				dest < -m_Sector->floorplane.d)
+				(!(i_compatflags2 & COMPATF2_FLOORMOVE) && dest < -m_Sector->floorplane.d))
 			{
 				dest = -m_Sector->floorplane.d;
 			}
-			m_Sector->ceilingplane.ChangeHeight (-speed);
-			if (m_Sector->ceilingplane.d < dest)
+			movedest = m_Sector->ceilingplane.GetChangedHeight (-speed);
+			if (movedest <= dest)
 			{
+				move = m_Sector->ceilingplane.HeightDiff (lastpos, dest);
+
+				if (!MoveAttached(crush, move, 1, true)) return crushed;
+
 				m_Sector->ceilingplane.d = dest;
-				flag = P_ChangeSector (m_Sector, crush,
-					m_Sector->ceilingplane.HeightDiff (lastpos), 1);
+				flag = P_ChangeSector (m_Sector, crush, move, 1, false);
 
 				if (flag)
 				{
 					m_Sector->ceilingplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush,
-						m_Sector->ceilingplane.HeightDiff (dest), 1);
+					P_ChangeSector (m_Sector, crush, -move, 1, true);
+					MoveAttached(crush, -move, 1, false);
 				}
 				else
 				{
-					m_Sector->ceilingtexz += m_Sector->ceilingplane.HeightDiff (lastpos);
+					m_Sector->ChangePlaneTexZ(sector_t::ceiling, move);
 				}
 				return pastdest;
 			}
 			else
 			{
+				if (!MoveAttached(crush, -speed, 1, true)) return crushed;
+
+				m_Sector->ceilingplane.d = movedest;
+
 				// COULD GET CRUSHED
-				flag = P_ChangeSector (m_Sector, crush, -speed, 1);
+				flag = P_ChangeSector (m_Sector, crush, -speed, 1, false);
 				if (flag)
 				{
-					if (crush >= 0 && gameinfo.gametype != GAME_Hexen)
+					if (crush >= 0 && !hexencrush)
 					{
-						m_Sector->ceilingtexz += m_Sector->ceilingplane.HeightDiff (lastpos);
+						m_Sector->ChangePlaneTexZ(sector_t::ceiling, m_Sector->ceilingplane.HeightDiff (lastpos));
 						return crushed;
 					}
 					m_Sector->ceilingplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush, speed, 1);
+					P_ChangeSector (m_Sector, crush, speed, 1, true);
+					MoveAttached(crush, speed, 1, false);
 					return crushed;
 				}
-				m_Sector->ceilingtexz += m_Sector->ceilingplane.HeightDiff (lastpos);
+				m_Sector->ChangePlaneTexZ(sector_t::ceiling, m_Sector->ceilingplane.HeightDiff (lastpos));
 			}
 			break;
 												
 		case 1:
 			// UP
-			m_Sector->ceilingplane.ChangeHeight (speed);
-			if (m_Sector->ceilingplane.d > dest)
+			movedest = m_Sector->ceilingplane.GetChangedHeight (speed);
+			if (movedest >= dest)
 			{
+				move = m_Sector->ceilingplane.HeightDiff (lastpos, dest);
+
+				if (!MoveAttached(crush, move, 1, true)) return crushed;
+
 				m_Sector->ceilingplane.d = dest;
-				flag = P_ChangeSector (m_Sector, crush,
-					m_Sector->ceilingplane.HeightDiff (lastpos), 1);
+
+				flag = P_ChangeSector (m_Sector, crush, move, 1, false);
 				if (flag)
 				{
 					m_Sector->ceilingplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush,
-						m_Sector->ceilingplane.HeightDiff (dest), 1);
+					P_ChangeSector (m_Sector, crush, move, 1, true);
+					MoveAttached(crush, move, 1, false);
 				}
 				else
 				{
-					m_Sector->ceilingtexz += m_Sector->ceilingplane.HeightDiff (lastpos);
+					m_Sector->ChangePlaneTexZ(sector_t::ceiling, move);
 				}
 				return pastdest;
 			}
 			else
 			{
-				flag = P_ChangeSector (m_Sector, crush, speed, 1);
-// UNUSED
-#if 0
+				if (!MoveAttached(crush, speed, 1, true)) return crushed;
+
+				m_Sector->ceilingplane.d = movedest;
+
+				flag = P_ChangeSector (m_Sector, crush, speed, 1, false);
 				if (flag)
 				{
 					m_Sector->ceilingplane.d = lastpos;
-					P_ChangeSector (m_Sector, crush, -speed, 1);
+					P_ChangeSector (m_Sector, crush, -speed, 1, true);
+					MoveAttached(crush, -speed, 1, false);
 					return crushed;
 				}
-#endif
-				m_Sector->ceilingtexz += m_Sector->ceilingplane.HeightDiff (lastpos);
+				m_Sector->ChangePlaneTexZ(sector_t::ceiling, m_Sector->ceilingplane.HeightDiff (lastpos));
 			}
 			break;
 		}

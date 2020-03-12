@@ -34,8 +34,24 @@
 #include "a_keys.h"
 #include "i_system.h"
 #include "sc_man.h"
+#include "cmdlib.h"
+#include "farchive.h"
+
+//============================================================================
+//
+// VERTICAL DOORS
+//
+//============================================================================
 
 IMPLEMENT_CLASS (DDoor)
+
+inline FArchive &operator<< (FArchive &arc, DDoor::EVlDoor &type)
+{
+	BYTE val = (BYTE)type;
+	arc << val;
+	type = (DDoor::EVlDoor)val;
+	return arc;
+}
 
 DDoor::DDoor ()
 {
@@ -54,14 +70,12 @@ void DDoor::Serialize (FArchive &arc)
 		<< m_LightTag;
 }
 
-
-//
-// VERTICAL DOORS
-//
-
+//============================================================================
 //
 // T_VerticalDoor
 //
+//============================================================================
+
 void DDoor::Tick ()
 {
 	EResult res;
@@ -69,7 +83,7 @@ void DDoor::Tick ()
 	if (m_Sector->floorplane.d != m_OldFloorDist)
 	{
 		if (!m_Sector->floordata || !m_Sector->floordata->IsKindOf(RUNTIME_CLASS(DPlat)) ||
-			!((DPlat*)m_Sector->floordata)->IsLift())
+			!(barrier_cast<DPlat*>(m_Sector->floordata))->IsLift())
 		{
 			m_OldFloorDist = m_Sector->floorplane.d;
 			m_BotDist = m_Sector->ceilingplane.PointToDist (m_BotSpot,
@@ -121,7 +135,7 @@ void DDoor::Tick ()
 		
 	case -1:
 		// DOWN
-		res = MoveCeiling (m_Speed, m_BotDist, -1, m_Direction);
+		res = MoveCeiling (m_Speed, m_BotDist, -1, m_Direction, false);
 
 		// killough 10/98: implement gradual lighting effects
 		if (m_LightTag != 0 && m_TopDist != -m_Sector->floorplane.d)
@@ -132,13 +146,12 @@ void DDoor::Tick ()
 
 		if (res == pastdest)
 		{
-			SN_StopSequence (m_Sector);
+			SN_StopSequence (m_Sector, CHAN_CEILING);
 			switch (m_Type)
 			{
 			case doorRaise:
 			case doorClose:
 				m_Sector->ceilingdata = NULL;	//jff 2/22/98
-				stopinterpolation (INTERP_SectorCeiling, m_Sector);
 				Destroy ();						// unlink and free
 				break;
 				
@@ -168,7 +181,7 @@ void DDoor::Tick ()
 		
 	case 1:
 		// UP
-		res = MoveCeiling (m_Speed, m_TopDist, -1, m_Direction);
+		res = MoveCeiling (m_Speed, m_TopDist, -1, m_Direction, false);
 		
 		// killough 10/98: implement gradual lighting effects
 		if (m_LightTag != 0 && m_TopDist != -m_Sector->floorplane.d)
@@ -179,7 +192,7 @@ void DDoor::Tick ()
 
 		if (res == pastdest)
 		{
-			SN_StopSequence (m_Sector);
+			SN_StopSequence (m_Sector, CHAN_CEILING);
 			switch (m_Type)
 			{
 			case doorRaise:
@@ -190,10 +203,23 @@ void DDoor::Tick ()
 			case doorCloseWaitOpen:
 			case doorOpen:
 				m_Sector->ceilingdata = NULL;	//jff 2/22/98
-				stopinterpolation (INTERP_SectorCeiling, m_Sector);
 				Destroy ();						// unlink and free
 				break;
 				
+			default:
+				break;
+			}
+		}
+		else if (res == crushed)
+		{
+			switch (m_Type)
+			{
+			case doorRaise:
+			case doorRaiseIn5Mins:
+				m_Direction = -1;
+				DoorSound(false);
+				break;
+
 			default:
 				break;
 			}
@@ -202,92 +228,109 @@ void DDoor::Tick ()
 	}
 }
 
+//============================================================================
+//
 // [RH] DoorSound: Plays door sound depending on direction and speed
-void DDoor::DoorSound (bool raise) const
+//
+// If curseq is non-NULL, then it will check if the desired sound sequence
+// will result in a different command stream than the current one. If not,
+// then it does nothing.
+//
+//============================================================================
+
+void DDoor::DoorSound(bool raise, DSeqNode *curseq) const
 {
-	const char *snd = "";
+	int choice;
+
+	// For multiple-selection sound sequences, the following choices are used:
+	//  0  Opening
+	//  1  Closing
+	//  2  Opening fast
+	//  3  Closing fast
+
+	choice = !raise;
+
+	if (m_Speed >= FRACUNIT*8)
+	{
+		choice += 2;
+	}
 
 	if (m_Sector->seqType >= 0)
 	{
-		SN_StartSequence (m_Sector, m_Sector->seqType, SEQ_DOOR);
+		if (curseq == NULL || !SN_AreModesSame(m_Sector->seqType, SEQ_DOOR, choice, curseq->GetModeNum()))
+		{
+			SN_StartSequence(m_Sector, CHAN_CEILING, m_Sector->seqType, SEQ_DOOR, choice);
+		}
+	}
+	else if (m_Sector->SeqName != NAME_None)
+	{
+		if (curseq == NULL || !SN_AreModesSame(m_Sector->SeqName, choice, curseq->GetModeNum()))
+		{
+			SN_StartSequence(m_Sector, CHAN_CEILING, m_Sector->SeqName, choice);
+		}
 	}
 	else
 	{
+		const char *snd;
+
 		switch (gameinfo.gametype)
 		{
-		default:
-			snd = NULL;
+		default:	/* Doom and Hexen */
+			snd = "DoorNormal";
 			break;
-
+			
 		case GAME_Heretic:
-			snd = raise ? "HereticDoorOpen" : "HereticDoorClose";
-			break;
-
-		case GAME_Doom:
-			if (m_Speed >= 8*FRACUNIT)
-			{
-				snd = raise ? "DoorOpenBlazing" : "DoorCloseBlazing";
-			}
-			else
-			{
-				snd = raise ? "DoorOpenNormal" : "DoorCloseNormal";
-			}
+			snd = "HereticDoor";
 			break;
 
 		case GAME_Strife:
-			if (m_Speed >= FRACUNIT*8)
-			{
-				snd = raise ? "DoorOpenBlazing" : "DoorCloseBlazing";
-			}
-			else
-			{
-				snd = raise ? "DoorOpenSmallMetal" : "DoorCloseSmallMetal";
+			snd = "DoorSmallMetal";
 
-				// Search the front top textures of 2-sided lines on the door sector
-				// for a door sound to use.
-				for (int i = 0; i < m_Sector->linecount; ++i)
+			// Search the front top textures of 2-sided lines on the door sector
+			// for a door sound to use.
+			for (int i = 0; i < m_Sector->linecount; ++i)
+			{
+				const char *texname;
+				line_t *line = m_Sector->lines[i];
+
+				if (line->backsector == NULL)
+					continue;
+
+				FTexture *tex = TexMan[line->sidedef[0]->GetTexture(side_t::top)];
+				texname = tex? tex->Name : NULL;
+				if (texname != NULL && texname[0] == 'D' && texname[1] == 'O' && texname[2] == 'R')
 				{
-					const char *texname;
-					line_t *line = m_Sector->lines[i];
-
-					if (line->backsector == NULL)
-						continue;
-
-					texname = TexMan[sides[line->sidenum[0]].toptexture]->Name;
-					if (strncmp (texname, "DOR", 3) == 0)
+					switch (texname[3])
 					{
-						switch (texname[3])
+					case 'S':
+						snd = "DoorStone";
+						break;
+
+					case 'M':
+						if (texname[4] == 'L')
 						{
-						case 'S':
-							snd = raise ? "DoorOpenStone" : "DoorCloseStone";
-							break;
-
-						case 'M':
-							if (texname[4] == 'L')
-							{
-								snd = raise ? "DoorOpenLargeMetal" : "DoorCloseLargeMetal";
-							}
-							break;
-
-						case 'W':
-							if (texname[4] == 'L')
-							{
-								snd = raise ? "DoorOpenLargeWood" : "DoorCloseLargeWood";
-							}
-							else
-							{
-								snd = raise ? "DoorOpenSmallWood" : "DoorCloseSmallWood";
-							}
-							break;
+							snd = "DoorLargeMetal";
 						}
+						break;
+
+					case 'W':
+						if (texname[4] == 'L')
+						{
+							snd = "DoorLargeWood";
+						}
+						else
+						{
+							snd = "DoorSmallWood";
+						}
+						break;
 					}
 				}
 			}
 			break;
 		}
-		if (snd != NULL)
+		if (curseq == NULL || !SN_AreModesSame(snd, choice, curseq->GetModeNum()))
 		{
-			SN_StartSequence (m_Sector, snd);
+			SN_StartSequence(m_Sector, CHAN_CEILING, snd, choice);
 		}
 	}
 }
@@ -297,10 +340,12 @@ DDoor::DDoor (sector_t *sector)
 {
 }
 
-// [RH] Merged EV_VerticalDoor and EV_DoLockedDoor into EV_DoDoor
-//		and made them more general to support the new specials.
-
+//============================================================================
+//
 // [RH] SpawnDoor: Helper function for EV_DoDoor
+//
+//============================================================================
+
 DDoor::DDoor (sector_t *sec, EVlDoor type, fixed_t speed, int delay, int lightTag)
 	: DMovingCeiling (sec),
   	  m_Type (type), m_Speed (speed), m_TopWait (delay), m_LightTag (lightTag)
@@ -308,7 +353,7 @@ DDoor::DDoor (sector_t *sec, EVlDoor type, fixed_t speed, int delay, int lightTa
 	vertex_t *spot;
 	fixed_t height;
 
-	if (compatflags & COMPATF_NODOORLIGHT)
+	if (i_compatflags & COMPATF_NODOORLIGHT)
 	{
 		m_LightTag = 0;
 	}
@@ -346,7 +391,7 @@ DDoor::DDoor (sector_t *sec, EVlDoor type, fixed_t speed, int delay, int lightTa
 	}
 
 	if (!m_Sector->floordata || !m_Sector->floordata->IsKindOf(RUNTIME_CLASS(DPlat)) ||
-		!((DPlat*)m_Sector->floordata)->IsLift())
+		!(barrier_cast<DPlat*>(m_Sector->floordata))->IsLift())
 	{
 		height = sec->FindHighestFloorPoint (&m_BotSpot);
 		m_BotDist = sec->ceilingplane.PointToDist (m_BotSpot, height);
@@ -359,8 +404,15 @@ DDoor::DDoor (sector_t *sec, EVlDoor type, fixed_t speed, int delay, int lightTa
 	m_OldFloorDist = sec->floorplane.d;
 }
 
+//============================================================================
+//
+// [RH] Merged EV_VerticalDoor and EV_DoLockedDoor into EV_DoDoor
+//		and made them more general to support the new specials.
+//
+//============================================================================
+
 bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
-				int tag, int speed, int delay, int lock, int lightTag)
+				int tag, int speed, int delay, int lock, int lightTag, bool boomgen)
 {
 	bool		rtn = false;
 	int 		secnum;
@@ -375,22 +427,25 @@ bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 			return false;
 
 		// if the wrong side of door is pushed, give oof sound
-		if (line->sidenum[1] == NO_SIDE)			// killough
+		if (line->sidedef[1] == NULL)			// killough
 		{
 			S_Sound (thing, CHAN_VOICE, "*usefail", 1, ATTN_NORM);
 			return false;
 		}
 
 		// get the sector on the second side of activating linedef
-		sec = sides[line->sidenum[1]].sector;
-		secnum = sec-sectors;
+		sec = line->sidedef[1]->sector;
+		secnum = int(sec-sectors);
 
 		// if door already has a thinker, use it
-		if (sec->ceilingdata)
+		if (sec->PlaneMoving(sector_t::ceiling))
 		{
+			// Boom used remote door logic for generalized doors, even if they are manual
+			if (boomgen)
+				return false;
 			if (sec->ceilingdata->IsKindOf (RUNTIME_CLASS(DDoor)))
 			{
-				DDoor *door = static_cast<DDoor *>(sec->ceilingdata);
+				DDoor *door = barrier_cast<DDoor *>(sec->ceilingdata);
 
 				// ONLY FOR "RAISE" DOORS, NOT "OPEN"s
 				if (door->m_Type == DDoor::doorRaise && type == DDoor::doorRaise)
@@ -400,7 +455,7 @@ bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 						door->m_Direction = 1;	// go back up
 						door->DoorSound (true);	// [RH] Make noise
 					}
-					else if (GET_SPAC(line->flags) != SPAC_PUSH)
+					else if (!(line->activation & (SPAC_Push|SPAC_MPush)))
 						// [RH] activate push doors don't go back down when you
 						//		run into them (otherwise opening them would be
 						//		a real pain).
@@ -411,13 +466,8 @@ bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 
 						door->m_Direction = -1;	// start going down immediately
 
-						// [RH] If this sector doesn't have a specific sound
-						// attached to it, start the door close sequence.
-						// Otherwise, just let the current one continue.
-						if (sec->seqType == -1)
-						{
-							door->DoorSound (false);
-						}
+						// Start the door close sequence.
+						door->DoorSound(false, SN_CheckSequence(sec, CHAN_CEILING));
 						return true;
 					}
 					else
@@ -438,8 +488,8 @@ bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 		while ((secnum = P_FindSectorFromTag (tag,secnum)) >= 0)
 		{
 			sec = &sectors[secnum];
-			// if the ceiling already moving, don't start the door action
-			if (sec->ceilingdata)
+			// if the ceiling is already moving, don't start the door action
+			if (sec->PlaneMoving(sector_t::ceiling))
 				continue;
 
 			if (new DDoor (sec, type, speed, delay, lightTag))
@@ -450,10 +500,12 @@ bool EV_DoDoor (DDoor::EVlDoor type, line_t *line, AActor *thing,
 	return rtn;
 }
 
-
+//============================================================================
 //
 // Spawn a door that closes after 30 seconds
 //
+//============================================================================
+
 void P_SpawnDoorCloseIn30 (sector_t *sec)
 {
 	fixed_t height;
@@ -473,43 +525,59 @@ void P_SpawnDoorCloseIn30 (sector_t *sec)
 	door->m_LightTag = 0;
 }
 
+//============================================================================
 //
 // Spawn a door that opens after 5 minutes
 //
+//============================================================================
+
 void P_SpawnDoorRaiseIn5Mins (sector_t *sec)
 {
 	sec->special = 0;
 	new DDoor (sec, DDoor::doorRaiseIn5Mins, 2*FRACUNIT, TICRATE*30/7, 0);
 }
 
-// Strife's animated doors. Based on Doom's unused sliding doors, but slightly different.
 
-TArray<FDoorAnimation> DoorAnimations;
+//============================================================================
+//
+// animated doors
+//
+//============================================================================
 
-// EV_SlidingDoor : slide a door horizontally
-// (animate midtexture, then set noblocking line)
-//
+IMPLEMENT_CLASS (DAnimatedDoor)
 
-//
-// Return index into "DoorAnimatinos" array for which door type to use
-//
-static int P_FindSlidingDoorType (int picnum)
+DAnimatedDoor::DAnimatedDoor ()
 {
-	unsigned int i;
-
-	for (i = 0; i < DoorAnimations.Size(); ++i)
-	{
-		if (picnum == DoorAnimations[i].BaseTexture)
-			return i;
-	}
-
-	return -1;
 }
+
+DAnimatedDoor::DAnimatedDoor (sector_t *sec)
+	: DMovingCeiling (sec)
+{
+}
+
+void DAnimatedDoor::Serialize (FArchive &arc)
+{
+	Super::Serialize (arc);
+	
+	arc << m_Line1 << m_Line2
+		<< m_Frame
+		<< m_Timer
+		<< m_BotDist
+		<< m_Status
+		<< m_Speed
+		<< m_Delay
+		<< m_DoorAnim
+		<< m_SetBlocking1 << m_SetBlocking2;
+}
+
+//============================================================================
+//
+// Starts a closing action on an animated door
+//
+//============================================================================
 
 bool DAnimatedDoor::StartClosing ()
 {
-	FDoorAnimation &ani = DoorAnimations[m_WhichDoorIndex];
-
 	// CAN DOOR CLOSE?
 	if (m_Sector->touching_thinglist != NULL)
 	{
@@ -517,7 +585,7 @@ bool DAnimatedDoor::StartClosing ()
 	}
 
 	fixed_t topdist = m_Sector->ceilingplane.d;
-	if (MoveCeiling (2048*FRACUNIT, m_BotDist, 0, -1) == crushed)
+	if (MoveCeiling (2048*FRACUNIT, m_BotDist, 0, -1, false) == crushed)
 	{
 		return false;
 	}
@@ -526,9 +594,9 @@ bool DAnimatedDoor::StartClosing ()
 
 	m_Line1->flags |= ML_BLOCKING;
 	m_Line2->flags |= ML_BLOCKING;
-	if (ani.CloseSound != NULL)
+	if (m_DoorAnim->CloseSound != NAME_None)
 	{
-		SN_StartSequence (m_Sector, ani.CloseSound);
+		SN_StartSequence (m_Sector, CHAN_CEILING, m_DoorAnim->CloseSound, 1);
 	}
 
 	m_Status = Closing;
@@ -536,9 +604,20 @@ bool DAnimatedDoor::StartClosing ()
 	return true;
 }
 
+//============================================================================
+//
+//
+//
+//============================================================================
+
 void DAnimatedDoor::Tick ()
 {
-	FDoorAnimation &ani = DoorAnimations[m_WhichDoorIndex];
+	if (m_DoorAnim == NULL)
+	{
+		// can only happen when a bad savegame is loaded.
+		Destroy();
+		return;
+	}
 
 	switch (m_Status)
 	{
@@ -550,7 +629,7 @@ void DAnimatedDoor::Tick ()
 	case Opening:
 		if (!m_Timer--)
 		{
-			if (++m_Frame >= ani.NumTextureFrames)
+			if (++m_Frame >= m_DoorAnim->NumTextureFrames)
 			{
 				// IF DOOR IS DONE OPENING...
 				m_Line1->flags &= ~ML_BLOCKING;
@@ -571,11 +650,10 @@ void DAnimatedDoor::Tick ()
 				// IF DOOR NEEDS TO ANIMATE TO NEXT FRAME...
 				m_Timer = m_Speed;
 
-				sides[m_Line1->sidenum[0]].midtexture =
-				sides[m_Line1->sidenum[1]].midtexture =
-				sides[m_Line2->sidenum[0]].midtexture =
-				sides[m_Line2->sidenum[1]].midtexture =
-					ani.TextureFrames[m_Frame];
+				m_Line1->sidedef[0]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
+				m_Line1->sidedef[1]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
+				m_Line2->sidedef[0]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
+				m_Line2->sidedef[1]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
 			}
 		}
 		break;
@@ -600,6 +678,17 @@ void DAnimatedDoor::Tick ()
 				MoveCeiling (2048*FRACUNIT, m_BotDist, -1);
 				m_Sector->ceilingdata = NULL;
 				Destroy ();
+				// Unset blocking flags on lines that didn't start with them. Since the
+				// ceiling is down now, we shouldn't need this flag anymore to keep things
+				// from getting through.
+				if (!m_SetBlocking1)
+				{
+					m_Line1->flags &= ~ML_BLOCKING;
+				}
+				if (!m_SetBlocking2)
+				{
+					m_Line2->flags &= ~ML_BLOCKING;
+				}
 				break;
 			}
 			else
@@ -607,76 +696,32 @@ void DAnimatedDoor::Tick ()
 				// IF DOOR NEEDS TO ANIMATE TO NEXT FRAME...
 				m_Timer = m_Speed;
 
-				sides[m_Line1->sidenum[0]].midtexture =
-				sides[m_Line1->sidenum[1]].midtexture =
-				sides[m_Line2->sidenum[0]].midtexture =
-				sides[m_Line2->sidenum[1]].midtexture =
-					ani.TextureFrames[m_Frame];
+				m_Line1->sidedef[0]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
+				m_Line1->sidedef[1]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
+				m_Line2->sidedef[0]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
+				m_Line2->sidedef[1]->SetTexture(side_t::mid, m_DoorAnim->TextureFrames[m_Frame]);
 			}
 		}
 		break;
 	}
 }
 
-IMPLEMENT_CLASS (DAnimatedDoor)
+//============================================================================
+//
+//
+//
+//============================================================================
 
-DAnimatedDoor::DAnimatedDoor ()
-{
-}
-
-DAnimatedDoor::DAnimatedDoor (sector_t *sec)
-	: DMovingCeiling (sec)
-{
-}
-
-void DAnimatedDoor::Serialize (FArchive &arc)
-{
-	// If you have a pre-224 savegame with an active animated door, then you're out
-	// of luck.
-	if (SaveVersion < 224)
-	{
-		I_Error ("Can't load pre-2.0.93 savegames with active animated doors.\n");
-	}
-	Super::Serialize (arc);
-	arc << m_Line1 << m_Line2
-		<< m_Frame
-		<< m_Timer
-		<< m_BotDist
-		<< m_Status
-		<< m_Speed
-		<< m_Delay;
-
-	if (arc.IsStoring())
-	{
-		TexMan.WriteTexture (arc, DoorAnimations[m_WhichDoorIndex].BaseTexture);
-	}
-	else
-	{
-		int picnum = TexMan.ReadTexture (arc);
-		m_WhichDoorIndex = P_FindSlidingDoorType (picnum);
-		if (m_WhichDoorIndex == -1)
-		{ // Oh no! The door animation doesn't exist anymore!
-			m_WhichDoorIndex = 0;
-		}
-	}
-}
-
-DAnimatedDoor::DAnimatedDoor (sector_t *sec, line_t *line, int speed, int delay)
+DAnimatedDoor::DAnimatedDoor (sector_t *sec, line_t *line, int speed, int delay, FDoorAnimation *anim)
 	: DMovingCeiling (sec)
 {
 	fixed_t topdist;
-	int picnum;
+	FTextureID picnum;
 
 	// The DMovingCeiling constructor automatically sets up an interpolation for us.
 	// Stop it, since the ceiling is moving instantly here.
-	stopinterpolation (INTERP_SectorCeiling, sec);
-	m_WhichDoorIndex = P_FindSlidingDoorType (sides[line->sidenum[0]].toptexture);
-	if (m_WhichDoorIndex < 0)
-	{
-		Printf ("EV_SlidingDoor: Textures are not defined for sliding door!");
-		m_Status = Dead;
-		return;
-	}
+	StopInterpolation();
+	m_DoorAnim = anim;
 
 	m_Line1 = line;
 	m_Line2 = line;
@@ -686,21 +731,21 @@ DAnimatedDoor::DAnimatedDoor (sector_t *sec, line_t *line, int speed, int delay)
 		if (sec->lines[i] == line)
 			continue;
 
-		if (sides[sec->lines[i]->sidenum[0]].toptexture == sides[line->sidenum[0]].toptexture)
+		if (sec->lines[i]->sidedef[0]->GetTexture(side_t::top) == line->sidedef[0]->GetTexture(side_t::top))
 		{
 			m_Line2 = sec->lines[i];
 			break;
 		}
 	}
 
-	picnum = sides[m_Line1->sidenum[0]].toptexture;
-	sides[m_Line1->sidenum[0]].midtexture = picnum;
-	sides[m_Line2->sidenum[0]].midtexture = picnum;
+
+	picnum = m_Line1->sidedef[0]->GetTexture(side_t::top);
+	m_Line1->sidedef[0]->SetTexture(side_t::mid, picnum);
+	m_Line2->sidedef[0]->SetTexture(side_t::mid, picnum);
 
 	// don't forget texture scaling here!
 	FTexture *tex = TexMan[picnum];
-	topdist = tex ? (tex->GetHeight() * 8 / (tex->ScaleY ? tex->ScaleY : 8)) : 64;	
-	//topdist = TexMan[picnum]->GetHeight();	// old non-scaling sensitive code!
+	topdist = tex ? tex->GetScaledHeight() : 64;
 
 	topdist = m_Sector->ceilingplane.d - topdist * m_Sector->ceilingplane.c;
 
@@ -709,19 +754,22 @@ DAnimatedDoor::DAnimatedDoor (sector_t *sec, line_t *line, int speed, int delay)
 	m_Delay = delay;
 	m_Timer = m_Speed;
 	m_Frame = 0;
+	m_SetBlocking1 = !!(m_Line1->flags & ML_BLOCKING);
+	m_SetBlocking2 = !!(m_Line2->flags & ML_BLOCKING);
 	m_Line1->flags |= ML_BLOCKING;
 	m_Line2->flags |= ML_BLOCKING;
 	m_BotDist = m_Sector->ceilingplane.d;
 	MoveCeiling (2048*FRACUNIT, topdist, 1);
-	if (DoorAnimations[m_WhichDoorIndex].OpenSound != NULL)
+	if (m_DoorAnim->OpenSound != NAME_None)
 	{
-		SN_StartSequence (m_Sector, DoorAnimations[m_WhichDoorIndex].OpenSound);
+		SN_StartSequence (m_Sector, CHAN_INTERIOR, m_DoorAnim->OpenSound, 1);
 	}
 }
 
 //============================================================================
 //
-// EV_SlidingDoor
+// EV_SlidingDoor : slide a door horizontally
+// (animate midtexture, then set noblocking line)
 //
 //============================================================================
 
@@ -747,7 +795,7 @@ bool EV_SlidingDoor (line_t *line, AActor *actor, int tag, int speed, int delay)
 
 			if (sec->ceilingdata->IsA (RUNTIME_CLASS(DAnimatedDoor)))
 			{
-				DAnimatedDoor *door = static_cast<DAnimatedDoor *> (sec->ceilingdata);
+				DAnimatedDoor *door = barrier_cast<DAnimatedDoor *>(sec->ceilingdata);
 				if (door->m_Status == DAnimatedDoor::Waiting)
 				{
 					return door->StartClosing();
@@ -755,9 +803,10 @@ bool EV_SlidingDoor (line_t *line, AActor *actor, int tag, int speed, int delay)
 			}
 			return false;
 		}
-		if (P_FindSlidingDoorType (sides[line->sidenum[0]].toptexture) >= 0)
+		FDoorAnimation *anim = TexMan.FindAnimatedDoor (line->sidedef[0]->GetTexture(side_t::top));
+		if (anim != NULL)
 		{
-			new DAnimatedDoor (sec, line, speed, delay);
+			new DAnimatedDoor (sec, line, speed, delay, anim);
 			return true;
 		}
 		return false;
@@ -778,74 +827,15 @@ bool EV_SlidingDoor (line_t *line, AActor *actor, int tag, int speed, int delay)
 			{
 				continue;
 			}
-			if (P_FindSlidingDoorType (sides[line->sidenum[0]].toptexture) >= 0)
+			FDoorAnimation *anim = TexMan.FindAnimatedDoor (line->sidedef[0]->GetTexture(side_t::top));
+			if (anim != NULL)
 			{
 				rtn = true;
-				new DAnimatedDoor (sec, line, speed, delay);
+				new DAnimatedDoor (sec, line, speed, delay, anim);
+				break;
 			}
 		}
 	}
 	return rtn;
 }
 
-void P_ParseAnimatedDoor()
-{
-	const BITFIELD texflags = FTextureManager::TEXMAN_Overridable | FTextureManager::TEXMAN_TryAny;
-	FDoorAnimation anim;
-	TArray<int> frames;
-	bool error = false;
-	int v;
-
-	SC_MustGetString();
-	anim.BaseTexture = TexMan.CheckForTexture (sc_String, FTexture::TEX_Wall, texflags);
-	anim.OpenSound = NULL;
-	anim.CloseSound = NULL;
-
-	if (anim.BaseTexture == -1)
-	{
-		error = true;
-	}
-
-	while (SC_GetString ())
-	{
-		if (SC_Compare ("opensound"))
-		{
-			SC_MustGetString ();
-			anim.OpenSound = copystring (sc_String);
-		}
-		else if (SC_Compare ("closesound"))
-		{
-			SC_MustGetString ();
-			anim.CloseSound = copystring (sc_String);
-		}
-		else if (SC_Compare ("pic"))
-		{
-			SC_MustGetString ();
-			if (IsNum (sc_String))
-			{
-				v = atoi(sc_String) + anim.BaseTexture -1;
-			}
-			else
-			{
-				v = TexMan.CheckForTexture (sc_String, FTexture::TEX_Wall, texflags);
-				if (v == -1 && anim.BaseTexture >= 0 && !error)
-				{
-					SC_ScriptError ("Unknown texture %s", sc_String);
-				}
-				frames.Push (v);
-			}
-		}
-		else
-		{
-			SC_UnGet ();
-			break;
-		}
-	}
-	anim.TextureFrames = new int[frames.Size()];
-	memcpy (anim.TextureFrames, &frames[0], sizeof(int) * frames.Size());
-	anim.NumTextureFrames = frames.Size();
-	if (!error)
-	{
-		DoorAnimations.Push (anim);
-	}
-}

@@ -2,9 +2,8 @@
 #define __S_SNDSEQ_H__
 
 #include <stddef.h>
-#include "actor.h"
+#include "dobject.h"
 #include "s_sound.h"
-#include "r_defs.h"
 
 typedef enum {
 	SEQ_PLATFORM,
@@ -16,52 +15,48 @@ typedef enum {
 
 struct sector_t;
 
-void S_ParseSndSeq (void);
-void SN_StartSequence (AActor *mobj, int sequence, seqtype_t type);
-void SN_StartSequence (AActor *mobj, const char *name);
-void SN_StartSequence (sector_t *sector, int sequence, seqtype_t type);
-void SN_StartSequence (sector_t *sector, const char *name);
-void SN_StartSequence (fixed_t spot[3], int sequence, seqtype_t type);
-void SN_StartSequence (fixed_t spot[3], const char *name);
-void SN_StopSequence (AActor *mobj);
-void SN_StopSequence (sector_t *sector);
-void SN_StopSequence (fixed_t spot[3]);
-void SN_UpdateActiveSequences (void);
-void SN_StopAllSequences (void);
-ptrdiff_t SN_GetSequenceOffset (int sequence, unsigned int *sequencePtr);
-void SN_ChangeNodeData (int nodeNum, int seqOffset, int delayTics,
-	float volume, int currentSoundID);
-bool SN_IsMakingLoopingSound (sector_t *sector);
-
 class DSeqNode : public DObject
 {
 	DECLARE_CLASS (DSeqNode, DObject)
+	HAS_OBJECT_POINTERS
 public:
-	virtual ~DSeqNode ();
 	void Serialize (FArchive &arc);
-	virtual void MakeSound () {}
-	virtual void MakeLoopedSound () {}
+	void StopAndDestroy ();
+	void Destroy ();
+	void Tick ();
+	void ChangeData (int seqOffset, int delayTics, float volume, FSoundID currentSoundID);
+	void AddChoice (int seqnum, seqtype_t type);
+	int GetModeNum() const { return m_ModeNum; }
+	FName GetSequenceName() const;
+	static void StaticMarkHead() { GC::Mark(SequenceListHead); }
+
+	virtual void MakeSound (int loop, FSoundID id) {}
 	virtual void *Source () { return NULL; }
 	virtual bool IsPlaying () { return false; }
-	void Tick ();
+	virtual DSeqNode *SpawnChild (int seqnum) { return NULL; }
+
 	inline static DSeqNode *FirstSequence() { return SequenceListHead; }
 	inline DSeqNode *NextSequence() const { return m_Next; }
-	void ChangeData (int seqOffset, int delayTics, float volume, int currentSoundID);
 
 	static void SerializeSequences (FArchive &arc);
 
 protected:
 	DSeqNode ();
-	DSeqNode (int sequence);
+	DSeqNode (int sequence, int modenum);
 
-	unsigned int *m_SequencePtr;
+	SDWORD *m_SequencePtr;
 	int m_Sequence;
 
-	int m_CurrentSoundID;
-	int m_DelayTics;
-	float m_Volume;
+	FSoundID m_CurrentSoundID;
 	int m_StopSound;
-	int m_Atten;
+	int m_DelayUntilTic;
+	float m_Volume;
+	float m_Atten;
+	int m_ModeNum;
+
+	TArray<int> m_SequenceChoices;
+	TObjPtr<DSeqNode> m_ChildSeqNode;
+	TObjPtr<DSeqNode> m_ParentSeqNode;
 
 private:
 	static DSeqNode *SequenceListHead;
@@ -72,30 +67,38 @@ private:
 	friend void SN_StopAllSequences (void);
 };
 
-typedef struct
-{
-	char			name[MAX_SNDNAME+1];
-	int				stopsound;
-	unsigned int	script[1];	// + more until end of sequence script
-} sndseq_t;
+void SN_StopAllSequences (void);
 
-void SN_StartSequence (AActor *mobj, int sequence, seqtype_t type);
-void SN_StartSequence (AActor *mobj, const char *name);
-void SN_StartSequence (sector_t *sector, int sequence, seqtype_t type);
-void SN_StartSequence (sector_t *sector, const char *name);
-void SN_StartSequence (polyobj_t *poly, int sequence, seqtype_t type);
-void SN_StartSequence (polyobj_t *poly, const char *name);
+struct FSoundSequence
+{
+	FName	 SeqName;
+	FName	 Slot;
+	FSoundID StopSound;
+	SDWORD	 Script[1];	// + more until end of sequence script
+};
+
+void S_ParseSndSeq (int levellump);
+DSeqNode *SN_StartSequence (AActor *mobj, int sequence, seqtype_t type, int modenum, bool nostop=false);
+DSeqNode *SN_StartSequence (AActor *mobj, const char *name, int modenum);
+DSeqNode *SN_StartSequence (AActor *mobj, FName seqname, int modenum);
+DSeqNode *SN_StartSequence (sector_t *sector, int chan, int sequence, seqtype_t type, int modenum, bool nostop=false);
+DSeqNode *SN_StartSequence (sector_t *sector, int chan, const char *name, int modenum);
+DSeqNode *SN_StartSequence (sector_t *sec, int chan, FName seqname, int modenum);
+DSeqNode *SN_StartSequence (FPolyObj *poly, int sequence, seqtype_t type, int modenum, bool nostop=false);
+DSeqNode *SN_StartSequence (FPolyObj *poly, const char *name, int modenum);
+DSeqNode *SN_CheckSequence (sector_t *sector, int chan);
 void SN_StopSequence (AActor *mobj);
-void SN_StopSequence (sector_t *sector);
-void SN_StopSequence (polyobj_t *poly);
+void SN_StopSequence (sector_t *sector, int chan);
+void SN_StopSequence (FPolyObj *poly);
+bool SN_AreModesSame(int sequence, seqtype_t type, int mode1, int mode2);
+bool SN_AreModesSame(const char *name, int mode1, int mode2);
 void SN_UpdateActiveSequences (void);
-ptrdiff_t SN_GetSequenceOffset (int sequence, unsigned int *sequencePtr);
+ptrdiff_t SN_GetSequenceOffset (int sequence, SDWORD *sequencePtr);
 void SN_DoStop (void *);
 void SN_ChangeNodeData (int nodeNum, int seqOffset, int delayTics,
 	float volume, int currentSoundID);
-
-extern sndseq_t **Sequences;
-extern int ActiveSequences;
-extern int NumSequences;
+FName SN_GetSequenceSlot (int sequence, seqtype_t type);
+void SN_MarkPrecacheSounds (int sequence, seqtype_t type);
+bool SN_IsMakingLoopingSound (sector_t *sector);
 
 #endif //__S_SNDSEQ_H__

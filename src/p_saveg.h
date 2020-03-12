@@ -2,7 +2,7 @@
 ** p_saveg.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,15 +34,17 @@
 #ifndef __P_SAVEG_H__
 #define __P_SAVEG_H__
 
-#include "farchive.h"
+class FArchive;
+struct PNGHandle;
 
 // Persistent storage/archiving.
 // These are the load / save game routines.
 // Also see farchive.(h|cpp)
-void P_SerializePlayers (FArchive &arc);
+void P_SerializePlayers (FArchive &arc, bool fakeload);
 void P_SerializeWorld (FArchive &arc);
 void P_SerializeThinkers (FArchive &arc, bool);
 void P_SerializePolyobjs (FArchive &arc);
+void P_SerializeSubsectors(FArchive &arc);
 void P_SerializeSounds (FArchive &arc);
 
 void P_ReadACSDefereds (PNGHandle *png);

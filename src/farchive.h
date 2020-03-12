@@ -2,7 +2,7 @@
 ** farchive.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,11 +35,8 @@
 #define __FARCHIVE_H__
 
 #include <stdio.h>
-#include "doomtype.h"
 #include "dobject.h"
-#include "tarray.h"
-
-class DObject;
+#include "r_state.h"
 
 class FFile
 {
@@ -47,7 +44,8 @@ public:
 		enum EOpenMode
 		{
 			EReading,
-			EWriting
+			EWriting,
+			ENotOpen
 		};
 
 		enum ESeekPos
@@ -118,6 +116,7 @@ class FCompressedMemFile : public FCompressedFile
 public:
 	FCompressedMemFile ();
 	FCompressedMemFile (FILE *file);	// Create for reading
+	~FCompressedMemFile ();
 
 	bool Open (const char *name, EOpenMode mode);	// Works for reading only
 	bool Open (void *memblock);	// Open for reading only
@@ -125,6 +124,7 @@ public:
 	bool Reopen ();	// Re-opens imploded file for reading only
 	void Close ();
 	bool IsOpen () const;
+	void GetSizes(unsigned int &one, unsigned int &two) const;
 
 	void Serialize (FArchive &arc);
 
@@ -169,20 +169,23 @@ virtual void Read (void *mem, unsigned int len);
 		void WriteCount (DWORD count);
 		DWORD ReadCount ();
 
-		void UserWriteClass (const TypeInfo *info);
-		void UserReadClass (const TypeInfo *&info);
+		void UserWriteClass (const PClass *info);
+		void UserReadClass (const PClass *&info);
 
 		FArchive& operator<< (BYTE &c);
 		FArchive& operator<< (WORD &s);
 		FArchive& operator<< (DWORD &i);
 		FArchive& operator<< (QWORD &i);
+		FArchive& operator<< (QWORD_UNION &i) { return operator<< (i.AsOne); }
 		FArchive& operator<< (float &f);
 		FArchive& operator<< (double &d);
 		FArchive& operator<< (char *&str);
+		FArchive& operator<< (FName &n);
+		FArchive& operator<< (FString &str);
 		FArchive& SerializePointer (void *ptrbase, BYTE **ptr, DWORD elemSize);
-		FArchive& SerializeObject (DObject *&object, TypeInfo *type);
+		FArchive& SerializeObject (DObject *&object, PClass *type);
 		FArchive& WriteObject (DObject *obj);
-		FArchive& ReadObject (DObject *&obj, TypeInfo *wanttype);
+		FArchive& ReadObject (DObject *&obj, PClass *wanttype);
 
 		void WriteName (const char *name);
 		const char *ReadName ();	// The returned name disappears with the archive, unlike strings
@@ -190,7 +193,6 @@ virtual void Read (void *mem, unsigned int len);
 		void WriteSprite (int spritenum);
 		int ReadSprite ();
 
-inline	FArchive& operator<< (char &c) { return operator<< ((BYTE &)c); }
 inline	FArchive& operator<< (SBYTE &c) { return operator<< ((BYTE &)c); }
 inline	FArchive& operator<< (SWORD &s) { return operator<< ((WORD &)s); }
 inline	FArchive& operator<< (SDWORD &i) { return operator<< ((DWORD &)i); }
@@ -198,8 +200,6 @@ inline	FArchive& operator<< (SQWORD &i) { return operator<< ((QWORD &)i); }
 inline	FArchive& operator<< (unsigned char *&str) { return operator<< ((char *&)str); }
 inline	FArchive& operator<< (signed char *&str) { return operator<< ((char *&)str); }
 inline	FArchive& operator<< (bool &b) { return operator<< ((BYTE &)b); }
-inline	FArchive& operator<< (int &i) { return operator<< ((DWORD &)i); }
-inline	FArchive& operator<< (unsigned int &i) { return operator<< ((DWORD &)i); }
 inline  FArchive& operator<< (DObject* &object) { return ReadObject (object, RUNTIME_CLASS(DObject)); }
 
 protected:
@@ -207,10 +207,10 @@ protected:
 
 		DWORD FindObjectIndex (const DObject *obj) const;
 		DWORD MapObject (const DObject *obj);
-		DWORD WriteClass (const TypeInfo *info);
-		const TypeInfo *ReadClass ();
-		const TypeInfo *ReadClass (const TypeInfo *wanttype);
-		const TypeInfo *ReadStoredClass (const TypeInfo *wanttype);
+		DWORD WriteClass (const PClass *info);
+		const PClass *ReadClass ();
+		const PClass *ReadClass (const PClass *wanttype);
+		const PClass *ReadStoredClass (const PClass *wanttype);
 		DWORD HashObject (const DObject *obj) const;
 		DWORD AddName (const char *name);
 		DWORD AddName (unsigned int start);	// Name has already been added to storage
@@ -228,7 +228,7 @@ protected:
 
 		struct TypeMap
 		{
-			const TypeInfo *toCurrent;	// maps archive type index to execution type index
+			const PClass *toCurrent;	// maps archive type index to execution type index
 			DWORD toArchive;		// maps execution type index to archive type index
 
 			enum { NO_INDEX = 0xffffffff };
@@ -237,9 +237,9 @@ protected:
 		struct ObjectMap
 		{
 			const DObject *object;
-			size_t hashNext;
+			DWORD hashNext;
 		} *m_ObjectMap;
-		size_t m_ObjectHash[EObjectHashSize];
+		DWORD m_ObjectHash[EObjectHashSize];
 
 		struct NameMap
 		{
@@ -258,8 +258,8 @@ protected:
 		void AttachToFile (FFile &file);
 
 private:
-		FArchive (const FArchive &src) {}
-		void operator= (const FArchive &src) {}
+		FArchive (const FArchive &) {}
+		void operator= (const FArchive &) {}
 };
 
 // Create an FPNGChunkFile and FArchive in one step
@@ -277,15 +277,60 @@ inline FArchive &operator<< (FArchive &arc, PalEntry &p)
 	return arc << p.a << p.r << p.g << p.b;
 }
 
-#include "dobject.h"
-
 template<class T>
-inline
-FArchive &operator<< (FArchive &arc, T* &object)
+inline FArchive &operator<< (FArchive &arc, T* &object)
 {
 	return arc.SerializeObject ((DObject*&)object, RUNTIME_CLASS(T));
 }
 
-FArchive &operator<< (FArchive &arc, const TypeInfo * &info);
+FArchive &operator<< (FArchive &arc, const PClass * &info);
+
+class FFont;
+FArchive &SerializeFFontPtr (FArchive &arc, FFont* &font);
+template<> inline FArchive &operator<< <FFont> (FArchive &arc, FFont* &font)
+{
+	return SerializeFFontPtr (arc, font);
+}
+
+struct FStrifeDialogueNode;
+struct FSwitchDef;
+struct FDoorAnimation;
+template<> FArchive &operator<< (FArchive &arc, FStrifeDialogueNode *&node);
+template<> FArchive &operator<< (FArchive &arc, FSwitchDef* &sw);
+template<> FArchive &operator<< (FArchive &arc, FDoorAnimation* &da);
+
+
+
+template<class T,class TT>
+inline FArchive &operator<< (FArchive &arc, TArray<T,TT> &self)
+{
+	if (arc.IsStoring())
+	{
+		arc.WriteCount(self.Count);
+	}
+	else
+	{
+		DWORD numStored = arc.ReadCount();
+		self.Resize(numStored);
+	}
+	for (unsigned int i = 0; i < self.Count; ++i)
+	{
+		arc << self.Array[i];
+	}
+	return arc;
+}
+
+struct sector_t;
+struct line_t;
+struct vertex_t;
+struct side_t;
+
+FArchive &operator<< (FArchive &arc, sector_t *&sec);
+FArchive &operator<< (FArchive &arc, const sector_t *&sec);
+FArchive &operator<< (FArchive &arc, line_t *&line);
+FArchive &operator<< (FArchive &arc, vertex_t *&vert);
+FArchive &operator<< (FArchive &arc, side_t *&side);
+
+
 
 #endif //__FARCHIVE_H__

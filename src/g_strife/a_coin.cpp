@@ -1,37 +1,24 @@
+/*
 #include "a_pickups.h"
 #include "a_strifeglobal.h"
+#include "gstrings.h"
+*/
 
 // Coin ---------------------------------------------------------------------
 
-FState ACoin::States[] =
-{
-	S_NORMAL (COIN, 'A', -1, NULL, NULL)
-};
-
-IMPLEMENT_ACTOR (ACoin, Strife, 93, 0)
-	PROP_StrifeType (168)
-	PROP_StrifeTeaserType (161)
-	PROP_StrifeTeaserType2 (165)
-	PROP_SpawnState (0)
-	PROP_Flags (MF_SPECIAL|MF_DROPPED|MF_NOTDMATCH)
-	PROP_Flags2 (MF2_FLOORCLIP)
-	PROP_Inventory_MaxAmountLong (INT_MAX)
-	PROP_Inventory_FlagsSet (IF_INVBAR)
-	PROP_Inventory_Icon ("I_COIN")
-	PROP_Tag ("coin")
-END_DEFAULTS
+IMPLEMENT_CLASS (ACoin)
 
 const char *ACoin::PickupMessage ()
 {
 	if (Amount == 1)
 	{
-		return "You picked up the coin.";
+		return Super::PickupMessage();
 	}
 	else
 	{
 		static char msg[64];
 
-		sprintf (msg, "You picked up %d gold.", Amount);
+		mysnprintf (msg, countof(msg), GStrings("TXT_XGOLD"), Amount);
 		return msg;
 	}
 }
@@ -67,101 +54,11 @@ AInventory *ACoin::CreateCopy (AActor *other)
 	{
 		return Super::CreateCopy (other);
 	}
-	AInventory *copy = Spawn<ACoin> (0,0,0);
+	AInventory *copy = Spawn<ACoin> (0,0,0, NO_REPLACE);
 	copy->Amount = Amount;
 	copy->BecomeItem ();
 	GoAwayAndDie ();
 	return copy;
-}
-
-// 10 Gold ------------------------------------------------------------------
-
-class AGold10 : public ACoin
-{
-	DECLARE_ACTOR (AGold10, ACoin)
-};
-
-FState AGold10::States[] =
-{
-	S_NORMAL (CRED, 'A', -1, NULL, NULL)
-};
-
-IMPLEMENT_ACTOR (AGold10, Strife, 138, 0)
-	PROP_StrifeType (169)
-	PROP_StrifeTeaserType (162)
-	PROP_StrifeTeaserType2 (166)
-	PROP_SpawnState (0)
-	PROP_Inventory_Amount (10)
-	PROP_Tag ("10_gold")
-END_DEFAULTS
-
-// 25 Gold ------------------------------------------------------------------
-
-class AGold25 : public ACoin
-{
-	DECLARE_ACTOR (AGold25, ACoin)
-};
-
-FState AGold25::States[] =
-{
-	S_NORMAL (SACK, 'A', -1, NULL, NULL)
-};
-
-IMPLEMENT_ACTOR (AGold25, Strife, 139, 0)
-	PROP_StrifeType (170)
-	PROP_StrifeTeaserType (163)
-	PROP_StrifeTeaserType2 (167)
-	PROP_SpawnState (0)
-	PROP_Inventory_Amount (25)
-	PROP_Tag ("25_gold")
-END_DEFAULTS
-
-// 50 Gold ------------------------------------------------------------------
-
-class AGold50 : public ACoin
-{
-	DECLARE_ACTOR (AGold50, ACoin)
-};
-
-FState AGold50::States[] =
-{
-	S_NORMAL (CHST, 'A', -1, NULL, NULL)
-};
-
-IMPLEMENT_ACTOR (AGold50, Strife, 140, 0)
-	PROP_StrifeType (171)
-	PROP_StrifeTeaserType (164)
-	PROP_StrifeTeaserType2 (168)
-	PROP_SpawnState (0)
-	PROP_Inventory_Amount (50)
-	PROP_Tag ("50_gold")
-END_DEFAULTS
-
-// 300 Gold ------------------------------------------------------------------
-
-class AGold300 : public ACoin
-{
-	DECLARE_ACTOR (AGold300, ACoin)
-public:
-	bool TryPickup (AActor *toucher);
-};
-
-FState AGold300::States[] =
-{
-	S_NORMAL (TOKN, 'A', -1, NULL, NULL)
-};
-
-IMPLEMENT_ACTOR (AGold300, Strife, -1, 0)
-	PROP_StrifeType (172)
-	PROP_SpawnState (0)
-	PROP_Inventory_AmountWord (300)
-	PROP_Tag ("300_gold")
-END_DEFAULTS
-
-bool AGold300::TryPickup (AActor *toucher)
-{
-	toucher->GiveInventoryType (QuestItemClasses[2]);
-	return Super::TryPickup (toucher);
 }
 
 //===========================================================================
@@ -183,24 +80,24 @@ AInventory *ACoin::CreateTossable ()
 	if (Amount >= 50)
 	{
 		Amount -= 50;
-		tossed = Spawn<AGold50> (Owner->x, Owner->y, Owner->z);
+		tossed = static_cast<ACoin*>(Spawn("Gold50", Owner->x, Owner->y, Owner->z, NO_REPLACE));
 	}
 	else if (Amount >= 25)
 	{
 		Amount -= 25;
-		tossed = Spawn<AGold25> (Owner->x, Owner->y, Owner->z);
+		tossed = static_cast<ACoin*>(Spawn("Gold25", Owner->x, Owner->y, Owner->z, NO_REPLACE));
 	}
 	else if (Amount >= 10)
 	{
 		Amount -= 10;
-		tossed = Spawn<AGold10> (Owner->x, Owner->y, Owner->z);
+		tossed = static_cast<ACoin*>(Spawn("Gold10", Owner->x, Owner->y, Owner->z, NO_REPLACE));
 	}
-	else if (Amount > 1)
+	else if (Amount > 1 || (ItemFlags & IF_KEEPDEPLETED))
 	{
 		Amount -= 1;
-		tossed = Spawn<ACoin> (Owner->x, Owner->y, Owner->z);
+		tossed = static_cast<ACoin*>(Spawn("Coin", Owner->x, Owner->y, Owner->z, NO_REPLACE));
 	}
-	else
+	else // Amount == 1 && !(ItemFlags & IF_KEEPDEPLETED)
 	{
 		BecomePickup ();
 		tossed = this;

@@ -4,7 +4,7 @@
 ** Extra functions for the node builder to create minisegs.
 **
 **---------------------------------------------------------------------------
-** Copyright 2002-2005 Randy Heit
+** Copyright 2002-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -39,7 +39,6 @@
 
 #include "doomtype.h"
 #include "nodebuild.h"
-#include "r_main.h"
 
 static inline void STACK_ARGS Warn (const char *format, ...)
 {
@@ -63,24 +62,7 @@ double FNodeBuilder::AddIntersection (const node_t &node, int vertex)
 	// Calculate signed distance of intersection vertex from start of splitter.
 	// Only ordering is important, so we don't need a sqrt.
 	FPrivVert *v = &Vertices[vertex];
-	double dx = double(v->x - node.x);
-	double dy = double(v->y - node.y);
-	double dist = dx*dx + dy*dy;
-
-	if (node.dx != 0)
-	{
-		if ((node.dx > 0 && dx < 0.0) || (node.dx < 0 && dx > 0.0))
-		{
-			dist = -dist;
-		}
-	}
-	else
-	{
-		if ((node.dy > 0 && dy < 0.0) || (node.dy < 0 && dy > 0.0))
-		{
-			dist = -dist;
-		}
-	}
+	double dist = (double(v->x) - node.x)*(node.dx) + (double(v->y) - node.y)*(node.dy);
 
 	FEvent *event = Events.FindEvent (dist);
 	if (event == NULL)
@@ -101,6 +83,8 @@ double FNodeBuilder::AddIntersection (const node_t &node, int vertex)
 // seg information will be messed up in the generated tree.
 void FNodeBuilder::FixSplitSharers (const node_t &node)
 {
+	D(Printf(PRINT_LOG, "events:\n"));
+	D(Events.PrintTree());
 	for (unsigned int i = 0; i < SplitSharers.Size(); ++i)
 	{
 		DWORD seg = SplitSharers[i].Seg;
@@ -112,6 +96,18 @@ void FNodeBuilder::FixSplitSharers (const node_t &node)
 		{ // Should not happen
 			continue;
 		}
+
+		// Use the CRT's printf so the formatting matches ZDBSP's
+		D(char buff[200]);
+		D(sprintf(buff, "Considering events on seg %d(%d[%d,%d]->%d[%d,%d]) [%g:%g]\n", seg,
+			Segs[seg].v1,
+			Vertices[Segs[seg].v1].x>>16,
+			Vertices[Segs[seg].v1].y>>16,
+			Segs[seg].v2,
+			Vertices[Segs[seg].v2].x>>16,
+			Vertices[Segs[seg].v2].y>>16,
+			SplitSharers[i].Distance, event->Distance));
+		D(Printf(PRINT_LOG, "%s", buff));
 
 		if (SplitSharers[i].Forward)
 		{
@@ -134,7 +130,7 @@ void FNodeBuilder::FixSplitSharers (const node_t &node)
 
 		while (event != NULL && next != NULL && event->Info.Vertex != v2)
 		{
-			D(Printf("Forced split of seg %d(%d->%d) at %d(%d,%d)\n", seg,
+			D(Printf(PRINT_LOG, "Forced split of seg %d(%d->%d) at %d(%d,%d)\n", seg,
 				Segs[seg].v1, Segs[seg].v2,
 				event->Info.Vertex,
 				Vertices[event->Info.Vertex].x>>16,
@@ -190,8 +186,8 @@ void FNodeBuilder::AddMinisegs (const node_t &node, DWORD splitseg, DWORD &fset,
 
 			if ((fseg1 = CheckLoopStart (node.dx, node.dy, prev->Info.Vertex, event->Info.Vertex)) != DWORD_MAX &&
 				(bseg1 = CheckLoopStart (-node.dx, -node.dy, event->Info.Vertex, prev->Info.Vertex)) != DWORD_MAX &&
-				(fseg2 = CheckLoopEnd (node.dx, node.dy, prev->Info.Vertex, event->Info.Vertex)) != DWORD_MAX &&
-				(bseg2 = CheckLoopEnd (-node.dx, -node.dy, event->Info.Vertex, prev->Info.Vertex)) != DWORD_MAX)
+				(fseg2 = CheckLoopEnd (node.dx, node.dy, event->Info.Vertex)) != DWORD_MAX &&
+				(bseg2 = CheckLoopEnd (-node.dx, -node.dy, prev->Info.Vertex)) != DWORD_MAX)
 			{
 				// Add miniseg on the front side
 				fnseg = AddMiniseg (prev->Info.Vertex, event->Info.Vertex, DWORD_MAX, fseg1, splitseg);
@@ -226,7 +222,7 @@ void FNodeBuilder::AddMinisegs (const node_t &node, DWORD splitseg, DWORD &fset,
 						);
 				}
 
-				D(Printf ("**Minisegs** %d/%d added %d(%d,%d)->%d(%d,%d)\n", fnseg, bnseg,
+				D(Printf (PRINT_LOG, "**Minisegs** %d/%d added %d(%d,%d)->%d(%d,%d)\n", fnseg, bnseg,
 					prev->Info.Vertex,
 					Vertices[prev->Info.Vertex].x>>16, Vertices[prev->Info.Vertex].y>>16,
 					event->Info.Vertex,
@@ -244,11 +240,15 @@ DWORD FNodeBuilder::AddMiniseg (int v1, int v2, DWORD partner, DWORD seg1, DWORD
 	FPrivSeg *seg = &Segs[seg1];
 	FPrivSeg newseg;
 
-	newseg.sidedef = NO_INDEX;
+	newseg.sidedef = NO_SIDE;
 	newseg.linedef = -1;
 	newseg.loopnum = 0;
 	newseg.next = DWORD_MAX;
 	newseg.planefront = true;
+	newseg.hashnext = NULL;
+	newseg.storedseg = DWORD_MAX;
+	newseg.frontsector = NULL;
+	newseg.backsector = NULL;
 
 	if (splitseg != DWORD_MAX)
 	{
@@ -342,7 +342,7 @@ DWORD FNodeBuilder::CheckLoopStart (fixed_t dx, fixed_t dy, int vertex, int vert
 	return bestseg;
 }
 
-DWORD FNodeBuilder::CheckLoopEnd (fixed_t dx, fixed_t dy, int vertex1, int vertex)
+DWORD FNodeBuilder::CheckLoopEnd (fixed_t dx, fixed_t dy, int vertex)
 {
 	FPrivVert *v = &Vertices[vertex];
 	angle_t splitAngle = PointToAngle (dx, dy) + ANGLE_180;

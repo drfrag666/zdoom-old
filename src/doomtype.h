@@ -37,16 +37,62 @@
 #endif
 
 #include <limits.h>
+#include "tarray.h"
+#include "name.h"
 #include "zstring.h"
+#include "vectors.h"
 
-#ifndef __BYTEBOOL__
-#define __BYTEBOOL__
-// [RH] Some windows includes already define this
-#if !defined(_WINDEF_) && !defined(__wtypes_h__)
-typedef int BOOL;
+// Since this file is included by everything, it seems an appropriate place
+// to check the NOASM/USEASM macros.
+
+// There are three assembly-related macros:
+//
+//		NOASM	- Assembly code is disabled
+//		X86_ASM	- Using ia32 assembly code
+//		X64_ASM	- Using amd64 assembly code
+//
+// Note that these relate only to using the pure assembly code. Inline
+// assembly may still be used without respect to these macros, as
+// deemed appropriate.
+
+#ifndef NOASM
+// Select the appropriate type of assembly code to use.
+
+#if defined(_M_IX86) || defined(__i386__)
+
+#define X86_ASM
+#ifdef X64_ASM
+#undef X64_ASM
 #endif
-typedef unsigned char byte;
+
+#elif defined(_M_X64) || defined(__amd64__)
+
+#define X64_ASM
+#ifdef X86_ASM
+#undef X86_ASM
 #endif
+
+#else
+
+#define NOASM
+
+#endif
+
+#endif
+
+#ifdef NOASM
+// Ensure no assembly macros are defined if NOASM is defined.
+
+#ifdef X86_ASM
+#undef X86_ASM
+#endif
+
+#ifdef X64_ASM
+#undef X64_ASM
+#endif
+
+#endif
+
 
 #if defined(_MSC_VER) || defined(__WATCOMC__)
 #define STACK_ARGS __cdecl
@@ -60,79 +106,16 @@ typedef unsigned char byte;
 #define NOVTABLE
 #endif
 
-#if defined(__GNUC__)
-#define __int64 long long
-#endif
+#include "basictypes.h"
 
-typedef unsigned char           BYTE;
-typedef signed char             SBYTE;
-
-typedef unsigned short          WORD;
-typedef signed short            SWORD;
-
-typedef unsigned long           DWORD;
-typedef signed long             SDWORD;
-
-typedef unsigned __int64        QWORD;
-typedef signed __int64          SQWORD;
-
-// a 64-bit constant
-#ifdef __GNUC__
-#define CONST64(v) (v##LL)
-#define UCONST64(v) (v##ULL)
-#else
-#define CONST64(v) ((SQWORD)(v))
-#define UCONST64(v) ((QWORD)(v))
-#endif
-
-typedef DWORD                           BITFIELD;
-
-#if !defined(GUID_DEFINED)
-#define GUID_DEFINED
-typedef struct _GUID
+// Bounding box coordinate storage.
+enum
 {
-    DWORD	Data1;
-    WORD	Data2;
-    WORD	Data3;
-    BYTE	Data4[8];
-} GUID;
-#endif
-
-//
-// Fixed point, 32bit as 16.16.
-//
-#define FRACBITS                        16
-#define FRACUNIT                        (1<<FRACBITS)
-
-typedef SDWORD                          fixed_t;
-typedef DWORD                           dsfixed_t;              // fixedpt used by span drawer
-
-#define FIXED_MAX                       (signed)(0x7fffffff)
-#define FIXED_MIN                       (signed)(0x80000000)
-
-#define DWORD_MIN						((DWORD)0)
-#define DWORD_MAX						((DWORD)0xffffffff)
-
-#ifndef NOASM
-#ifndef USEASM
-#define USEASM 1
-#endif
-#else
-#ifdef USEASM
-#undef USEASM
-#endif
-#endif
-
-
-#ifdef __GNUC__
-#define GCCPRINTF(stri,firstargi)       __attribute__((format(printf,stri,firstargi)))
-#define GCCFORMAT(stri)                         __attribute__((format(printf,stri,0)))
-#define GCCNOWARN                                       __attribute__((unused))
-#else
-#define GCCPRINTF(a,b)
-#define GCCFORMAT(a)
-#define GCCNOWARN
-#endif
+	BOXTOP,
+	BOXBOTTOM,
+	BOXLEFT,
+	BOXRIGHT
+};		// bbox coordinates
 
 
 // [RH] This gets used all over; define it here:
@@ -141,6 +124,10 @@ int STACK_ARGS Printf (const char *, ...) GCCPRINTF(1,2);
 
 // [RH] Same here:
 int STACK_ARGS DPrintf (const char *, ...) GCCPRINTF(1,2);
+
+extern "C" int mysnprintf(char *buffer, size_t count, const char *format, ...) GCCPRINTF(3,4);
+extern "C" int myvsnprintf(char *buffer, size_t count, const char *format, va_list argptr) GCCFORMAT(3);
+
 
 // game print flags
 enum
@@ -156,28 +143,72 @@ enum
 #define PRINT_HIGH				2				// critical messages
 #define PRINT_CHAT				3				// chat messages
 #define PRINT_TEAMCHAT			4				// chat messages from a teammate
+#define PRINT_LOG				5				// only to logfile
 #define PRINT_BOLD				200				// What Printf_Bold used
 
 struct PalEntry
 {
 	PalEntry () {}
-	PalEntry (DWORD argb) { *(DWORD *)this = argb; }
-	operator DWORD () const { return *(DWORD *)this; }
-	PalEntry &operator= (DWORD other) { *(DWORD *)this = other; return *this; }
-
-#ifdef WORDS_BIGENDIAN
+	PalEntry (uint32 argb) { d = argb; }
+	operator uint32 () const { return d; }
+	PalEntry &operator= (uint32 other) { d = other; return *this; }
+	PalEntry InverseColor() const { PalEntry nc; nc.a = a; nc.r = 255 - r; nc.g = 255 - g; nc.b = 255 - b; return nc; }
+#ifdef __BIG_ENDIAN__
 	PalEntry (BYTE ir, BYTE ig, BYTE ib) : a(0), r(ir), g(ig), b(ib) {}
 	PalEntry (BYTE ia, BYTE ir, BYTE ig, BYTE ib) : a(ia), r(ir), g(ig), b(ib) {}
-	BYTE a,r,g,b;
+	union
+	{
+		struct
+		{
+			BYTE a,r,g,b;
+		};
+		uint32 d;
+	};
 #else
 	PalEntry (BYTE ir, BYTE ig, BYTE ib) : b(ib), g(ig), r(ir), a(0) {}
 	PalEntry (BYTE ia, BYTE ir, BYTE ig, BYTE ib) : b(ib), g(ig), r(ir), a(ia) {}
-	BYTE b,g,r,a;
+	union
+	{
+		struct
+		{
+			BYTE b,g,r,a;
+		};
+		uint32 d;
+	};
 #endif
+};
+
+// Screenshot buffer image data types
+enum ESSType
+{
+	SS_PAL,
+	SS_RGB,
+	SS_BGRA
 };
 
 #ifndef M_PI
 #define M_PI		3.14159265358979323846	// matches value in gcc v2 math.h
+#endif
+
+template <typename T, size_t N>
+char ( &_ArraySizeHelper( T (&array)[N] ))[N];
+
+#define countof( array ) (sizeof( _ArraySizeHelper( array ) ))
+
+// Auto-registration sections for GCC.
+// Apparently, you cannot do string concatenation inside section attributes.
+#ifdef __MACH__
+#define SECTION_AREG "__DATA,areg"
+#define SECTION_CREG "__DATA,creg"
+#define SECTION_GREG "__DATA,greg"
+#define SECTION_MREG "__DATA,mreg"
+#define SECTION_YREG "__DATA,yreg"
+#else
+#define SECTION_AREG "areg"
+#define SECTION_CREG "creg"
+#define SECTION_GREG "greg"
+#define SECTION_MREG "mreg"
+#define SECTION_YREG "yreg"
 #endif
 
 #endif

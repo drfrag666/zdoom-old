@@ -3,7 +3,7 @@
 ** Routines for manipulating PNG files.
 **
 **---------------------------------------------------------------------------
-** Copyright 2002-2005 Randy Heit
+** Copyright 2002-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -30,9 +30,6 @@
 ** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **---------------------------------------------------------------------------
 **
-** Currently, only 256-color paletted images are supported, as these are all
-** that ZDoom needs to support. Expect this to become more complete in the
-** future if I decide to add support for graphic patches stored as PNGs.
 */
 
 // HEADER FILES ------------------------------------------------------------
@@ -47,6 +44,7 @@
 #include "m_crc32.h"
 #include "m_swap.h"
 #include "c_cvars.h"
+#include "r_defs.h"
 #include "v_video.h"
 #include "m_png.h"
 #include "templates.h"
@@ -57,6 +55,12 @@
 // The maximum size of an IDAT chunk ZDoom will write. This is also the
 // size of the compression buffer it allocates on the stack.
 #define PNG_WRITE_SIZE	32768
+
+// Set this to 1 to use a simple heuristic to select the filter to apply
+// for each row of RGB image saves. As it turns out, it seems no filtering
+// is the best for Doom screenshots, no matter what the heuristic might
+// determine, so that's why this is 0 here.
+#define USE_FILTER_HEURISTIC 0
 
 // TYPES -------------------------------------------------------------------
 
@@ -81,7 +85,7 @@ PNGHandle::~PNGHandle ()
 {
 	for (unsigned int i = 0; i < TextChunks.Size(); ++i)
 	{
-		delete TextChunks[i];
+		delete[] TextChunks[i];
 	}
 	if (bDeleteFilePtr)
 	{
@@ -97,10 +101,9 @@ PNGHandle::~PNGHandle ()
 
 static inline void MakeChunk (void *where, DWORD type, size_t len);
 static inline void StuffPalette (const PalEntry *from, BYTE *to);
-static bool StuffBitmap (const DCanvas *canvas, FILE *file);
 static bool WriteIDAT (FILE *file, const BYTE *data, int len);
-static void UnfilterRow (int width, BYTE *dest, BYTE *stream, BYTE *prev);
-static void UnpackPixels (int width, int bytesPerRow, int bitdepth, BYTE *row);
+static void UnfilterRow (int width, BYTE *dest, BYTE *stream, BYTE *prev, int bpp);
+static void UnpackPixels (int width, int bytesPerRow, int bitdepth, const BYTE *rowin, BYTE *rowout, bool grayscale);
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
@@ -128,7 +131,8 @@ CVAR(Float, png_gamma, 0.f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 //
 //==========================================================================
 
-bool M_CreatePNG (FILE *file, const DCanvas *canvas, const PalEntry *palette)
+bool M_CreatePNG (FILE *file, const BYTE *buffer, const PalEntry *palette,
+				  ESSType color_type, int width, int height, int pitch)
 {
 	BYTE work[8 +				// signature
 			  12+2*4+5 +		// IHDR
@@ -138,14 +142,15 @@ bool M_CreatePNG (FILE *file, const DCanvas *canvas, const PalEntry *palette)
 	IHDR *const ihdr = (IHDR *)&work[8 + 8];
 	DWORD *const gama = (DWORD *)((BYTE *)ihdr + 2*4+5 + 12);
 	BYTE *const plte = (BYTE *)gama + 4 + 12;
+	size_t work_len;
 
 	sig[0] = MAKE_ID(137,'P','N','G');
 	sig[1] = MAKE_ID(13,10,26,10);
 
-	ihdr->Width = BigLong (canvas->GetWidth ());
-	ihdr->Height = BigLong (canvas->GetHeight ());
+	ihdr->Width = BigLong(width);
+	ihdr->Height = BigLong(height);
 	ihdr->BitDepth = 8;
-	ihdr->ColorType = 3;
+	ihdr->ColorType = color_type == SS_PAL ? 3 : 2;
 	ihdr->Compression = 0;
 	ihdr->Filter = 0;
 	ihdr->Interlace = 0;
@@ -155,20 +160,28 @@ bool M_CreatePNG (FILE *file, const DCanvas *canvas, const PalEntry *palette)
 	*gama = BigLong (int (45454.5f * (png_gamma == 0.f ? Gamma : png_gamma)));
 	MakeChunk (gama, MAKE_ID('g','A','M','A'), 4);
 
-	StuffPalette (palette, plte);
-	MakeChunk (plte, MAKE_ID('P','L','T','E'), 256*3);
+	if (color_type == SS_PAL)
+	{
+		StuffPalette (palette, plte);
+		MakeChunk (plte, MAKE_ID('P','L','T','E'), 256*3);
+		work_len = sizeof(work);
+	}
+	else
+	{
+		work_len = sizeof(work) - (12+256*3);
+	}
 
-	if (fwrite (work, 1, sizeof(work), file) != sizeof(work))
+	if (fwrite (work, 1, work_len, file) != work_len)
 		return false;
 
-	return StuffBitmap (canvas, file);
+	return M_SaveBitmap (buffer, color_type, width, height, pitch, file);
 }
 
 //==========================================================================
 //
 // M_CreateDummyPNG
 //
-// Like M_CreatePNG, but the image is always a grayscale 1x1 blacksquare.
+// Like M_CreatePNG, but the image is always a grayscale 1x1 black square.
 //
 //==========================================================================
 
@@ -371,19 +384,19 @@ PNGHandle *M_VerifyPNG (FILE *file)
 
 	if (fread (&data, 1, 8, file) != 8)
 	{
-		return false;
+		return NULL;
 	}
 	if (data[0] != MAKE_ID(137,'P','N','G') || data[1] != MAKE_ID(13,10,26,10))
 	{ // Does not have PNG signature
-		return false;
+		return NULL;
 	}
 	if (fread (&data, 1, 8, file) != 8)
 	{
-		return false;
+		return NULL;
 	}
 	if (data[1] != MAKE_ID('I','H','D','R'))
 	{ // IHDR must be the first chunk
-		return false;
+		return NULL;
 	}
 
 	// It looks like a PNG so far, so start creating a PNGHandle for it
@@ -438,7 +451,7 @@ PNGHandle *M_VerifyPNG (FILE *file)
 	}
 
 	delete png;
-	return false;
+	return NULL;
 }
 
 //==========================================================================
@@ -456,66 +469,6 @@ void M_FreePNG (PNGHandle *png)
 
 //==========================================================================
 //
-// M_CreateCanvasFromPNG
-//
-// Creates a simple canvas containing the contents of the PNG file's IDAT
-// chunk(s). Only 8-bit images are supported.
-//
-//==========================================================================
-
-DCanvas *M_CreateCanvasFromPNG (PNGHandle *png)
-{
-	IHDR imageHeader;
-	DSimpleCanvas *canvas;
-	int width, height;
-	unsigned int chunklen;
-
-	if (M_FindPNGChunk (png, MAKE_ID('I','H','D','R')) == 0)
-	{
-		return NULL;
-	}
-	if (png->File->Read (&imageHeader, sizeof(IHDR)) != sizeof(IHDR))
-	{
-		return NULL;
-	}
-	if (imageHeader.Width == 0 ||
-		imageHeader.Height == 0 ||
-		// Only images that M_CreatePNG can write are supported
-		imageHeader.BitDepth != 8 ||
-		imageHeader.ColorType != 3 ||
-		imageHeader.Compression != 0 ||
-		imageHeader.Filter != 0 ||
-		imageHeader.Interlace != 0
-		)
-	{
-		return NULL;
-	}
-	chunklen = M_FindPNGChunk (png, MAKE_ID('I','D','A','T'));
-	if (chunklen == 0)
-	{
-		return NULL;
-	}
-
-	width = BigLong((int)imageHeader.Width);
-	height = BigLong((int)imageHeader.Height);
-	canvas = new DSimpleCanvas (width, height);
-	if (canvas == NULL)
-	{
-		return NULL;
-	}
-	canvas->Lock ();
-	bool success = M_ReadIDAT (png->File, canvas->GetBuffer(), width, height, canvas->GetPitch(), 8, 3, 0, chunklen);
-	canvas->Unlock ();
-	if (!success)
-	{
-		delete canvas;
-		canvas = NULL;
-	}
-	return canvas;
-}
-
-//==========================================================================
-//
 // ReadIDAT
 //
 // Reads image data out of a PNG
@@ -525,26 +478,41 @@ DCanvas *M_CreateCanvasFromPNG (PNGHandle *png)
 bool M_ReadIDAT (FileReader *file, BYTE *buffer, int width, int height, int pitch,
 				 BYTE bitdepth, BYTE colortype, BYTE interlace, unsigned int chunklen)
 {
-	Byte *inputLine, *prev, *curr;
+	// Uninterlaced images are treated as a conceptual eighth pass by these tables.
+	static const BYTE passwidthshift[8] =  { 3, 3, 2, 2, 1, 1, 0, 0 };
+	static const BYTE passheightshift[8] = { 3, 3, 3, 2, 2, 1, 1, 0 };
+	static const BYTE passrowoffset[8] =   { 0, 0, 4, 0, 2, 0, 1, 0 };
+	static const BYTE passcoloffset[8] =   { 0, 4, 0, 2, 0, 1, 0, 0 };
+
+	Byte *inputLine, *prev, *curr, *adam7buff[3], *bufferend;
 	Byte chunkbuffer[4096];
 	z_stream stream;
 	int err;
-	int y;
+	int i, pass, passbuff, passpitch, passwidth;
 	bool lastIDAT;
-	int bytesPerRowIn;
+	int bytesPerRowIn, bytesPerRowOut;
+	int bytesPerPixel;
+	bool initpass;
 
-	inputLine = (Byte *)alloca (1+width*2);
-	prev = inputLine + 1 + width;
-	memset (prev, 0, width);
-
-	switch (bitdepth)
+	switch (colortype)
 	{
-	case 8:		bytesPerRowIn = width;			break;
-	case 4:		bytesPerRowIn = (width+1)/2;	break;
-	case 2:		bytesPerRowIn = (width+3)/4;	break;
-	case 1:		bytesPerRowIn = (width+7)/8;	break;
-	default:	return false;
+	case 2:		bytesPerPixel = 3;		break;		// RGB
+	case 4:		bytesPerPixel = 2;		break;		// LA
+	case 6:		bytesPerPixel = 4;		break;		// RGBA
+	default:	bytesPerPixel = 1;		break;
 	}
+
+	bytesPerRowOut = width * bytesPerPixel;
+	i = 4 + bytesPerRowOut * 2;
+	if (interlace)
+	{
+		i += bytesPerRowOut * 2;
+	}
+	inputLine = (Byte *)alloca (i);
+	adam7buff[0] = inputLine + 4 + bytesPerRowOut;
+	adam7buff[1] = adam7buff[0] + bytesPerRowOut;
+	adam7buff[2] = adam7buff[1] + bytesPerRowOut;
+	bufferend = buffer + pitch * height;
 
 	stream.next_in = Z_NULL;
 	stream.avail_in = 0;
@@ -555,67 +523,172 @@ bool M_ReadIDAT (FileReader *file, BYTE *buffer, int width, int height, int pitc
 	{
 		return false;
 	}
-	y = 0;
-	curr = buffer;
-	stream.next_out = inputLine;
-	stream.avail_out = bytesPerRowIn+1;
 	lastIDAT = false;
+	initpass = true;
+	pass = interlace ? 0 : 7;
 
-	do
+	// Silence GCC warnings. Due to initpass being true, these will be set
+	// before they're used, but it doesn't know that.
+	curr = prev = 0;
+	passwidth = passpitch = bytesPerRowIn = 0;
+	passbuff = 0;
+
+	while (err != Z_STREAM_END && pass < 8 - interlace)
 	{
-		while (err != Z_STREAM_END)
+		if (initpass)
 		{
-			if (stream.avail_in == 0 && chunklen > 0)
-			{
-				stream.next_in = chunkbuffer;
-				stream.avail_in = (uInt)file->Read (chunkbuffer, MIN<long>(chunklen,sizeof(chunkbuffer)));
-				chunklen -= stream.avail_in;
-			}
+			int rowoffset, coloffset;
 
-			err = inflate (&stream, Z_SYNC_FLUSH);
-			if (err != Z_OK && err != Z_STREAM_END)
-			{ // something unexpected happened
-				inflateEnd (&stream);
-				return false;
-			}
-
-			if (stream.avail_out == 0)
+			initpass = false;
+			pass--;
+			do
 			{
-				UnfilterRow (bytesPerRowIn, curr, inputLine, prev);
+				pass++;
+				rowoffset = passrowoffset[pass];
+				coloffset = passcoloffset[pass];
+			}
+			while ((rowoffset >= height || coloffset >= width) && pass < 7);
+			if (pass == 7 && interlace)
+			{
+				break;
+			}
+			passwidth = (width + (1 << passwidthshift[pass]) - 1 - coloffset) >> passwidthshift[pass];
+			prev = adam7buff[0];
+			passbuff = 1;
+			memset (prev, 0, passwidth * bytesPerPixel);
+			switch (bitdepth)
+			{
+			case 8:		bytesPerRowIn = passwidth * bytesPerPixel;	break;
+			case 4:		bytesPerRowIn = (passwidth+1)/2;			break;
+			case 2:		bytesPerRowIn = (passwidth+3)/4;			break;
+			case 1:		bytesPerRowIn = (passwidth+7)/8;			break;
+			default:	return false;
+			}
+			curr = buffer + rowoffset*pitch + coloffset*bytesPerPixel;
+			passpitch = pitch << passheightshift[pass];
+			stream.next_out = inputLine;
+			stream.avail_out = bytesPerRowIn + 1;
+		}
+		if (stream.avail_in == 0 && chunklen > 0)
+		{
+			stream.next_in = chunkbuffer;
+			stream.avail_in = (uInt)file->Read (chunkbuffer, MIN<long>(chunklen,sizeof(chunkbuffer)));
+			chunklen -= stream.avail_in;
+		}
+
+		err = inflate (&stream, Z_SYNC_FLUSH);
+		if (err != Z_OK && err != Z_STREAM_END)
+		{ // something unexpected happened
+			inflateEnd (&stream);
+			return false;
+		}
+
+		if (stream.avail_out == 0)
+		{
+			if (pass >= 6)
+			{
+				// Store pixels directly into the output buffer
+				UnfilterRow (bytesPerRowIn, curr, inputLine, prev, bytesPerPixel);
 				prev = curr;
-				curr += pitch;
-				y++;
-				stream.next_out = inputLine;
-				stream.avail_out = bytesPerRowIn+1;
 			}
-
-			if (chunklen == 0 && !lastIDAT)
+			else
 			{
-				DWORD x[3];
+				const BYTE *in;
+				BYTE *out;
+				int colstep, x;
 
-				if (file->Read (x, 12) != 12)
+				// Store pixels into a temporary buffer
+				UnfilterRow (bytesPerRowIn, adam7buff[passbuff], inputLine, prev, bytesPerPixel);
+				prev = adam7buff[passbuff];
+				passbuff ^= 1;
+				in = prev;
+				if (bitdepth < 8)
 				{
-					lastIDAT = true;
+					UnpackPixels (passwidth, bytesPerRowIn, bitdepth, in, adam7buff[2], colortype == 0);
+					in = adam7buff[2];
 				}
-				else if (x[2] != MAKE_ID('I','D','A','T'))
+				// Distribute pixels into the output buffer
+				out = curr;
+				colstep = bytesPerPixel << passwidthshift[pass];
+				switch (bytesPerPixel)
 				{
-					lastIDAT = true;
+				case 1:
+					for (x = passwidth; x > 0; --x)
+					{
+						*out = *in;
+						out += colstep;
+						in += 1;
+					}
+					break;
+
+				case 2:
+					for (x = passwidth; x > 0; --x)
+					{
+						*(WORD *)out = *(WORD *)in;
+						out += colstep;
+						in += 2;
+					}
+					break;
+
+				case 3:
+					for (x = passwidth; x > 0; --x)
+					{
+						out[0] = in[0];
+						out[1] = in[1];
+						out[2] = in[2];
+						out += colstep;
+						in += 3;
+					}
+					break;
+
+				case 4:
+					for (x = passwidth; x > 0; --x)
+					{
+						*(DWORD *)out = *(DWORD *)in;
+						out += colstep;
+						in += 4;
+					}
+					break;
 				}
-				else
-				{
-					chunklen = BigLong((unsigned int)x[1]);
-				}
+			}
+			if ((curr += passpitch) >= bufferend)
+			{
+				++pass;
+				initpass = true;
+			}
+			stream.next_out = inputLine;
+			stream.avail_out = bytesPerRowIn + 1;
+		}
+
+		if (chunklen == 0 && !lastIDAT)
+		{
+			DWORD x[3];
+
+			if (file->Read (x, 12) != 12)
+			{
+				lastIDAT = true;
+			}
+			else if (x[2] != MAKE_ID('I','D','A','T'))
+			{
+				lastIDAT = true;
+			}
+			else
+			{
+				chunklen = BigLong((unsigned int)x[1]);
 			}
 		}
-	} while (err == Z_OK && y < height);
+	}
 
 	inflateEnd (&stream);
 
 	if (bitdepth < 8)
 	{
-		for (curr = buffer; curr <= prev; curr += pitch)
+		// Noninterlaced images must be unpacked completely.
+		// Interlaced images only need their final pass unpacked.
+		passpitch = pitch << interlace;
+		for (curr = buffer + pitch * interlace; curr <= prev; curr += passpitch)
 		{
-			UnpackPixels (width, bytesPerRowIn, bitdepth, curr);
+			UnpackPixels (width, bytesPerRowIn, bitdepth, curr, curr, colortype == 0);
 		}
 	}
 	return true;
@@ -650,7 +723,7 @@ static inline void MakeChunk (void *where, DWORD type, size_t len)
 //
 //==========================================================================
 
-static inline void StuffPalette (const PalEntry *from, BYTE *to)
+static void StuffPalette (const PalEntry *from, BYTE *to)
 {
 	for (int i = 256; i > 0; --i)
 	{
@@ -664,22 +737,178 @@ static inline void StuffPalette (const PalEntry *from, BYTE *to)
 
 //==========================================================================
 //
-// StuffBitmap
+// CalcSum
+//
+//
+//==========================================================================
+
+DWORD CalcSum(Byte *row, int len)
+{
+	DWORD sum = 0;
+
+	while (len-- != 0)
+	{
+		sum += (char)*row++;
+	}
+	return sum;
+}
+
+//==========================================================================
+//
+// SelectFilter
+//
+// Performs the heuristic recommended by the PNG spec to decide the
+// (hopefully) best filter to use for this row. To quate:
+//
+//    Select the filter that gives the smallest sum of absolute values of
+//    outputs. (Consider the output bytes as signed differences for this
+//    test.)
+//
+//==========================================================================
+
+#if USE_FILTER_HEURISTIC
+static int SelectFilter(Byte row[5][1 + MAXWIDTH*3], Byte prior[MAXWIDTH*3], int width)
+{
+	// As it turns out, it seems no filtering is the best for Doom screenshots,
+	// no matter what the heuristic might determine.
+	return 0;
+	DWORD sum;
+	DWORD bestsum;
+	int bestfilter;
+	int x;
+
+	width *= 3;
+
+	// The first byte of each row holds the filter type, filled in by the caller.
+	// However, the prior row does not contain a filter type, since it's always 0.
+
+	bestsum = 0;
+	bestfilter = 0;
+
+	// None
+	for (x = 1; x <= width; ++x)
+	{
+		bestsum += abs((char)row[0][x]);
+	}
+
+	// Sub
+	row[1][1] = row[0][1];
+	row[1][2] = row[0][2];
+	row[1][3] = row[0][3];
+	sum = abs((char)row[0][1]) + abs((char)row[0][2]) + abs((char)row[0][3]);
+	for (x = 4; x <= width; ++x)
+	{
+		row[1][x] = row[0][x] - row[0][x - 3];
+		sum += abs((char)row[1][x]);
+		if (sum >= bestsum)
+		{ // This isn't going to be any better.
+			break;
+		}
+	}
+	if (sum < bestsum)
+	{
+		bestsum = sum;
+		bestfilter = 1;
+	}
+
+	// Up
+	sum = 0;
+	for (x = 1; x <= width; ++x)
+	{
+		row[2][x] = row[0][x] - prior[x - 1];
+		sum += abs((char)row[2][x]);
+		if (sum >= bestsum)
+		{ // This isn't going to be any better.
+			break;
+		}
+	}
+	if (sum < bestsum)
+	{
+		bestsum = sum;
+		bestfilter = 2;
+	}
+
+	// Average
+	row[3][1] = row[0][1] - prior[0] / 2;
+	row[3][2] = row[0][2] - prior[1] / 2;
+	row[3][3] = row[0][3] - prior[2] / 2;
+	sum = abs((char)row[3][1]) + abs((char)row[3][2]) + abs((char)row[3][3]);
+	for (x = 4; x <= width; ++x)
+	{
+		row[3][x] = row[0][x] - (row[0][x - 3] + prior[x - 1]) / 2;
+		sum += (char)row[3][x];
+		if (sum >= bestsum)
+		{ // This isn't going to be any better.
+			break;
+		}
+	}
+	if (sum < bestsum)
+	{
+		bestsum = sum;
+		bestfilter = 3;
+	}
+
+	// Paeth
+	row[4][1] = row[0][1] - prior[0];
+	row[4][2] = row[0][2] - prior[1];
+	row[4][3] = row[0][3] - prior[2];
+	sum = abs((char)row[4][1]) + abs((char)row[4][2]) + abs((char)row[4][3]);
+	for (x = 4; x <= width; ++x)
+	{
+		Byte a = row[0][x - 3];
+		Byte b = prior[x - 1];
+		Byte c = prior[x - 4];
+		int p = a + b - c;
+		int pa = abs(p - a);
+		int pb = abs(p - b);
+		int pc = abs(p - c);
+		if (pa <= pb && pa <= pc)
+		{
+			row[4][x] = row[0][x] - a;
+		}
+		else if (pb <= pc)
+		{
+			row[4][x] = row[0][x] - b;
+		}
+		else
+		{
+			row[4][x] = row[0][x] - c;
+		}
+		sum += (char)row[4][x];
+		if (sum >= bestsum)
+		{ // This isn't going to be any better.
+			break;
+		}
+	}
+	if (sum < bestsum)
+	{
+		bestfilter = 4;
+	}
+
+	return bestfilter;
+}
+#else
+#define SelectFilter(x,y,z)		0
+#endif
+
+//==========================================================================
+//
+// M_SaveBitmap
 //
 // Given a bitmap, creates one or more IDAT chunks in the given file.
 // Returns true on success.
 //
 //==========================================================================
 
-static bool StuffBitmap (const DCanvas *canvas, FILE *file)
+bool M_SaveBitmap(const BYTE *from, ESSType color_type, int width, int height, int pitch, FILE *file)
 {
-	const int pitch = canvas->GetPitch();
-	const int width = canvas->GetWidth();
-	const int height = canvas->GetHeight();
-	BYTE *from = canvas->GetBuffer();
-
+#if USE_FILTER_HEURISTIC
+	Byte prior[MAXWIDTH*3];
+	Byte temprow[5][1 + MAXWIDTH*3];
+#else
+	Byte temprow[1][1 + MAXWIDTH*3];
+#endif
 	Byte buffer[PNG_WRITE_SIZE];
-	Byte zero = 0;
 	z_stream stream;
 	int err;
 	int y;
@@ -699,43 +928,78 @@ static bool StuffBitmap (const DCanvas *canvas, FILE *file)
 	stream.next_out = buffer;
 	stream.avail_out = sizeof(buffer);
 
-	while (y > 0 && err == Z_OK)
+	temprow[0][0] = 0;
+#if USE_FILTER_HEURISTIC
+	temprow[1][0] = 1;
+	temprow[2][0] = 2;
+	temprow[3][0] = 3;
+	temprow[4][0] = 4;
+
+	// Fill the prior row with 0 for RGB images. Paletted is always filter 0,
+	// so it doesn't need this.
+	if (color_type != SS_PAL)
 	{
-		y--;
-		for (int i = 2; i && err == Z_OK; --i)
+		memset(prior, 0, width * 3);
+	}
+#endif
+
+	while (y-- > 0 && err == Z_OK)
+	{
+		switch (color_type)
 		{
-			const int flushiness = (y == 0 && i == 1) ? Z_FINISH : 0;
-			if (i == 2)
-			{ // always use filter type 0
-				stream.next_in = &zero;
-				stream.avail_in = 1;
-			}
-			else
+		case SS_PAL:
+			memcpy(&temprow[0][1], from, width);
+			// always use filter type 0 for paletted images
+			stream.next_in = temprow[0];
+			stream.avail_in = width + 1;
+			break;
+
+		case SS_RGB:
+			memcpy(&temprow[0][1], from, width*3);
+			stream.next_in = temprow[SelectFilter(temprow, prior, width)];
+			stream.avail_in = width * 3 + 1;
+			break;
+
+		case SS_BGRA:
+			for (int x = 0; x < width; ++x)
 			{
-				stream.next_in = from;
-				stream.avail_in = width;
-				from += pitch;
+				temprow[0][x*3 + 1] = from[x*4 + 2];
+				temprow[0][x*3 + 2] = from[x*4 + 1];
+				temprow[0][x*3 + 3] = from[x*4];
 			}
-			err = deflate (&stream, flushiness);
-			if (err != Z_OK)
+			stream.next_in = temprow[SelectFilter(temprow, prior, width)];
+			stream.avail_in = width * 3 + 1;
+			break;
+		}
+#if USE_FILTER_HEURISTIC
+		if (color_type != SS_PAL)
+		{
+			// Save this row for filter calculations on the next row.
+			memcpy (prior, &temprow[0][1], stream.avail_in - 1);
+		}
+#endif
+
+		from += pitch;
+
+		err = deflate (&stream, (y == 0) ? Z_FINISH : 0);
+		if (err != Z_OK)
+		{
+			break;
+		}
+		while (stream.avail_out == 0)
+		{
+			if (!WriteIDAT (file, buffer, sizeof(buffer)))
 			{
-				break;
+				return false;
 			}
-			while (stream.avail_out == 0)
+			stream.next_out = buffer;
+			stream.avail_out = sizeof(buffer);
+			if (stream.avail_in != 0)
 			{
-				if (!WriteIDAT (file, buffer, sizeof(buffer)))
+				err = deflate (&stream, (y == 0) ? Z_FINISH : 0);
+				if (err != Z_OK)
 				{
-					return false;
-				}
-				stream.next_out = buffer;
-				stream.avail_out = sizeof(buffer);
-				if (stream.avail_in != 0)
-				{
-					err = deflate (&stream, flushiness);
-					if (err != Z_OK)
-					{
-						break;
-					}
+					break;
 				}
 			}
 		}
@@ -800,51 +1064,77 @@ static bool WriteIDAT (FILE *file, const BYTE *data, int len)
 // UnfilterRow
 //
 // Unfilters the given row. Unknown filter types are silently ignored.
+// bpp is bytes per pixel, not bits per pixel.
+// width is in bytes, not pixels.
 //
 //==========================================================================
 
-void UnfilterRow (int width, BYTE *dest, BYTE *row, BYTE *prev)
+void UnfilterRow (int width, BYTE *dest, BYTE *row, BYTE *prev, int bpp)
 {
 	int x;
 
 	switch (*row++)
 	{
 	case 1:		// Sub
-		dest[0] = row[0];
-		for (x = 1; x < width; ++x)
+		x = bpp;
+		do
 		{
-			dest[x] = row[x] + dest[x-1];
+			*dest++ = *row++;
+		}
+		while (--x);
+		for (x = width - bpp; x > 0; --x)
+		{
+			*dest = *row++ + *(dest - bpp);
+			dest++;
 		}
 		break;
 
 	case 2:		// Up
-		for (x = 0; x < width; ++x)
+		x = width;
+		do
 		{
-			dest[x] = row[x] + prev[x];
+			*dest++ = *row++ + *prev++;
 		}
+		while (--x);
 		break;
 
 	case 3:		// Average
-		dest[0] = row[0] + prev[0]/2;
-		for (x = 1; x < width; ++x)
+		x = bpp;
+		do
 		{
-			dest[x] = row[x] + (BYTE)(((unsigned)dest[x-1] + (unsigned)prev[x])/2);
+			*dest++ = *row++ + (*prev++)/2;
+		}
+		while (--x);
+		for (x = width - bpp; x > 0; --x)
+		{
+			*dest = *row++ + (BYTE)((unsigned(*(dest - bpp)) + unsigned(*prev++)) >> 1);
+			dest++;
 		}
 		break;
 
 	case 4:		// Paeth
-		dest[0] = row[0] + prev[0];
-		for (x = 1; x < width; ++x)
+		x = bpp;
+		do
+		{
+			*dest++ = *row++ + *prev++;
+		}
+		while (--x);
+		for (x = width - bpp; x > 0; --x)
 		{
 			int a, b, c, pa, pb, pc;
 
-			a = dest[x-1];
-			b = prev[x];
-			c = prev[x-1];
-			pa = abs (b - c);
-			pb = abs (a - c);
-			pc = abs (a + b - c - c);
-			dest[x] = row[x] + (BYTE)((pa <= pb && pa <= pc) ? a : (pb <= pc) ? b : c);
+			a = *(dest - bpp);
+			b = *(prev);
+			c = *(prev - bpp);
+			pa = b - c;
+			pb = a - c;
+			pc = abs (pa + pb);
+			pa = abs (pa);
+			pb = abs (pb);
+			*dest = *row + (BYTE)((pa <= pb && pa <= pc) ? a : (pb <= pc) ? b : c);
+			dest++;
+			row++;
+			prev++;
 		}
 		break;
 
@@ -858,25 +1148,45 @@ void UnfilterRow (int width, BYTE *dest, BYTE *row, BYTE *prev)
 //
 // UnpackPixels
 //
-// Unpacks a row of pixels whose depth is less than 8 into so that each
-// pixel occupies a single byte. The packed pixels must be at the start
-// of the row, and the row must be "width" bytes long. "bytesPerRow" is
-// the number of bytes for the packed row.
+// Unpacks a row of pixels whose depth is less than 8 so that each pixel
+// occupies a single byte. The outrow must be "width" bytes long.
+// "bytesPerRow" is the number of bytes for the packed row. The in and out
+// rows may overlap, but only if rowin == rowout.
 //
 //==========================================================================
 
-static void UnpackPixels (int width, int bytesPerRow, int bitdepth, BYTE *row)
+static void UnpackPixels (int width, int bytesPerRow, int bitdepth, const BYTE *rowin, BYTE *rowout, bool grayscale)
 {
-	BYTE *out, *in;
+	const BYTE *in;
+	BYTE *out;
 	BYTE pack;
+	int lastbyte;
 
-	out = row + width;
-	in = row + bytesPerRow;
+	assert(bitdepth == 1 || bitdepth == 2 || bitdepth == 4);
+
+	out = rowout + width;
+	in = rowin + bytesPerRow;
 
 	switch (bitdepth)
 	{
 	case 1:
-		while (in-- > row)
+
+		lastbyte = width & 7;
+		if (lastbyte != 0)
+		{
+			in--;
+			pack = *in;
+			out -= lastbyte;
+			out[0] = (pack >> 7) & 1;
+			if (lastbyte >= 2) out[1] = (pack >> 6) & 1;
+			if (lastbyte >= 3) out[2] = (pack >> 5) & 1;
+			if (lastbyte >= 4) out[3] = (pack >> 4) & 1;
+			if (lastbyte >= 5) out[4] = (pack >> 3) & 1;
+			if (lastbyte >= 6) out[5] = (pack >> 2) & 1;
+			if (lastbyte == 7) out[6] = (pack >> 1) & 1;
+		}
+
+		while (in-- > rowin)
 		{
 			pack = *in;
 			out -= 8;
@@ -892,7 +1202,19 @@ static void UnpackPixels (int width, int bytesPerRow, int bitdepth, BYTE *row)
 		break;
 
 	case 2:
-		while (in-- > row)
+
+		lastbyte = width & 3;
+		if (lastbyte != 0)
+		{
+			in--;
+			pack = *in;
+			out -= lastbyte;
+			out[0] = pack >> 6;
+			if (lastbyte >= 2) out[1] = (pack >> 4) & 3;
+			if (lastbyte == 3) out[2] = (pack >> 2) & 3;
+		}
+
+		while (in-- > rowin)
 		{
 			pack = *in;
 			out -= 4;
@@ -904,7 +1226,16 @@ static void UnpackPixels (int width, int bytesPerRow, int bitdepth, BYTE *row)
 		break;
 
 	case 4:
-		while (in-- > row)
+		lastbyte = width & 1;
+		if (lastbyte != 0)
+		{
+			in--;
+			pack = *in;
+			out -= lastbyte;
+			out[0] = pack >> 4;
+		}
+
+		while (in-- > rowin)
 		{
 			pack = *in;
 			out -= 2;
@@ -912,5 +1243,44 @@ static void UnpackPixels (int width, int bytesPerRow, int bitdepth, BYTE *row)
 			out[1] = pack & 15;
 		}
 		break;
+	}
+
+	// Expand grayscale to 8bpp
+	if (grayscale)
+	{
+		// Put the 2-bit lookup table on the stack, since it's probably already
+		// in a cache line.
+		union
+		{
+			uint32 bits2l;
+			BYTE bits2[4];
+		};
+
+		out = rowout + width;
+		switch (bitdepth)
+		{
+		case 1:
+			while (--out >= rowout)
+			{
+				// 1 becomes -1 (0xFF), and 0 remains untouched.
+				*out = 0 - *out;
+			}
+			break;
+
+		case 2:
+			bits2l = MAKE_ID(0x00,0x55,0xAA,0xFF);
+			while (--out >= rowout)
+			{
+				*out = bits2[*out];
+			}
+			break;
+
+		case 4:
+			while (--out >= rowout)
+			{
+				*out |= (*out << 4);
+			}
+			break;
+		}
 	}
 }

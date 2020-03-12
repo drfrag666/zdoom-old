@@ -3,7 +3,7 @@
 ** Actors that make particle fountains
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,36 +35,18 @@
 #include "actor.h"
 #include "info.h"
 #include "p_effect.h"
+#include "doomdata.h"
 
 class AParticleFountain : public AActor
 {
-	DECLARE_STATELESS_ACTOR (AParticleFountain, AActor)
+	DECLARE_CLASS (AParticleFountain, AActor)
 public:
 	void PostBeginPlay ();
 	void Activate (AActor *activator);
 	void Deactivate (AActor *activator);
 };
 
-IMPLEMENT_STATELESS_ACTOR (AParticleFountain, Any, -1, 0)
-	PROP_HeightFixed (0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
-	PROP_RenderFlags (RF_INVISIBLE)
-END_DEFAULTS
-
-#define FOUNTAIN(color,ednum) \
-	class A##color##ParticleFountain : public AParticleFountain { \
-		DECLARE_STATELESS_ACTOR (A##color##ParticleFountain, AParticleFountain) }; \
-	IMPLEMENT_STATELESS_ACTOR (A##color##ParticleFountain, Any, ednum, 0) \
-		PROP_SpawnHealth (ednum-9026) \
-	END_DEFAULTS
-
-FOUNTAIN (Red, 9027);
-FOUNTAIN (Green, 9028);
-FOUNTAIN (Blue, 9029);
-FOUNTAIN (Yellow, 9030);
-FOUNTAIN (Purple, 9031);
-FOUNTAIN (Black, 9032);
-FOUNTAIN (White, 9033);
+IMPLEMENT_CLASS (AParticleFountain)
 
 void AParticleFountain::PostBeginPlay ()
 {

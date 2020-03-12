@@ -8,13 +8,15 @@
 #include "m_random.h"
 #include "d_player.h"
 #include "st_stuff.h"
-#include "r_local.h"
+#include "r_utility.h"
 #include "m_swap.h"
 #include "templates.h"
 #include "a_keys.h"
-#include "a_strifeweaps.h"
 #include "a_strifeglobal.h"
 #include "gi.h"
+#include "g_level.h"
+#include "colormatcher.h"
+#include "v_palette.h"
 
 // Number of tics to move the popscreen up and down.
 #define POP_TIME (TICRATE/8)
@@ -170,7 +172,7 @@ void FHealthBar::MakeTexture ()
 
 void FHealthBar::FillBar (int min, int max, BYTE light, BYTE dark)
 {
-#ifdef WORDS_BIGENDIAN
+#ifdef __BIG_ENDIAN__
 	SDWORD fill = (light << 24) | (dark << 16) | (light << 8) | dark;
 #else
 	SDWORD fill = light | (dark << 8) | (light << 16) | (dark << 24);
@@ -181,10 +183,11 @@ void FHealthBar::FillBar (int min, int max, BYTE light, BYTE dark)
 	}
 }
 
-class FStrifeStatusBar : public FBaseStatusBar
+class DStrifeStatusBar : public DBaseStatusBar
 {
+	DECLARE_CLASS(DStrifeStatusBar, DBaseStatusBar)
 public:
-	FStrifeStatusBar () : FBaseStatusBar (32)
+	DStrifeStatusBar () : DBaseStatusBar (32)
 	{
 		static const char *sharedLumpNames[] =
 		{
@@ -197,11 +200,11 @@ public:
 			"INVFONG7",	"INVFONG8",	"INVFONG9"
 		};
 
-		FBaseStatusBar::Images.Init (sharedLumpNames, NUM_BASESB_IMAGES);
+		DBaseStatusBar::Images.Init (sharedLumpNames, NUM_BASESB_IMAGES);
 		DoCommonInit ();
 	}
 
-	~FStrifeStatusBar ()
+	~DStrifeStatusBar ()
 	{
 	}
 
@@ -217,14 +220,9 @@ public:
 
 	void Draw (EHudState state)
 	{
-		FBaseStatusBar::Draw (state);
+		DBaseStatusBar::Draw (state);
 
-		if (state == HUD_Fullscreen)
-		{
-			SB_state = screen->GetPageCount ();
-			DrawFullScreenStuff ();
-		}
-		else if (state == HUD_StatusBar)
+		if (state == HUD_StatusBar)
 		{
 			if (SB_state != 0)
 			{
@@ -232,10 +230,25 @@ public:
 			}
 			DrawMainBar ();
 		}
+		else
+		{
+			if (state == HUD_Fullscreen)
+			{
+				ST_SetNeedRefresh();
+				DrawFullScreenStuff ();
+			}
+
+			// Draw pop screen (log, keys, and status)
+			if (CurrentPop != POP_None && PopHeight < 0)
+			{
+				DrawPopScreen (screen->GetHeight());
+			}
+		}
 	}
 
 	void ShowPop (int popnum)
 	{
+		DBaseStatusBar::ShowPop(popnum);
 		if (popnum == CurrentPop)
 		{
 			if (popnum == POP_Keys)
@@ -272,6 +285,12 @@ public:
 		}
 	}
 
+	bool MustDrawLog(EHudState state)
+	{
+		// Tell the base class to draw the log if the pop screen won't be displayed.
+		return false;
+	}
+
 private:
 	void DoCommonInit ()
 	{
@@ -292,7 +311,7 @@ private:
 
 		CursorImage = Images[imgINVCURS] != NULL ? imgINVCURS : imgCURSOR01;
 
-		SB_state = screen->GetPageCount ();
+		ST_SetNeedRefresh();
 
 		CurrentPop = POP_None;
 		PendingPop = POP_NoChange;
@@ -304,7 +323,7 @@ private:
 
 	void Tick ()
 	{
-		FBaseStatusBar::Tick ();
+		DBaseStatusBar::Tick ();
 
 		if (ItemFlash > 0)
 		{
@@ -358,7 +377,7 @@ private:
 		}
 	}
 
-	void FlashItem (const TypeInfo *itemtype)
+	void FlashItem (const PClass *itemtype)
 	{
 		ItemFlash = FRACUNIT*3/4;
 	}
@@ -426,20 +445,21 @@ private:
 		}
 
 		// Inventory
-		CPlayer->InvFirst = ValidateInvFirst (6);
-		for (item = CPlayer->InvFirst, i = 0; item != NULL && i < 6; item = item->NextInv(), ++i)
+		CPlayer->inventorytics = 0;
+		CPlayer->mo->InvFirst = ValidateInvFirst (6);
+		for (item = CPlayer->mo->InvFirst, i = 0; item != NULL && i < 6; item = item->NextInv(), ++i)
 		{
-			if (item == CPlayer->InvSel)
+			if (item == CPlayer->mo->InvSel)
 			{
 				screen->DrawTexture (Images[CursorImage],
 					42 + 35*i + ST_X, 12 + ST_Y,
-					DTA_320x200, Scaled,
+					DTA_Bottom320x200, Scaled,
 					DTA_Alpha, FRACUNIT - ItemFlash,
 					TAG_DONE);
 			}
-			if (item->Icon != 0)
+			if (item->Icon.isValid())
 			{
-				DrawImage (TexMan(item->Icon), 48 + 35*i, 14);
+				DrawDimImage (TexMan(item->Icon), 48 + 35*i, 14, item->Amount <= 0);
 			}
 			DrINumber (item->Amount, 74 + 35*i, 23, imgFONY0);
 		}
@@ -478,7 +498,7 @@ private:
 				DTA_HUDRules, HUD_Normal,
 				DTA_CenterBottomOffset, true,
 				TAG_DONE);
-			if (ammo2 != NULL)
+			if (ammo2 != NULL && ammo1!=ammo2)
 			{
 				// Draw secondary ammo just above the primary ammo
 				DrINumberOuter (ammo2->Amount, -23, -48, false, 7);
@@ -497,7 +517,7 @@ private:
 		// Draw inventory
 		if (CPlayer->inventorytics == 0)
 		{
-			if (CPlayer->InvSel != 0)
+			if (CPlayer->mo->InvSel != 0)
 			{
 				if (ItemFlash > 0)
 				{
@@ -509,44 +529,40 @@ private:
 						DTA_Alpha, ItemFlash,
 						TAG_DONE);
 				}
-				DrINumberOuter (CPlayer->InvSel->Amount, -51, -10, false, 7);
-				screen->DrawTexture (TexMan(CPlayer->InvSel->Icon), -42, -17,
+				DrINumberOuter (CPlayer->mo->InvSel->Amount, -51, -10, false, 7);
+				screen->DrawTexture (TexMan(CPlayer->mo->InvSel->Icon), -42, -17,
 					DTA_HUDRules, HUD_Normal,
 					DTA_CenterBottomOffset, true,
+					DTA_ColorOverlay, CPlayer->mo->InvSel->Amount > 0 ? 0 : DIM_OVERLAY,
 					TAG_DONE);
 			}
 		}
 		else
 		{
-			CPlayer->InvFirst = ValidateInvFirst (6);
+			CPlayer->mo->InvFirst = ValidateInvFirst (6);
 			int i = 0;
 			AInventory *item;
-			if (CPlayer->InvFirst != NULL)
+			if (CPlayer->mo->InvFirst != NULL)
 			{
-				for (item = CPlayer->InvFirst; item != NULL && i < 6; item = item->NextInv(), ++i)
+				for (item = CPlayer->mo->InvFirst; item != NULL && i < 6; item = item->NextInv(), ++i)
 				{
-					if (item == CPlayer->InvSel)
+					if (item == CPlayer->mo->InvSel)
 					{
 						screen->DrawTexture (Images[CursorImage], -100+i*35, -21,
 							DTA_HUDRules, HUD_HorizCenter,
 							DTA_Alpha, TRANSLUC75,
 							TAG_DONE);
 					}
-					if (item->Icon != 0)
+					if (item->Icon.isValid())
 					{
 						screen->DrawTexture (TexMan(item->Icon), -94 + i*35, -19,
 							DTA_HUDRules, HUD_HorizCenter,
+							DTA_ColorOverlay, CPlayer->mo->InvSel->Amount > 0 ? 0 : DIM_OVERLAY,
 							TAG_DONE);
 					}
 					DrINumberOuter (item->Amount, -89 + i*35, -10, true, 7);
 				}
 			}
-		}
-
-		// Draw pop screen (log, keys, and status)
-		if (CurrentPop != POP_None && PopHeight < 0)
-		{
-			DrawPopScreen (screen->GetHeight());
 		}
 	}
 
@@ -569,27 +585,26 @@ private:
 
 		screen->DrawTexture (Images[back], left, top, DTA_CleanNoMove, true, DTA_Alpha, FRACUNIT*3/4, TAG_DONE);
 		screen->DrawTexture (Images[bars], left, top, DTA_CleanNoMove, true, TAG_DONE);
-		screen->SetFont (SmallFont2);
 
 		switch (CurrentPop)
 		{
 		case POP_Log:
 			// Draw the latest log message.
-			sprintf (buff, "%02d:%02d:%02d",
+			mysnprintf (buff, countof(buff), "%02d:%02d:%02d",
 				(level.time/TICRATE)/3600,
 				((level.time/TICRATE)%3600)/60,
 				(level.time/TICRATE)%60);
 
-			screen->DrawText (CR_UNTRANSLATED, left+210*xscale, top+8*yscale, buff,
+			screen->DrawText (SmallFont2, CR_UNTRANSLATED, left+210*xscale, top+8*yscale, buff,
 				DTA_CleanNoMove, true, TAG_DONE);
 
 			if (CPlayer->LogText != NULL)
 			{
-				brokenlines_t *lines = V_BreakLines (272, CPlayer->LogText);
-				for (i = 0; lines[i].width >= 0; ++i)
+				FBrokenLines *lines = V_BreakLines (SmallFont2, 272, CPlayer->LogText);
+				for (i = 0; lines[i].Width >= 0; ++i)
 				{
-					screen->DrawText (CR_UNTRANSLATED, left+24*xscale, top+(18+i*12)*yscale,
-						lines[i].string, DTA_CleanNoMove, true, TAG_DONE);
+					screen->DrawText (SmallFont2, CR_UNTRANSLATED, left+24*xscale, top+(18+i*12)*yscale,
+						lines[i].Text, DTA_CleanNoMove, true, TAG_DONE);
 				}
 				V_FreeBrokenLines (lines);
 			}
@@ -625,11 +640,7 @@ private:
 					continue;
 				}
 
-				label = item->GetClass()->Meta.GetMetaString (AMETA_StrifeName);
-				if (label == NULL)
-				{
-					label = item->GetClass()->Name + 1;
-				}
+				label = item->GetTag();
 
 				int colnum = ((i-pos) / 5) & (KeyPopScroll > 0 ? 3 : 1);
 				int rownum = (i % 5) * 18;
@@ -641,7 +652,7 @@ private:
 					DTA_ClipLeft, clipleft,
 					DTA_ClipRight, clipright,
 					TAG_DONE);
-				screen->DrawText (CR_UNTRANSLATED,
+				screen->DrawText (SmallFont2, CR_UNTRANSLATED,
 					left + (colnum * 140 + leftcol + 17)*xscale,
 					top + (11 + rownum)*yscale,
 					label,
@@ -657,8 +668,8 @@ private:
 			// Show miscellaneous status items.
 			
 			// Print stats
-			DrINumber2 (CPlayer->accuracy, left+268*xscale, top+28*yscale, 7*xscale, imgFONY0);
-			DrINumber2 (CPlayer->stamina, left+268*xscale, top+52*yscale, 7*xscale, imgFONY0);
+			DrINumber2 (CPlayer->mo->accuracy, left+268*xscale, top+28*yscale, 7*xscale, imgFONY0);
+			DrINumber2 (CPlayer->mo->stamina, left+268*xscale, top+52*yscale, 7*xscale, imgFONY0);
 
 			// How many keys does the player have?
 			for (i = 0, item = CPlayer->mo->Inventory;
@@ -673,7 +684,7 @@ private:
 			DrINumber2 (i, left+268*xscale, top+76*yscale, 7*xscale, imgFONY0);
 
 			// Does the player have a communicator?
-			item = CPlayer->mo->FindInventory (RUNTIME_CLASS(ACommunicator));
+			item = CPlayer->mo->FindInventory (NAME_Communicator);
 			if (item != NULL)
 			{
 				screen->DrawTexture (TexMan(item->Icon),
@@ -685,26 +696,27 @@ private:
 			// How much ammo does the player have?
 			static const struct
 			{
-				const TypeInfo *AmmoType;
+				ENamedName AmmoType;
 				int Y;
 			} AmmoList[7] =
 			{
-				{ RUNTIME_CLASS(AClipOfBullets),			19 },
-				{ RUNTIME_CLASS(APoisonBolts),				35 },
-				{ RUNTIME_CLASS(AElectricBolts),			43 },
-				{ RUNTIME_CLASS(AHEGrenadeRounds),			59 },
-				{ RUNTIME_CLASS(APhosphorusGrenadeRounds),	67 },
-				{ RUNTIME_CLASS(AMiniMissiles),				75 },
-				{ RUNTIME_CLASS(AEnergyPod),				83 }
+				{ NAME_ClipOfBullets,			19 },
+				{ NAME_PoisonBolts,				35 },
+				{ NAME_ElectricBolts,			43 },
+				{ NAME_HEGrenadeRounds,			59 },
+				{ NAME_PhosphorusGrenadeRounds,	67 },
+				{ NAME_MiniMissiles,			75 },
+				{ NAME_EnergyPod,				83 }
 			};
 			for (i = 0; i < 7; ++i)
 			{
-				item = CPlayer->mo->FindInventory (AmmoList[i].AmmoType);
+				const PClass *ammotype = PClass::FindClass(AmmoList[i].AmmoType);
+				item = CPlayer->mo->FindInventory (ammotype);
 
 				if (item == NULL)
 				{
 					DrINumber2 (0, left+206*xscale, top+AmmoList[i].Y*yscale, 7*xscale, imgFONY0);
-					DrINumber2 (((AInventory *)GetDefaultByType (AmmoList[i].AmmoType))->MaxAmount,
+					DrINumber2 (((AInventory *)GetDefaultByType (ammotype))->MaxAmount,
 						left+239*xscale, top+AmmoList[i].Y*yscale, 7*xscale, imgFONY0);
 				}
 				else
@@ -717,20 +729,20 @@ private:
 			// What weapons does the player have?
 			static const struct
 			{
-				const char *TypeName;
+				ENamedName TypeName;
 				int X, Y;
 			} WeaponList[6] =
 			{
-				{ "StrifeCrossbow",			23, 19 },
-				{ "AssaultGun",				21, 41 },
-				{ "FlameThrower",			57, 50 },
-				{ "MiniMissileLauncher",	20, 64 },
-				{ "StrifeGrenadeLauncher",	55, 20 },
-				{ "Mauler",					52, 75 },
+				{ NAME_StrifeCrossbow,			23, 19 },
+				{ NAME_AssaultGun,				21, 41 },
+				{ NAME_FlameThrower,			57, 50 },
+				{ NAME_MiniMissileLauncher,		20, 64 },
+				{ NAME_StrifeGrenadeLauncher,	55, 20 },
+				{ NAME_Mauler,					52, 75 },
 			};
 			for (i = 0; i < 6; ++i)
 			{
-				item = CPlayer->mo->FindInventory (TypeInfo::FindType (WeaponList[i].TypeName));
+				item = CPlayer->mo->FindInventory (WeaponList[i].TypeName);
 
 				if (item != NULL)
 				{
@@ -745,8 +757,6 @@ private:
 			}
 			break;
 		}
-
-		screen->SetFont (SmallFont);
 	}
 
 	void DrINumber (signed int val, int x, int y, int imgBase) const
@@ -836,7 +846,9 @@ private:
 	fixed_t ItemFlash;
 };
 
-FBaseStatusBar *CreateStrifeStatusBar ()
+IMPLEMENT_CLASS(DStrifeStatusBar);
+
+DBaseStatusBar *CreateStrifeStatusBar ()
 {
-	return new FStrifeStatusBar;
+	return new DStrifeStatusBar;
 }

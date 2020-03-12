@@ -1,13 +1,63 @@
-#ifdef _WIN32
+/*
+** music_mus_midiout.cpp
+** Code to let ZDoom play MUS music through the MIDI streaming API.
+**
+**---------------------------------------------------------------------------
+** Copyright 1998-2008 Randy Heit
+** All rights reserved.
+**
+** Redistribution and use in source and binary forms, with or without
+** modification, are permitted provided that the following conditions
+** are met:
+**
+** 1. Redistributions of source code must retain the above copyright
+**    notice, this list of conditions and the following disclaimer.
+** 2. Redistributions in binary form must reproduce the above copyright
+**    notice, this list of conditions and the following disclaimer in the
+**    documentation and/or other materials provided with the distribution.
+** 3. The name of the author may not be used to endorse or promote products
+**    derived from this software without specific prior written permission.
+**
+** THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+** IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+** OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+** IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+** INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+** NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+**---------------------------------------------------------------------------
+*/
+
+// HEADER FILES ------------------------------------------------------------
+
+#if !defined(__FreeBSD__) && !defined(__APPLE__)
+#include <malloc.h>
+#else
+#include <stdlib.h>
+#endif
 #include "i_musicinterns.h"
 #include "templates.h"
 #include "doomdef.h"
 #include "m_swap.h"
 
-extern DWORD midivolume;
-extern UINT mididevice;
+// MACROS ------------------------------------------------------------------
 
-EXTERN_CVAR (Float, snd_midivolume)
+// TYPES -------------------------------------------------------------------
+
+// EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
+
+// PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
+
+int MUSHeaderSearch(const BYTE *head, int len);
+
+// PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
+
+// EXTERNAL DATA DECLARATIONS ----------------------------------------------
+
+// PRIVATE DATA DEFINITIONS ------------------------------------------------
 
 static const BYTE CtrlTranslate[15] =
 {
@@ -28,271 +78,189 @@ static const BYTE CtrlTranslate[15] =
 	121, // reset all controllers
 };
 
-MUSSong2::MUSSong2 (FILE *file, int len)
-: MidiOut (0), PlayerThread (0),
-  PauseEvent (0), ExitEvent (0), VolumeChangeEvent (0),
-  MusBuffer (0), MusHeader (0)
+// PUBLIC DATA DEFINITIONS -------------------------------------------------
+
+// CODE --------------------------------------------------------------------
+
+//==========================================================================
+//
+// MUSSong2 Constructor
+//
+// Performs some validity checks on the MUS file, buffers it, and creates
+// the playback thread control events.
+//
+//==========================================================================
+
+MUSSong2::MUSSong2 (FILE *file, BYTE *musiccache, int len, EMidiDevice type)
+: MIDIStreamer(type), MusHeader(0), MusBuffer(0)
 {
-	MusHeader = (MUSHeader *)new BYTE[len];
-	if (fread (MusHeader, 1, len, file) != (size_t)len)
-		return;
-
-	// Do some validation of the MUS file
-	if (MusHeader->Magic != MAKE_ID('M','U','S','\x1a'))
-		return;
-	
-	if (LittleShort(MusHeader->NumChans) > 15)
-		return;
-
-	ExitEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
+#ifdef _WIN32
 	if (ExitEvent == NULL)
 	{
-		Printf (PRINT_BOLD, "Could not create exit event for MIDI playback\n");
 		return;
 	}
-	VolumeChangeEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
-	if (VolumeChangeEvent == NULL)
+#endif
+
+	BYTE front[32];
+	int start;
+
+	if (file == NULL)
 	{
-		Printf (PRINT_BOLD, "Could not create volume event for MIDI playback\n");
-		return;
+		memcpy(front, musiccache, sizeof(front));
 	}
-	PauseEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
-	if (PauseEvent == NULL)
+	else if (fread(front, 1, sizeof(front), file) != sizeof(front))
 	{
-		Printf (PRINT_BOLD, "Could not create pause event for MIDI playback\n");
-	}
-
-	MusBuffer = (BYTE *)MusHeader + LittleShort(MusHeader->SongStart);
-	MaxMusP = MIN<int> (LittleShort(MusHeader->SongLen), len - LittleShort(MusHeader->SongStart));
-	MusP = 0;
-}
-
-MUSSong2::~MUSSong2 ()
-{
-	Stop ();
-
-	if (PauseEvent != NULL)
-	{
-		CloseHandle (PauseEvent);
-	}
-	if (ExitEvent != NULL)
-	{
-		CloseHandle (ExitEvent);
-	}
-	if (VolumeChangeEvent != NULL)
-	{
-		CloseHandle (VolumeChangeEvent);
-	}
-	if (MusHeader != 0)
-	{
-		delete[] ((BYTE *)MusHeader);
-	}
-}
-
-bool MUSSong2::IsMIDI () const
-{
-	return true;
-}
-
-bool MUSSong2::IsValid () const
-{
-	return MusBuffer != 0;
-}
-
-void MUSSong2::Play (bool looping)
-{
-	DWORD tid;
-
-	m_Status = STATE_Stopped;
-	m_Looping = looping;
-
-	if (MMSYSERR_NOERROR != midiOutOpen (&MidiOut, mididevice, 0, 0, CALLBACK_NULL))
-	{
-		Printf (PRINT_BOLD, "Could not open MIDI out device\n");
 		return;
 	}
 
-	// Try two different methods for setting the stream to full volume.
-	// Unfortunately, this isn't as reliable as it once was, which is a pity.
-	// The real volume selection is done by setting the volume controller for
-	// each channel. Because every General MIDI-compliant device must support
-	// this controller, it is the most reliable means of setting the volume.
-
-	VolumeWorks = (MMSYSERR_NOERROR == midiOutGetVolume (MidiOut, &SavedVolume));
-	if (VolumeWorks)
+	// To tolerate sloppy wads (diescum.wad, I'm looking at you), we search
+	// the first 32 bytes of the file for a signature. My guess is that DMX
+	// does no validation whatsoever and just assumes it was passed a valid
+	// MUS file, since where the header is offset affects how it plays.
+	start = MUSHeaderSearch(front, sizeof(front));
+	if (start < 0)
 	{
-		VolumeWorks &= (MMSYSERR_NOERROR == midiOutSetVolume (MidiOut, 0xffffffff));
+		return;
+	}
+
+	// Read the remainder of the song.
+	len = int(len - start);
+	if (len < (int)sizeof(MusHeader))
+	{ // It's too short.
+		return;
+	}
+	MusHeader = (MUSHeader *)new BYTE[len];
+	if (file == NULL)
+	{
+		memcpy(MusHeader, musiccache + start, len);
 	}
 	else
 	{
-		// Send the standard SysEx message for full master volume
-		BYTE volmess[] = { 0xf0, 0x7f, 0x7f, 0x04, 0x01, 0x7f, 0x7f, 0xf7 };
-		MIDIHDR hdr = { (LPSTR)volmess, sizeof(volmess), };
-
-		if (MMSYSERR_NOERROR == midiOutPrepareHeader (MidiOut, &hdr, sizeof(hdr)))
+		memcpy(MusHeader, front + start, sizeof(front) - start);
+		if (fread((BYTE *)MusHeader + sizeof(front) - start, 1, len - (sizeof(front) - start), file) != (size_t)(len - (32 - start)))
 		{
-			midiOutLongMsg (MidiOut, &hdr, sizeof(hdr));
-			while (MIDIERR_STILLPLAYING == midiOutUnprepareHeader (MidiOut, &hdr, sizeof(hdr)))
-			{
-				Sleep (10);
-			}
+			return;
 		}
 	}
 
-	snd_midivolume.Callback();	// set volume to current music's properties
-	PlayerThread = CreateThread (NULL, 0, PlayerProc, this, 0, &tid);
-	if (PlayerThread == NULL)
+	// Do some validation of the MUS file.
+	if (LittleShort(MusHeader->NumChans) > 15)
 	{
-		if (VolumeWorks)
-		{
-			midiOutSetVolume (MidiOut, SavedVolume);
-		}
-		midiOutClose (MidiOut);
-		MidiOut = NULL;
+		return;
 	}
 
-	m_Status = STATE_Playing;
+	MusBuffer = (BYTE *)MusHeader + LittleShort(MusHeader->SongStart);
+	MaxMusP = MIN<int>(LittleShort(MusHeader->SongLen), len - LittleShort(MusHeader->SongStart));
+	Division = 140;
+	InitialTempo = 1000000;
 }
 
-void MUSSong2::Pause ()
+//==========================================================================
+//
+// MUSSong2 Destructor
+//
+//==========================================================================
+
+MUSSong2::~MUSSong2 ()
 {
-	if (m_Status == STATE_Playing)
+	if (MusHeader != NULL)
 	{
-		SetEvent (PauseEvent);
-		m_Status = STATE_Paused;
+		delete[] (BYTE *)MusHeader;
 	}
 }
 
-void MUSSong2::Resume ()
-{
-	if (m_Status == STATE_Paused)
-	{
-		SetEvent (PauseEvent);
-		m_Status = STATE_Playing;
-	}
-}
+//==========================================================================
+//
+// MUSSong2 :: DoInitialSetup
+//
+// Sets up initial velocities and channel volumes.
+//
+//==========================================================================
 
-void MUSSong2::Stop ()
-{
-	if (PlayerThread)
-	{
-		SetEvent (ExitEvent);
-		WaitForSingleObject (PlayerThread, INFINITE);
-		CloseHandle (PlayerThread);
-		PlayerThread = NULL;
-	}
-	if (MidiOut)
-	{
-		midiOutReset (MidiOut);
-		if (VolumeWorks)
-		{
-			midiOutSetVolume (MidiOut, SavedVolume);
-		}
-		midiOutClose (MidiOut);
-		MidiOut = NULL;
-	}
-}
-
-bool MUSSong2::IsPlaying ()
-{
-	return m_Status != STATE_Stopped;
-}
-
-void MUSSong2::SetVolume (float volume)
-{
-	SetEvent (VolumeChangeEvent);
-}
-
-DWORD WINAPI MUSSong2::PlayerProc (LPVOID lpParameter)
-{
-	MUSSong2 *song = (MUSSong2 *)lpParameter;
-	HANDLE events[2] = { song->ExitEvent, song->PauseEvent };
-	bool waited;
-	int i;
-
-	SetThreadPriority (GetCurrentThread (), THREAD_PRIORITY_TIME_CRITICAL);
-
-	for (i = 0; i < 16; ++i)
-	{
-		song->LastVelocity[i] = 64;
-		song->ChannelVolumes[i] = 127;
-	}
-
-	song->OutputVolume (midivolume & 0xffff);
-
-	do
-	{
-		waited = false;
-		song->MusP = 0;
-
-		while (song->SendCommand () == SEND_WAIT)
-		{
-			DWORD time = 0;
-			BYTE t;
-			do
-			{
-				t = song->MusBuffer[song->MusP++];
-				time = (time << 7) | (t & 127);
-			}
-			while (t & 128);
-
-			waited = true;
-
-			// Wait for the exit or pause event or the next note
-			switch (WaitForMultipleObjects (2, events, FALSE, time * 1000 / 140))
-			{
-			case WAIT_OBJECT_0:
-				song->m_Status = STATE_Stopped;
-				return 0;
-
-			case WAIT_OBJECT_0+1:
-				// Go paused
-				song->OutputVolume (0);
-				// Wait for the exit or pause event
-				if (WAIT_OBJECT_0 == WaitForMultipleObjects (2, events, FALSE, INFINITE))
-				{
-					song->m_Status = STATE_Stopped;
-					return 0;
-				}
-				song->OutputVolume (midivolume & 0xffff);
-			}
-
-			// Check if the volume needs changing
-			if (WAIT_OBJECT_0 == WaitForSingleObject (song->VolumeChangeEvent, 0))
-			{
-				song->OutputVolume (midivolume & 0xffff);
-			}
-		}
-	}
-	while (waited && song->m_Looping);
-
-	song->m_Status = STATE_Stopped;
-	return 0;
-}
-
-void MUSSong2::OutputVolume (DWORD volume)
+void MUSSong2::DoInitialSetup()
 {
 	for (int i = 0; i < 16; ++i)
 	{
-		BYTE courseVol = (BYTE)(((ChannelVolumes[i]+1) * volume) >> 16);
-		midiOutShortMsg (MidiOut, i | MIDI_CTRLCHANGE | (7<<8) | (courseVol<<16));
+		LastVelocity[i] = 100;
+		ChannelVolumes[i] = 127;
 	}
 }
 
-int MUSSong2::SendCommand ()
+//==========================================================================
+//
+// MUSSong2 :: DoRestart
+//
+// Rewinds the song.
+//
+//==========================================================================
+
+void MUSSong2::DoRestart()
 {
-	BYTE event = 0;
+	MusP = 0;
+}
 
-	if (MusP >= MaxMusP)
-		return SEND_DONE;
+//==========================================================================
+//
+// MUSSong2 :: CheckDone
+//
+//==========================================================================
 
-	while (MusP < MaxMusP && (event & 0x70) != MUS_SCOREEND)
+bool MUSSong2::CheckDone()
+{
+	return MusP >= MaxMusP;
+}
+
+//==========================================================================
+//
+// MUSSong2 :: Precache
+//
+// MUS songs contain information in their header for exactly this purpose.
+//
+//==========================================================================
+
+void MUSSong2::Precache()
+{
+	WORD *work = (WORD *)alloca(MusHeader->NumInstruments * sizeof(WORD));
+	const WORD *used = (WORD *)MusHeader + sizeof(MUSHeader) / sizeof(WORD);
+	int i, j;
+
+	for (i = j = 0; i < MusHeader->NumInstruments; ++i)
+	{
+		WORD instr = LittleShort(used[i]);
+		if (instr < 128)
+		{
+			work[j++] = instr;
+		}
+		else if (used[i] >= 135 && used[i] <= 181)
+		{ // Percussions are 100-based, not 128-based, eh?
+			work[j++] = instr - 100 + (1 << 14);
+		}
+	}
+	MIDI->PrecacheInstruments(&work[0], j);
+}
+
+//==========================================================================
+//
+// MUSSong2 :: MakeEvents
+//
+// Translates MUS events into MIDI events and puts them into a MIDI stream
+// buffer. Returns the new position in the buffer.
+//
+//==========================================================================
+
+DWORD *MUSSong2::MakeEvents(DWORD *events, DWORD *max_event_p, DWORD max_time)
+{
+	DWORD tot_time = 0;
+	DWORD time = 0;
+
+	max_time = max_time * Division / Tempo;
+
+	while (events < max_event_p && tot_time <= max_time)
 	{
 		BYTE mid1, mid2;
 		BYTE channel;
 		BYTE t = 0, status;
-		
-		event = MusBuffer[MusP++];
+		BYTE event = MusBuffer[MusP++];
 		
 		if ((event & 0x70) != MUS_SCOREEND)
 		{
@@ -315,9 +283,9 @@ int MUSSong2::SendCommand ()
 		switch (event & 0x70)
 		{
 		case MUS_NOTEOFF:
-			status |= MIDI_NOTEOFF;
+			status |= MIDI_NOTEON;
 			mid1 = t;
-			mid2 = 64;
+			mid2 = 0;
 			break;
 			
 		case MUS_NOTEON:
@@ -325,7 +293,7 @@ int MUSSong2::SendCommand ()
 			mid1 = t & 127;
 			if (t & 128)
 			{
-				LastVelocity[channel] = MusBuffer[MusP++];;
+				LastVelocity[channel] = MusBuffer[MusP++];
 			}
 			mid2 = LastVelocity[channel];
 			break;
@@ -354,34 +322,106 @@ int MUSSong2::SendCommand ()
 				status |= MIDI_CTRLCHANGE;
 				mid1 = CtrlTranslate[t];
 				mid2 = MusBuffer[MusP++];
-
-				// Some devices don't support master volume
-				// (e.g. the Audigy's software MIDI synth--but not its two hardware ones),
-				// so assume none of them do and scale channel volumes manually.
 				if (mid1 == 7)
-				{
-					ChannelVolumes[channel] = mid2;
-					mid2 = (BYTE)(((mid2 + 1) * (midivolume & 0xffff)) >> 16);
+				{ // Clamp volume to 127, since DMX apparently allows 8-bit volumes.
+				  // Fix courtesy of Gez, courtesy of Ben Ryves.
+					mid2 = VolumeControllerChange(channel, MIN<int>(mid2, 0x7F));
 				}
 			}
 			break;
 			
 		case MUS_SCOREEND:
 		default:
-			return SEND_DONE;
-			break;
+			MusP = MaxMusP;
+			goto end;
 		}
 
-		if (MMSYSERR_NOERROR != midiOutShortMsg (MidiOut, status | (mid1 << 8) | (mid2 << 16)))
-		{
-			return SEND_DONE;
-		}
+		events[0] = time;			// dwDeltaTime
+		events[1] = 0;				// dwStreamID
+		events[2] = status | (mid1 << 8) | (mid2 << 16);
+		events += 3;
+
+		time = 0;
 		if (event & 128)
 		{
-			return SEND_WAIT;
+			do
+			{
+				t = MusBuffer[MusP++];
+				time = (time << 7) | (t & 127);
+			}
+			while (t & 128);
+		}
+		tot_time += time;
+	}
+end:
+	if (time != 0)
+	{
+		events[0] = time;			// dwDeltaTime
+		events[1] = 0;				// dwStreamID
+		events[2] = MEVT_NOP << 24;	// dwEvent
+		events += 3;
+	}
+	return events;
+}
+
+//==========================================================================
+//
+// MUSSong2 :: GetOPLDumper
+//
+//==========================================================================
+
+MusInfo *MUSSong2::GetOPLDumper(const char *filename)
+{
+	return new MUSSong2(this, filename, MDEV_OPL);
+}
+
+//==========================================================================
+//
+// MUSSong2 :: GetWaveDumper
+//
+//==========================================================================
+
+MusInfo *MUSSong2::GetWaveDumper(const char *filename, int rate)
+{
+	return new MUSSong2(this, filename, MDEV_GUS);
+}
+
+//==========================================================================
+//
+// MUSSong2 OPL Dumping Constructor
+//
+//==========================================================================
+
+MUSSong2::MUSSong2(const MUSSong2 *original, const char *filename, EMidiDevice type)
+: MIDIStreamer(filename, type)
+{
+	int songstart = LittleShort(original->MusHeader->SongStart);
+	MaxMusP = original->MaxMusP;
+	MusHeader = (MUSHeader *)new BYTE[songstart + MaxMusP];
+	memcpy(MusHeader, original->MusHeader, songstart + MaxMusP);
+	MusBuffer = (BYTE *)MusHeader + songstart;
+	Division = 140;
+	InitialTempo = 1000000;
+}
+
+//==========================================================================
+//
+// MUSHeaderSearch
+//
+// Searches for the MUS header within the given memory block, returning
+// the offset it was found at, or -1 if not present.
+//
+//==========================================================================
+
+int MUSHeaderSearch(const BYTE *head, int len)
+{
+	len -= 4;
+	for (int i = 0; i <= len; ++i)
+	{
+		if (head[i+0] == 'M' && head[i+1] == 'U' && head[i+2] == 'S' && head[i+3] == 0x1A)
+		{
+			return i;
 		}
 	}
-
-	return SEND_DONE;
+	return -1;
 }
-#endif

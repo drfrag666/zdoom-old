@@ -23,26 +23,30 @@
 #ifndef __M_MISC__
 #define __M_MISC__
 
-#include "doomtype.h"
+#include "basictypes.h"
 
 class FConfigFile;
 class FGameConfigFile;
 
 extern FGameConfigFile *GameConfig;
 
-BOOL M_WriteFile (char const *name, void *source, int length);
-int M_ReadFile (char const *name, byte **buffer);
+bool M_WriteFile (char const *name, void *source, int length);
+int M_ReadFile (char const *name, BYTE **buffer);
 void M_FindResponseFile (void);
 
 // [RH] M_ScreenShot now accepts a filename parameter.
 //		Pass a NULL to get the original behavior.
-void M_ScreenShot (char *filename);
+void M_ScreenShot (const char *filename);
 
 void M_LoadDefaults ();
 
-void STACK_ARGS M_SaveDefaults ();
-void M_SaveCustomKeys (FConfigFile *config, char *section, char *subsection);
+bool M_SaveDefaults (const char *filename);
+void M_SaveCustomKeys (FConfigFile *config, char *section, char *subsection, size_t sublen);
 
-string GetUserFile (string path, bool nodir=false);
+
+// Prepends ~/.zdoom to path
+FString GetUserFile (const char *path);
+
+FString M_ZLibError(int zerrnum);
 
 #endif

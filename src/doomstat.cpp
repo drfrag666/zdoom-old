@@ -29,7 +29,6 @@
 #include "i_system.h"
 #include "g_level.h"
 #include "p_local.h"
-#include "p_acs.h"
 
 int SaveVersion;
 
@@ -39,10 +38,6 @@ FStringTable	GStrings;
 // Game speed
 EGameSpeed		GameSpeed = SPEED_Normal;
 
-// Game Mode - identify IWAD as shareware, retail etc.
-GameMode_t		gamemode = undetermined;
-GameMission_t	gamemission = doom;
-
 // Show developer messages if true.
 CVAR (Bool, developer, false, 0)
 
@@ -51,13 +46,17 @@ CVAR (Bool, var_friction, true, CVAR_SERVERINFO);
 CVAR (Bool, var_pushers, true, CVAR_SERVERINFO);
 
 CVAR (Bool, alwaysapplydmflags, false, CVAR_SERVERINFO);
-CVAR (Float, teamdamage, 0.f, CVAR_SERVERINFO);
+
+CUSTOM_CVAR (Float, teamdamage, 0.f, CVAR_SERVERINFO)
+{
+	level.teamdamage = self;
+}
 
 CUSTOM_CVAR (String, language, "auto", CVAR_ARCHIVE)
 {
 	SetLanguageIDs ();
 	GStrings.LoadStrings (false);
-	G_MaybeLookupLevelName (NULL);
+	if (level.info != NULL) level.LevelName = level.info->LookupLevelName();
 }
 
 // [RH] Network arbitrator
@@ -68,3 +67,5 @@ int NextSkill = -1;
 int SinglePlayerClass[MAXPLAYERS];
 
 bool ToggleFullscreen;
+int BorderTopRefresh;
+

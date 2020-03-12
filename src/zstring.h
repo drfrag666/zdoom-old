@@ -1,71 +1,200 @@
+/*
+** zstring.h
+**
+**---------------------------------------------------------------------------
+** Copyright 2005-2007 Randy Heit
+** All rights reserved.
+**
+** Redistribution and use in source and binary forms, with or without
+** modification, are permitted provided that the following conditions
+** are met:
+**
+** 1. Redistributions of source code must retain the above copyright
+**    notice, this list of conditions and the following disclaimer.
+** 2. Redistributions in binary form must reproduce the above copyright
+**    notice, this list of conditions and the following disclaimer in the
+**    documentation and/or other materials provided with the distribution.
+** 3. The name of the author may not be used to endorse or promote products
+**    derived from this software without specific prior written permission.
+**
+** THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+** IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+** OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+** IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+** INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+** NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+**---------------------------------------------------------------------------
+**
+*/
+
 #ifndef ZSTRING_H
 #define ZSTRING_H
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stddef.h>
 #include "tarray.h"
+#include "name.h"
 
-//#define NOPOOLS
-class string
+#ifdef __GNUC__
+#define PRINTFISH(x) __attribute__((format(printf, 2, x)))
+#else
+#define PRINTFISH(x)
+#endif
+
+struct FStringData
+{
+	unsigned int Len;		// Length of string, excluding terminating null
+	unsigned int AllocLen;	// Amount of memory allocated for string
+	int RefCount;			// < 0 means it's locked
+	// char StrData[xxx];
+
+	char *Chars()
+	{
+		return (char *)(this + 1);
+	}
+
+	const char *Chars() const
+	{
+		return (const char *)(this + 1);
+	}
+
+	char *AddRef()
+	{
+		if (RefCount < 0)
+		{
+			return (char *)(MakeCopy() + 1);
+		}
+		else
+		{
+			RefCount++;
+			return (char *)(this + 1);
+		}
+	}
+
+	void Release()
+	{
+		assert (RefCount != 0);
+
+		if (--RefCount <= 0)
+		{
+			Dealloc();
+		}
+	}
+
+	FStringData *MakeCopy();
+
+	static FStringData *Alloc (size_t strlen);
+	FStringData *Realloc (size_t newstrlen);
+	void Dealloc ();
+};
+
+struct FNullStringData
+{
+	unsigned int Len;
+	unsigned int AllocLen;
+	int RefCount;
+	char Nothing[2];
+};
+
+enum ELumpNum
+{
+};
+
+class FString
 {
 public:
-	string () : Chars(NULL) {}
+	FString () : Chars(&NullString.Nothing[0]) { NullString.RefCount++; }
 
 	// Copy constructors
-	string (const string &other) { Chars = NULL; *this = other; }
-	string (const char *copyStr);
-	string (const char *copyStr, size_t copyLen);
-	string (char oneChar);
+	FString (const FString &other) { AttachToOther (other); }
+	FString (const char *copyStr);
+	FString (const char *copyStr, size_t copyLen);
+	FString (char oneChar);
 
 	// Concatenation constructors
-	string (const string &head, const string &tail);
-	string (const string &head, const char *tail);
-	string (const string &head, char tail);
-	string (const char *head, const string &tail);
-	string (const char *head, const char *tail);
-	string (char head, const string &tail);
+	FString (const FString &head, const FString &tail);
+	FString (const FString &head, const char *tail);
+	FString (const FString &head, char tail);
+	FString (const char *head, const FString &tail);
+	FString (const char *head, const char *tail);
+	FString (char head, const FString &tail);
 
-	~string ();
+	// Other constructors
+	FString (ELumpNum);	// Create from a lump
 
-	char *GetChars() const { return Chars; }
-	char &operator[] (int index) { return Chars[index]; }
+	~FString ();
 
-	string &operator = (const string &other);
-	string &operator = (const char *copyStr);
+	// Discard string's contents, create a new buffer, and lock it.
+	char *LockNewBuffer(size_t len);
 
-	string operator + (const string &tail) const;
-	string operator + (const char *tail) const;
-	string operator + (char tail) const;
-	friend string operator + (const char *head, const string &tail);
-	friend string operator + (char head, const string &tail);
+	char *LockBuffer();		// Obtain write access to the character buffer
+	void UnlockBuffer();	// Allow shared access to the character buffer
 
-	string &operator += (const string &tail);
-	string &operator += (const char *tail);
-	string &operator += (char tail);
+	operator const char *() const { return Chars; }
 
-	string Left (size_t numChars) const;
-	string Right (size_t numChars) const;
-	string Mid (size_t pos, size_t numChars) const;
+	const char *GetChars() const { return Chars; }
 
-	long IndexOf (const string &substr, long startIndex=0) const;
+	const char &operator[] (int index) const { return Chars[index]; }
+#if defined(_WIN32) && !defined(_WIN64) && defined(_MSC_VER)
+	// Compiling 32-bit Windows source with MSVC: size_t is typedefed to an
+	// unsigned int with the 64-bit portability warning attribute, so the
+	// prototype cannot substitute unsigned int for size_t, or you get
+	// spurious warnings.
+	const char &operator[] (size_t index) const { return Chars[index]; }
+#else
+	const char &operator[] (unsigned int index) const { return Chars[index]; }
+#endif
+	const char &operator[] (unsigned long index) const { return Chars[index]; }
+	const char &operator[] (unsigned long long index) const { return Chars[index]; }
+
+	FString &operator = (const FString &other);
+	FString &operator = (const char *copyStr);
+
+	FString operator + (const FString &tail) const;
+	FString operator + (const char *tail) const;
+	FString operator + (char tail) const;
+	friend FString operator + (const char *head, const FString &tail);
+	friend FString operator + (char head, const FString &tail);
+
+	FString &operator += (const FString &tail);
+	FString &operator += (const char *tail);
+	FString &operator += (char tail);
+	FString &operator += (const FName &name) { return *this += name.GetChars(); }
+	FString &AppendCStrPart (const char *tail, size_t tailLen);
+
+	FString &operator << (const FString &tail) { return *this += tail; }
+	FString &operator << (const char *tail) { return *this += tail; }
+	FString &operator << (char tail) { return *this += tail; }
+	FString &operator << (const FName &name) { return *this += name.GetChars(); }
+
+	FString Left (size_t numChars) const;
+	FString Right (size_t numChars) const;
+	FString Mid (size_t pos, size_t numChars = ~(size_t)0) const;
+
+	long IndexOf (const FString &substr, long startIndex=0) const;
 	long IndexOf (const char *substr, long startIndex=0) const;
 	long IndexOf (char subchar, long startIndex=0) const;
 
-	long IndexOfAny (const string &charset, long startIndex=0) const;
+	long IndexOfAny (const FString &charset, long startIndex=0) const;
 	long IndexOfAny (const char *charset, long startIndex=0) const;
 
-	long LastIndexOf (const string &substr) const;
+	long LastIndexOf (const FString &substr) const;
 	long LastIndexOf (const char *substr) const;
 	long LastIndexOf (char subchar) const;
-	long LastIndexOf (const string &substr, long endIndex) const;
+	long LastIndexOf (const FString &substr, long endIndex) const;
 	long LastIndexOf (const char *substr, long endIndex) const;
 	long LastIndexOf (char subchar, long endIndex) const;
 	long LastIndexOf (const char *substr, long endIndex, size_t substrlen) const;
 
-	long LastIndexOfAny (const string &charset) const;
+	long LastIndexOfAny (const FString &charset) const;
 	long LastIndexOfAny (const char *charset) const;
-	long LastIndexOfAny (const string &charset, long endIndex) const;
+	long LastIndexOfAny (const FString &charset, long endIndex) const;
 	long LastIndexOfAny (const char *charset, long endIndex) const;
 
 	void ToUpper ();
@@ -73,18 +202,18 @@ public:
 	void SwapCase ();
 
 	void StripLeft ();
-	void StripLeft (const string &charset);
+	void StripLeft (const FString &charset);
 	void StripLeft (const char *charset);
 
 	void StripRight ();
-	void StripRight (const string &charset);
+	void StripRight (const FString &charset);
 	void StripRight (const char *charset);
 
 	void StripLeftRight ();
-	void StripLeftRight (const string &charset);
+	void StripLeftRight (const FString &charset);
 	void StripLeftRight (const char *charset);
 
-	void Insert (size_t index, const string &instr);
+	void Insert (size_t index, const FString &instr);
 	void Insert (size_t index, const char *instr);
 	void Insert (size_t index, const char *instr, size_t instrlen);
 
@@ -98,14 +227,16 @@ public:
 	void MergeChars (char merger, char newchar);
 	void MergeChars (const char *charset, char newchar);
 
-	void Substitute (const string &oldstr, const string &newstr);
-	void Substitute (const char *oldstr, const string &newstr);
-	void Substitute (const string &oldstr, const char *newstr);
+	void Substitute (const FString &oldstr, const FString &newstr);
+	void Substitute (const char *oldstr, const FString &newstr);
+	void Substitute (const FString &oldstr, const char *newstr);
 	void Substitute (const char *oldstr, const char *newstr);
 	void Substitute (const char *oldstr, const char *newstr, size_t oldstrlen, size_t newstrlen);
 
-	void Format (const char *fmt, ...);
-	void VFormat (const char *fmt, va_list arglist);
+	void Format (const char *fmt, ...) PRINTFISH(3);
+	void AppendFormat (const char *fmt, ...) PRINTFISH(3);
+	void VFormat (const char *fmt, va_list arglist) PRINTFISH(0);
+	void VAppendFormat (const char *fmt, va_list arglist) PRINTFISH(0);
 
 	bool IsInt () const;
 	bool IsFloat () const;
@@ -113,111 +244,36 @@ public:
 	unsigned long ToULong (int base=0) const;
 	double ToDouble () const;
 
-	size_t Len() const { return Chars == NULL ? 0 : ((StringHeader *)(Chars - sizeof(StringHeader)))->Len; }
+	size_t Len() const { return Data()->Len; }
 	bool IsEmpty() const { return Len() == 0; }
+	bool IsNotEmpty() const { return Len() != 0; }
 
-	int Compare (const string &other) const { return strcmp (Chars, other.Chars); }
+	void Truncate (long newlen);
+
+	int Compare (const FString &other) const { return strcmp (Chars, other.Chars); }
 	int Compare (const char *other) const { return strcmp (Chars, other); }
 
-	int CompareNoCase (const string &other) const { return stricmp (Chars, other.Chars); }
+	int CompareNoCase (const FString &other) const { return stricmp (Chars, other.Chars); }
 	int CompareNoCase (const char *other) const { return stricmp (Chars, other); }
 
 protected:
-	struct StringHeader
-	{
-#ifndef NOPOOLS
-		string *Owner;		// string this char array belongs to
-#endif
-		size_t Len;			// Length of string, excluding terminating null
-	};
-	struct Pool;
-	struct PoolGroup
-	{
-#ifndef NOPOOLS
-		~PoolGroup ();
-		Pool *Pools;
-		Pool *FindPool (char *chars) const;
-		static StringHeader *GetHeader (char *chars);
-#endif
-		char *Alloc (string *owner, size_t len);
-		char *Realloc (string *owner, char *chars, size_t newlen);
-		void Free (char *chars);
-	};
+	const FStringData *Data() const { return (FStringData *)Chars - 1; }
+	FStringData *Data() { return (FStringData *)Chars - 1; }
 
-	string (size_t len);
-	StringHeader *GetHeader () const;
+	void AttachToOther (const FString &other);
+	void AllocBuffer (size_t len);
+	void ReallocBuffer (size_t newlen);
 
 	static int FormatHelper (void *data, const char *str, int len);
 	static void StrCopy (char *to, const char *from, size_t len);
-	static void StrCopy (char *to, const string &from);
-	static PoolGroup Pond;
+	static void StrCopy (char *to, const FString &from);
 
 	char *Chars;
 
-#ifndef __GNUC__
-	template<> friend bool NeedsDestructor<string> () { return true; }
+	static FNullStringData NullString;
 
-	template<> friend void CopyForTArray<string> (string &dst, string &src)
-	{
-		// When a TArray is resized, we just need to update the Owner, because
-		// the old copy is going to go away very soon. No need to call the
-		// destructor, either, because full ownership is transferred to the
-		// new string.
-		char *chars = src.Chars;
-		dst.Chars = chars;
-		if (chars != NULL)
-		{
-			((string::StringHeader *)(chars - sizeof(string::StringHeader)))->Owner = &dst;
-		}
-	}
-	template<> friend void ConstructInTArray<string> (string *dst, const string &src)
-	{
-		new (dst) string(src);
-	}
-	template<> friend void ConstructEmptyInTArray<string> (string *dst)
-	{
-		new (dst) string;
-	}
-#else
-	template<class string> friend inline void CopyForTArray (string &dst, string &src);
-	template<class string> friend inline void ConstructInTArray (string *dst, const string &src);
-	template<class string> friend inline void ConstructEmptyInTArray (string *dst);
-#endif
-
-private:
-	void *operator new (size_t size, string *addr)
-	{
-		return addr;
-	}
-	void operator delete (void *, string *)
-	{
-	}
+	friend struct FStringData;
 };
-
-#ifdef __GNUC__
-template<> inline bool NeedsDestructor<string> () { return true; }
-template<> inline void CopyForTArray<string> (string &dst, string &src)
-{
-	// When a TArray is resized, we just need to update the Owner, because
-	// the old copy is going to go away very soon. No need to call the
-	// destructor, either, because full ownership is transferred to the
-	// new string.
-	char *chars = src.Chars;
-	dst.Chars = chars;
-	if (chars != NULL)
-	{
-		((string::StringHeader *)(chars - sizeof(string::StringHeader)))->Owner = &dst;
-	}
-}
-template<> inline void ConstructInTArray<string> (string *dst, const string &src)
-{
-	new (dst) string(src);
-}
-template<> inline void ConstructEmptyInTArray<string> (string *dst)
-{
-	new (dst) string;
-}
-#endif
 
 namespace StringFormat
 {
@@ -233,18 +289,40 @@ namespace StringFormat
 		F_SIGNED	= 32,
 		F_NEGATIVE	= 64,
 		F_ZEROVALUE	= 128,
+		F_FPT		= 256,
 
 		// Format specification size prefixes
 		F_HALFHALF	= 0x1000,	// hh
 		F_HALF		= 0x2000,	// h
 		F_LONG		= 0x3000,	// l
 		F_LONGLONG	= 0x4000,	// ll or I64
-		F_BIGI		= 0x5000	// I
+		F_BIGI		= 0x5000,	// I
+		F_PTRDIFF	= 0x6000,	// t
+		F_SIZE		= 0x7000,	// z
 	};
 	typedef int (*OutputFunc)(void *data, const char *str, int len);
 
 	int VWorker (OutputFunc output, void *outputData, const char *fmt, va_list arglist);
 	int Worker (OutputFunc output, void *outputData, const char *fmt, ...);
+};
+
+#undef PRINTFISH
+
+// FName inline implementations that take FString parameters
+
+inline FName::FName(const FString &text) { Index = NameData.FindName (text, text.Len(), false); }
+inline FName::FName(const FString &text, bool noCreate) { Index = NameData.FindName (text, text.Len(), noCreate); }
+inline FName &FName::operator = (const FString &text) { Index = NameData.FindName (text, text.Len(), false); return *this; }
+inline FName &FNameNoInit::operator = (const FString &text) { Index = NameData.FindName (text, text.Len(), false); return *this; }
+
+// Hash for TMap
+extern unsigned int SuperFastHash(const char *data, size_t len);
+template<> struct THashTraits<FString>
+{
+	hash_t Hash(const FString &key) { return (hash_t)SuperFastHash(key, key.Len()+1); }
+
+	// Compares two keys, returning zero if they are the same.
+	int Compare(const FString &left, const FString &right) { return left.Compare(right); }
 };
 
 #endif

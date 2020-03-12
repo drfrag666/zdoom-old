@@ -1,9 +1,9 @@
 /*
 ** a_soundenvironment.cpp
-** Actor that controls the EAX settings in its zone
+** Actor that controls the reverb settings in its zone
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -39,16 +39,14 @@
 
 class ASoundEnvironment : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASoundEnvironment, AActor)
+	DECLARE_CLASS (ASoundEnvironment, AActor)
 public:
 	void PostBeginPlay ();
 	void Deactivate (AActor *activator);
 	void Activate (AActor *deactivator);
 };
 
-IMPLEMENT_STATELESS_ACTOR (ASoundEnvironment, Any, 9048, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR|MF_NOGRAVITY)
-END_DEFAULTS
+IMPLEMENT_CLASS (ASoundEnvironment)
 
 void ASoundEnvironment::PostBeginPlay ()
 {

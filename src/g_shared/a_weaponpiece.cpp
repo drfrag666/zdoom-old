@@ -1,43 +1,26 @@
 #include "a_pickups.h"
 #include "a_weaponpiece.h"
 #include "doomstat.h"
+#include "farchive.h"
 
+IMPLEMENT_CLASS (AWeaponHolder)
 
-
-// an internal class to hold the information for player class independent weapon piece handling
-class AWeaponHolder : public AInventory
+void AWeaponHolder::Serialize (FArchive &arc)
 {
-	DECLARE_ACTOR(AWeaponHolder, AInventory)
-
-public:
-	int PieceMask;
-	const TypeInfo * PieceWeapon;
-
-	void Serialize (FArchive &arc)
-	{
-		arc << PieceMask ;
-		if (arc.IsStoring()) arc.UserWriteClass(PieceWeapon);
-		else arc.UserWriteClass(PieceWeapon);
-	}
-};
+	Super::Serialize(arc);
+	arc << PieceMask << PieceWeapon;
+}
 
 
-
-IMPLEMENT_STATELESS_ACTOR (AWeaponHolder, Any, -1, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR)
-	PROP_Inventory_FlagsSet (IF_UNDROPPABLE)
-END_DEFAULTS
-
-IMPLEMENT_STATELESS_ACTOR (AWeaponPiece, Any, -1, 0)
-END_DEFAULTS
+IMPLEMENT_POINTY_CLASS (AWeaponPiece)
+ DECLARE_POINTER (FullWeapon)
+END_POINTERS
 
 
 void AWeaponPiece::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
-	if (arc.IsStoring()) arc.UserWriteClass(WeaponClass); else arc.UserReadClass(WeaponClass);         
-	arc << FullWeapon;
-	arc << PieceValue;
+	arc << WeaponClass << FullWeapon << PieceValue;
 }
 
 //==========================================================================
@@ -46,7 +29,34 @@ void AWeaponPiece::Serialize (FArchive &arc)
 //
 //==========================================================================
 
-bool AWeaponPiece::TryPickup (AActor *toucher)
+bool AWeaponPiece::TryPickupRestricted (AActor *&toucher)
+{
+	// Wrong class, but try to pick up for ammo
+	if (ShouldStay())
+	{ // Can't pick up weapons for other classes in coop netplay
+		return false;
+	}
+
+	AWeapon * Defaults=(AWeapon*)GetDefaultByType(WeaponClass);
+
+	bool gaveSome = !!(toucher->GiveAmmo (Defaults->AmmoType1, Defaults->AmmoGive1) +
+					   toucher->GiveAmmo (Defaults->AmmoType2, Defaults->AmmoGive2));
+
+	if (gaveSome)
+	{
+		GoAwayAndDie ();
+	}
+	return gaveSome;
+}
+
+
+//==========================================================================
+//
+// TryPickupWeaponPiece
+//
+//==========================================================================
+
+bool AWeaponPiece::TryPickup (AActor *&toucher)
 {
 	AInventory * inv;
 	AWeaponHolder * hold=NULL;
@@ -67,7 +77,7 @@ bool AWeaponPiece::TryPickup (AActor *toucher)
 	}
 	if (!hold)
 	{
-		hold=static_cast<AWeaponHolder*>(Spawn(RUNTIME_CLASS(AWeaponHolder), 0, 0, 0));
+		hold=static_cast<AWeaponHolder*>(Spawn(RUNTIME_CLASS(AWeaponHolder), 0, 0, 0, NO_REPLACE));
 		hold->BecomeItem();
 		hold->AttachToOwner(toucher);
 		hold->PieceMask=0;
@@ -107,7 +117,7 @@ bool AWeaponPiece::TryPickup (AActor *toucher)
 	{
 		if (!toucher->FindInventory (WeaponClass))
 		{
-			FullWeapon= static_cast<AWeapon*>(Spawn(WeaponClass, 0, 0, 0));
+			FullWeapon= static_cast<AWeapon*>(Spawn(WeaponClass, 0, 0, 0, NO_REPLACE));
 			
 			// The weapon itself should not give more ammo to the player!
 			FullWeapon->AmmoGive1=0;
@@ -149,8 +159,14 @@ bool AWeaponPiece::PrivateShouldStay ()
 
 const char *AWeaponPiece::PickupMessage ()
 {
-	if (FullWeapon) return FullWeapon->PickupMessage();
-	return Super::PickupMessage();
+	if (FullWeapon) 
+	{
+		return FullWeapon->PickupMessage();
+	}
+	else
+	{
+		return Super::PickupMessage();
+	}
 }
 
 //===========================================================================
@@ -163,7 +179,13 @@ const char *AWeaponPiece::PickupMessage ()
 
 void AWeaponPiece::PlayPickupSound (AActor *toucher)
 {
-	if (FullWeapon) FullWeapon->PlayPickupSound(toucher);
-	else Super::PlayPickupSound(toucher);
+	if (FullWeapon)
+	{
+		FullWeapon->PlayPickupSound(toucher);
+	}
+	else
+	{
+		Super::PlayPickupSound(toucher);
+	}
 }
 

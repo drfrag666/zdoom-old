@@ -14,17 +14,17 @@
 // Watcom, so it's better to rely on its C optimizer to produce fast code.)
 //
 
-#pragma warning (disable: 4035)
 
 #include <string.h>
 #include <stddef.h>
 
+#pragma warning (disable: 4035)
+
 __forceinline SDWORD Scale (SDWORD a, SDWORD b, SDWORD c)
 {
 	__asm mov eax,a
-	__asm mov ecx,c
 	__asm imul b
-	__asm idiv ecx
+	__asm idiv c
 }
 
 __forceinline SDWORD MulScale (SDWORD a, SDWORD b, SDWORD c)
@@ -80,6 +80,13 @@ __forceinline SDWORD MulScale32 (SDWORD a, SDWORD b)
 	__asm mov eax,a
 	__asm imul b
 	__asm mov eax,edx
+}
+
+__forceinline DWORD UMulScale16(DWORD a, DWORD b)
+{
+	__asm mov eax,a
+	__asm mul b
+	__asm shrd eax,edx,16
 }
 
 __forceinline SDWORD DMulScale (SDWORD a, SDWORD b, SDWORD c, SDWORD d, SDWORD s)
@@ -339,22 +346,6 @@ __forceinline SDWORD ksgn (SDWORD a)
 	__asm sbb eax,eax
 	__asm cmp eax,edx
 	__asm adc eax,0
-}
-
-__forceinline int toint (float v)
-{
-	QWORD res;
-	__asm fld v;
-	__asm fistp res;
-	return (int)res;
-}
-
-__forceinline int quickertoint (float v)
-{
-	DWORD res;
-	__asm fld v;
-	__asm fistp res;
-	return (int)res;
 }
 
 #pragma warning (default: 4035)

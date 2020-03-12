@@ -1,208 +1,57 @@
+/*
 #include "actor.h"
 #include "info.h"
 #include "m_random.h"
 #include "p_local.h"
 #include "p_enemy.h"
 #include "s_sound.h"
-#include "a_doomglobal.h"
 #include "statnums.h"
-
-void A_Fire (AActor *);		// from m_archvile.cpp
-
-void A_BrainAwake (AActor *);
-void A_BrainPain (AActor *);
-void A_BrainScream (AActor *);
-void A_BrainExplode (AActor *);
-void A_BrainDie (AActor *);
-void A_BrainSpit (AActor *);
-void A_SpawnFly (AActor *);
-void A_SpawnSound (AActor *);
+#include "a_specialspot.h"
+#include "thingdef/thingdef.h"
+#include "doomstat.h"
+#include "g_level.h"
+*/
 
 static FRandom pr_brainscream ("BrainScream");
 static FRandom pr_brainexplode ("BrainExplode");
 static FRandom pr_spawnfly ("SpawnFly");
 
-class ABossTarget : public AActor
-{
-	DECLARE_STATELESS_ACTOR (ABossTarget, AActor)
-public:
-	void BeginPlay ();
-};
-
-class DBrainState : public DThinker
-{
-	DECLARE_CLASS (DBrainState, DThinker)
-public:
-	DBrainState ()
-		: DThinker (STAT_BOSSTARGET),
-		  Targets (STAT_BOSSTARGET),
-		  SerialTarget (NULL),
-		  Easy (false)
-	{}
-	void Serialize (FArchive &arc);
-	ABossTarget *GetTarget ();
-protected:
-	TThinkerIterator<ABossTarget> Targets;
-	ABossTarget *SerialTarget;
-	bool Easy;
-};
-
-FState ABossBrain::States[] =
-{
-#define S_BRAINEXPLODE 0
-	S_BRIGHT (MISL, 'B',   10, NULL 			, &States[S_BRAINEXPLODE+1]),
-	S_BRIGHT (MISL, 'C',   10, NULL 			, &States[S_BRAINEXPLODE+2]),
-	S_BRIGHT (MISL, 'D',   10, A_BrainExplode	, NULL),
-
-#define S_BRAIN (S_BRAINEXPLODE+3)
-	S_NORMAL (BBRN, 'A',   -1, NULL 			, NULL),
-
-#define S_BRAIN_PAIN (S_BRAIN+1)
-	S_NORMAL (BBRN, 'B',   36, A_BrainPain		, &States[S_BRAIN]),
-
-#define S_BRAIN_DIE (S_BRAIN_PAIN+1)
-	S_NORMAL (BBRN, 'A',  100, A_BrainScream	, &States[S_BRAIN_DIE+1]),
-	S_NORMAL (BBRN, 'A',   10, NULL 			, &States[S_BRAIN_DIE+2]),
-	S_NORMAL (BBRN, 'A',   10, NULL 			, &States[S_BRAIN_DIE+3]),
-	S_NORMAL (BBRN, 'A',   -1, A_BrainDie		, NULL)
-};
-
-IMPLEMENT_ACTOR (ABossBrain, Doom, 88, 0)
-	PROP_SpawnHealth (250)
-	//PROP_HeightFixed (86)		// don't do this; it messes up some non-id levels
-	PROP_MassLong (10000000)
-	PROP_PainChance (255)
-	PROP_Flags (MF_SOLID|MF_SHOOTABLE)
-	PROP_Flags4 (MF4_NOICEDEATH)
-
-	PROP_SpawnState (S_BRAIN)
-	PROP_PainState (S_BRAIN_PAIN)
-	PROP_DeathState (S_BRAIN_DIE)
-
-	PROP_PainSound ("brain/pain")
-	PROP_DeathSound ("brain/death")
-END_DEFAULTS
-
-class ABossEye : public AActor
-{
-	DECLARE_ACTOR (ABossEye, AActor)
-public:
-	void Serialize (FArchive &arc);
-};
-
-FState ABossEye::States[] =
-{
-#define S_BRAINEYE 0
-	S_NORMAL (SSWV, 'A',   10, A_Look						, &States[S_BRAINEYE]),
-
-#define S_BRAINEYESEE (S_BRAINEYE+1)
-	S_NORMAL (SSWV, 'A',  181, A_BrainAwake 				, &States[S_BRAINEYESEE+1]),
-	S_NORMAL (SSWV, 'A',  150, A_BrainSpit					, &States[S_BRAINEYESEE+1])
-};
-
-IMPLEMENT_ACTOR (ABossEye, Doom, 89, 0)
-	PROP_HeightFixed (32)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR)
-
-	PROP_SpawnState (S_BRAINEYE)
-	PROP_SeeState (S_BRAINEYESEE)
-END_DEFAULTS
-
-void ABossEye::Serialize (FArchive &arc)
-{
-	Super::Serialize (arc);
-}
-
-IMPLEMENT_STATELESS_ACTOR (ABossTarget, Doom, 87, 0)
-	PROP_HeightFixed (32)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR)
-END_DEFAULTS
-
-void ABossTarget::BeginPlay ()
-{
-	Super::BeginPlay ();
-	ChangeStatNum (STAT_BOSSTARGET);
-}
-
-class ASpawnShot : public AActor
-{
-	DECLARE_ACTOR (ASpawnShot, AActor)
-};
-
-FState ASpawnShot::States[] =
-{
-	S_BRIGHT (BOSF, 'A',	3, A_SpawnSound 				, &States[1]),
-	S_BRIGHT (BOSF, 'B',	3, A_SpawnFly					, &States[2]),
-	S_BRIGHT (BOSF, 'C',	3, A_SpawnFly					, &States[3]),
-	S_BRIGHT (BOSF, 'D',	3, A_SpawnFly					, &States[0])
-};
-
-IMPLEMENT_ACTOR (ASpawnShot, Doom, -1, 0)
-	PROP_RadiusFixed (6)
-	PROP_HeightFixed (32)
-	PROP_SpeedFixed (10)
-	PROP_Damage (3)
-	PROP_Flags (MF_NOBLOCKMAP|MF_MISSILE|MF_DROPOFF|MF_NOGRAVITY|MF_NOCLIP)
-	PROP_Flags2 (MF2_NOTELEPORT)
-	PROP_Flags4 (MF4_RANDOMIZE)
-
-	PROP_SpawnState (0)
-
-	PROP_SeeSound ("brain/spit")
-	PROP_DeathSound ("brain/cubeboom")
-END_DEFAULTS
-
-class ASpawnFire : public AActor
-{
-	DECLARE_ACTOR (ASpawnFire, AActor)
-};
-
-FState ASpawnFire::States[] =
-{
-	S_BRIGHT (FIRE, 'A',	4, A_Fire						, &States[1]),
-	S_BRIGHT (FIRE, 'B',	4, A_Fire						, &States[2]),
-	S_BRIGHT (FIRE, 'C',	4, A_Fire						, &States[3]),
-	S_BRIGHT (FIRE, 'D',	4, A_Fire						, &States[4]),
-	S_BRIGHT (FIRE, 'E',	4, A_Fire						, &States[5]),
-	S_BRIGHT (FIRE, 'F',	4, A_Fire						, &States[6]),
-	S_BRIGHT (FIRE, 'G',	4, A_Fire						, &States[7]),
-	S_BRIGHT (FIRE, 'H',	4, A_Fire						, NULL)
-};
-
-IMPLEMENT_ACTOR (ASpawnFire, Doom, -1, 0)
-	PROP_HeightFixed (78)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
-	PROP_RenderStyle (STYLE_Add)
-
-	PROP_SpawnState (0)
-END_DEFAULTS
-
-void A_BrainAwake (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_BrainAwake)
 {
 	// killough 3/26/98: only generates sound now
-	S_Sound (self, CHAN_VOICE, "brain/sight", 1, ATTN_SURROUND);
+	S_Sound (self, CHAN_VOICE, "brain/sight", 1, ATTN_NONE);
 }
 
-void A_BrainPain (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_BrainPain)
 {
-	S_Sound (self, CHAN_VOICE, "brain/pain", 1, ATTN_SURROUND);
+	S_Sound (self, CHAN_VOICE, "brain/pain", 1, ATTN_NONE);
 }
 
 static void BrainishExplosion (fixed_t x, fixed_t y, fixed_t z)
 {
-	AActor *boom = Spawn<ARocket> (x, y, z);
+	AActor *boom = Spawn("Rocket", x, y, z, NO_REPLACE);
 	if (boom != NULL)
 	{
-		boom->momz = pr_brainscream() << 9;
-		boom->SetState (&ABossBrain::States[S_BRAINEXPLODE]);
+		boom->DeathSound = "misc/brainexplode";
+		boom->velz = pr_brainscream() << 9;
+
+		const PClass *cls = PClass::FindClass("BossBrain");
+		if (cls != NULL)
+		{
+			FState *state = cls->ActorInfo->FindState(NAME_Brainexplode);
+			if (state != NULL)
+				boom->SetState (state);
+
+		}
 		boom->effects = 0;
+		boom->Damage = 0;	// disables collision detection which is not wanted here
 		boom->tics -= pr_brainscream() & 7;
 		if (boom->tics < 1)
 			boom->tics = 1;
 	}
 }
 
-void A_BrainScream (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_BrainScream)
 {
 	fixed_t x;
 		
@@ -211,119 +60,224 @@ void A_BrainScream (AActor *self)
 		BrainishExplosion (x, self->y - 320*FRACUNIT,
 			128 + (pr_brainscream() << (FRACBITS + 1)));
 	}
-	S_Sound (self, CHAN_VOICE, "brain/death", 1, ATTN_SURROUND);
+	S_Sound (self, CHAN_VOICE, "brain/death", 1, ATTN_NONE);
 }
 
-void A_BrainExplode (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_BrainExplode)
 {
 	fixed_t x = self->x + pr_brainexplode.Random2()*2048;
 	fixed_t z = 128 + pr_brainexplode()*2*FRACUNIT;
 	BrainishExplosion (x, self->y, z);
 }
 
-void A_BrainDie (AActor *self)
+DEFINE_ACTION_FUNCTION(AActor, A_BrainDie)
 {
 	// [RH] If noexit, then don't end the level.
 	if ((deathmatch || alwaysapplydmflags) && (dmflags & DF_NO_EXIT))
 		return;
 
+	// New dmflag: Kill all boss spawned monsters before ending the level.
+	if (dmflags2 & DF2_KILLBOSSMONST)
+	{
+		int count;	// Repeat until we have no more boss-spawned monsters.
+		do			// (e.g. Pain Elementals can spawn more to kill upon death.)
+		{
+			TThinkerIterator<AActor> it;
+			AActor *mo;
+			count = 0;
+			while ((mo = it.Next()))
+			{
+				if (mo->health > 0 && mo->flags4 & MF4_BOSSSPAWNED)
+				{
+					P_DamageMobj(mo, self, self, mo->health, NAME_None, 
+						DMG_NO_ARMOR|DMG_FORCED|DMG_THRUSTLESS|DMG_NO_FACTOR);
+					count++;
+				}
+			}
+		} while (count != 0);
+	}
+
 	G_ExitLevel (0, false);
 }
 
-void A_BrainSpit (AActor *self)
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_BrainSpit)
 {
-	TThinkerIterator<DBrainState> iterator (STAT_BOSSTARGET);
-	DBrainState *state;
+	DSpotState *state = DSpotState::GetSpotState();
 	AActor *targ;
 	AActor *spit;
+	bool isdefault = false;
+
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_CLASS(spawntype, 0);
 
 	// shoot a cube at current target
-	if (NULL == (state = iterator.Next ()))
-	{
-		state = new DBrainState;
-	}
-	targ = state->GetTarget ();
+	targ = state->GetNextInList(PClass::FindClass("BossTarget"), G_SkillProperty(SKILLP_EasyBossBrain));
 
 	if (targ != NULL)
 	{
+		if (spawntype == NULL) 
+		{
+			spawntype = PClass::FindClass("SpawnShot");
+			isdefault = true;
+		}
+
 		// spawn brain missile
-		spit = P_SpawnMissile (self, targ, RUNTIME_CLASS(ASpawnShot));
+		spit = P_SpawnMissile (self, targ, spawntype);
+
+		// Boss cubes should move freely to their destination so it's
+		// probably best to disable all collision detection for them.
 
 		if (spit != NULL)
 		{
+			if (spit->flags & MF_NOCLIP) spit->flags5 |= MF5_NOINTERACTION;
 			spit->target = targ;
+			spit->master = self;
 			// [RH] Do this correctly for any trajectory. Doom would divide by 0
 			// if the target had the same y coordinate as the spitter.
-			if ((spit->momx | spit->momy) == 0)
+			if ((spit->velx | spit->vely) == 0)
 			{
-				spit->reactiontime = 0;
+				spit->special2 = 0;
 			}
-			else if (abs(spit->momy) > abs(spit->momx))
+			else if (abs(spit->vely) > abs(spit->velx))
 			{
-				spit->reactiontime = (targ->y - self->y) / spit->momy;
+				spit->special2 = (targ->y - self->y) / spit->vely;
 			}
 			else
 			{
-				spit->reactiontime = (targ->x - self->x) / spit->momx;
+				spit->special2 = (targ->x - self->x) / spit->velx;
 			}
-			spit->reactiontime /= spit->state->GetTics();
+			// [GZ] Calculates when the projectile will have reached destination
+			spit->special2 += level.maptime;
+			spit->flags6 |= MF6_BOSSCUBE;
 		}
 
-		S_Sound (self, CHAN_WEAPON, "brain/spit", 1, ATTN_SURROUND);
+		if (!isdefault)
+		{
+			S_Sound(self, CHAN_WEAPON, self->AttackSound, 1, ATTN_NONE);
+		}
+		else
+		{
+			// compatibility fallback
+			S_Sound (self, CHAN_WEAPON, "brain/spit", 1, ATTN_NONE);
+		}
 	}
 }
 
-void A_SpawnFly (AActor *self)
+static void SpawnFly(AActor *self, const PClass *spawntype, FSoundID sound)
 {
 	AActor *newmobj;
 	AActor *fog;
-	AActor *targ;
+	AActor *eye = self->master; // The eye is the spawnshot's master, not the target!
+	AActor *targ = self->target; // Unlike other projectiles, the target is the intended destination.
 	int r;
-	const char *type;
 		
-	if (--self->reactiontime)
-		return; // still flying
-		
-	targ = self->target;
-
-	// First spawn teleport fire.
-	fog = Spawn<ASpawnFire> (targ->x, targ->y, targ->z);
-	S_Sound (fog, CHAN_BODY, "brain/spawn", 1, ATTN_NORM);
-
-	// Randomly select monster to spawn.
-	r = pr_spawnfly ();
-
-	// Probability distribution (kind of :),
-	// decreasing likelihood.
-		 if (r < 50)  type = "DoomImp";
-	else if (r < 90)  type = "Demon";
-	else if (r < 120) type = "Spectre";
-	else if (r < 130) type = "PainElemental";
-	else if (r < 160) type = "Cacodemon";
-	else if (r < 162) type = "Archvile";
-	else if (r < 172) type = "Revenant";
-	else if (r < 192) type = "Arachnotron";
-	else if (r < 222) type = "Fatso";
-	else if (r < 246) type = "HellKnight";
-	else			  type = "BaronOfHell";
-
-	newmobj = Spawn (type, targ->x, targ->y, targ->z);
-	if (newmobj != NULL)
+	// [GZ] Should be more viable than a countdown...
+	if (self->special2 != 0)
 	{
-		// Make the new monster hate what the boss eye hates
-		AActor *eye = self->target;
+		if (self->special2 > level.maptime)
+			return;		// still flying
+	}
+	else
+	{
+		if (self->reactiontime == 0 || --self->reactiontime != 0)
+			return;		// still flying
+	}
+	
+	if (spawntype != NULL)
+	{
+		fog = Spawn (spawntype, targ->x, targ->y, targ->z, ALLOW_REPLACE);
+		if (fog != NULL) S_Sound (fog, CHAN_BODY, sound, 1, ATTN_NORM);
+	}
 
-		if (eye != NULL)
+	FName SpawnName;
+
+	FDropItem *di;   // di will be our drop item list iterator
+	FDropItem *drop; // while drop stays as the reference point.
+	int n = 0;
+
+	// First see if this cube has its own actor list
+	drop = self->GetDropItems();
+
+	// If not, then default back to its master's list
+	if (drop == NULL && eye != NULL)
+		drop = eye->GetDropItems();
+
+	if (drop != NULL)
+	{
+		for (di = drop; di != NULL; di = di->Next)
 		{
-			newmobj->CopyFriendliness (eye, false);
+			if (di->Name != NAME_None)
+			{
+				if (di->amount < 0)
+				{
+					di->amount = 1; // default value is -1, we need a positive value.
+				}
+				n += di->amount; // this is how we can weight the list.
+			}
 		}
-		if (newmobj->SeeState != NULL && P_LookForPlayers (newmobj, true))
-			newmobj->SetState (newmobj->SeeState);
-
-		if (!(newmobj->ObjectFlags & OF_MassDestruction))
+		di = drop;
+		n = pr_spawnfly(n);
+		while (n >= 0)
 		{
-			// telefrag anything in this spot
-			P_TeleportMove (newmobj, newmobj->x, newmobj->y, newmobj->z, true);
+			if (di->Name != NAME_None)
+			{
+				n -= di->amount; // logically, none of the -1 values have survived by now.
+			}
+			if ((di->Next != NULL) && (n >= 0))
+			{
+				di = di->Next;
+			}
+			else
+			{
+				n = -1;
+			}
+		}
+		SpawnName = di->Name;
+	}
+	if (SpawnName == NAME_None)
+	{
+		// Randomly select monster to spawn.
+		r = pr_spawnfly ();
+
+		// Probability distribution (kind of :),
+		// decreasing likelihood.
+			 if (r < 50)  SpawnName = "DoomImp";
+		else if (r < 90)  SpawnName = "Demon";
+		else if (r < 120) SpawnName = "Spectre";
+		else if (r < 130) SpawnName = "PainElemental";
+		else if (r < 160) SpawnName = "Cacodemon";
+		else if (r < 162) SpawnName = "Archvile";
+		else if (r < 172) SpawnName = "Revenant";
+		else if (r < 192) SpawnName = "Arachnotron";
+		else if (r < 222) SpawnName = "Fatso";
+		else if (r < 246) SpawnName = "HellKnight";
+		else			  SpawnName = "BaronOfHell";
+	}
+	spawntype = PClass::FindClass(SpawnName);
+	if (spawntype != NULL)
+	{
+		newmobj = Spawn (spawntype, targ->x, targ->y, targ->z, ALLOW_REPLACE);
+		if (newmobj != NULL)
+		{
+			// Make the new monster hate what the boss eye hates
+			if (eye != NULL)
+			{
+				newmobj->CopyFriendliness (eye, false);
+			}
+			// Make it act as if it was around when the player first made noise
+			// (if the player has made noise).
+			newmobj->LastHeard = newmobj->Sector->SoundTarget;
+
+			if (newmobj->SeeState != NULL && P_LookForPlayers (newmobj, true, NULL))
+			{
+				newmobj->SetState (newmobj->SeeState);
+			}
+			if (!(newmobj->ObjectFlags & OF_EuthanizeMe))
+			{
+				// telefrag anything in this spot
+				P_TeleportMove (newmobj, newmobj->x, newmobj->y, newmobj->z, true);
+			}
+			newmobj->flags4 |= MF4_BOSSSPAWNED;
 		}
 	}
 
@@ -331,51 +285,28 @@ void A_SpawnFly (AActor *self)
 	self->Destroy ();
 }
 
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_SpawnFly)
+{
+	FSoundID sound;
+
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_CLASS(spawntype, 0);
+
+	if (spawntype != NULL) 
+	{
+		sound = GetDefaultByType(spawntype)->SeeSound;
+	}
+	else
+	{
+		spawntype = PClass::FindClass ("SpawnFire");
+		sound = "brain/spawn";
+	}
+	SpawnFly(self, spawntype, sound);
+}
+
 // travelling cube sound
-void A_SpawnSound (AActor *self)	
+DEFINE_ACTION_FUNCTION(AActor, A_SpawnSound)
 {
 	S_Sound (self, CHAN_BODY, "brain/cube", 1, ATTN_IDLE);
-	A_SpawnFly (self);
-}
-
-// Each brain on the level shares a single global state
-IMPLEMENT_CLASS (DBrainState)
-
-ABossTarget *DBrainState::GetTarget ()
-{
-	Easy = !Easy;
-
-	if (gameskill <= sk_easy && !Easy)
-		return NULL;
-
-	ABossTarget *target;
-
-	if (SerialTarget)
-	{
-		do
-		{
-			target = Targets.Next ();
-		} while (target != NULL && target != SerialTarget);
-		SerialTarget = NULL;
-	}
-	else
-	{
-		target = Targets.Next ();
-	}
-	return (target == NULL) ? Targets.Next () : target;
-}
-
-void DBrainState::Serialize (FArchive &arc)
-{
-	Super::Serialize (arc);
-	arc << Easy;
-	if (arc.IsStoring ())
-	{
-		ABossTarget *target = Targets.Next ();
-		arc << target;
-	}
-	else
-	{
-		arc << SerialTarget;
-	}
+	SpawnFly(self, PClass::FindClass("SpawnFire"), "brain/spawn");
 }

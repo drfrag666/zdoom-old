@@ -1,35 +1,35 @@
 #include "i_musicinterns.h"
-
-CUSTOM_CVAR (Int, opl_frequency, 49716, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
-{ // Clamp frequency to FMOD's limits
-	if (self < 4000)
-		self = 4000;
-	else if (self > 49716)	// No need to go higher than this
-		self = 49716;
-}
-
-CVAR (Bool, opl_enable, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+#include "oplsynth/muslib.h"
+#include "oplsynth/opl.h"
 
 static bool OPL_Active;
 
-CUSTOM_CVAR (Bool, opl_onechip, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CUSTOM_CVAR (Int, opl_numchips, 2, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 {
-	if (OPL_Active && currSong != NULL)
+	if (*self <= 0)
+	{
+		self = 1;
+	}
+	else if (*self > MAXOPL2CHIPS)
+	{
+		self = MAXOPL2CHIPS;
+	}
+	else if (OPL_Active && currSong != NULL)
 	{
 		static_cast<OPLMUSSong *>(currSong)->ResetChips ();
 	}
 }
 
+CVAR(Int, opl_core, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
-OPLMUSSong::OPLMUSSong (FILE *file, int len)
+OPLMUSSong::OPLMUSSong (FILE *file, BYTE *musiccache, int len)
 {
-	int rate = *opl_frequency;
-	int samples = rate/14;
+	int samples = int(OPL_SAMPLE_RATE / 14);
 
-	Music = new OPLmusicBlock (file, len, rate, samples);
+	Music = new OPLmusicFile (file, musiccache, len);
 
-	m_Stream = GSnd->CreateStream (FillStream, samples*2,
-		SoundStream::Mono, rate, this);
+	m_Stream = GSnd->CreateStream (FillStream, samples*4,
+		(opl_core == 0 ? SoundStream::Mono : 0) | SoundStream::Float, int(OPL_SAMPLE_RATE), this);
 	if (m_Stream == NULL)
 	{
 		Printf (PRINT_BOLD, "Could not create music stream.\n");
@@ -64,7 +64,7 @@ bool OPLMUSSong::IsPlaying ()
 	return m_Status == STATE_Playing;
 }
 
-void OPLMUSSong::Play (bool looping)
+void OPLMUSSong::Play (bool looping, int subsong)
 {
 	m_Status = STATE_Stopped;
 	m_Looping = looping;
@@ -72,7 +72,7 @@ void OPLMUSSong::Play (bool looping)
 	Music->SetLooping (looping);
 	Music->Restart ();
 
-	if (m_Stream->Play (snd_musicvolume))
+	if (m_Stream == NULL || m_Stream->Play (true, snd_musicvolume))
 	{
 		m_Status = STATE_Playing;
 	}
@@ -82,4 +82,25 @@ bool OPLMUSSong::FillStream (SoundStream *stream, void *buff, int len, void *use
 {
 	OPLMUSSong *song = (OPLMUSSong *)userdata;
 	return song->Music->ServiceStream (buff, len);
+}
+
+MusInfo *OPLMUSSong::GetOPLDumper(const char *filename)
+{
+	return new OPLMUSDumper(this, filename);
+}
+
+OPLMUSSong::OPLMUSSong(const OPLMUSSong *original, const char *filename)
+{
+	Music = new OPLmusicFile(original->Music, filename);
+	m_Stream = NULL;
+}
+
+OPLMUSDumper::OPLMUSDumper(const OPLMUSSong *original, const char *filename)
+: OPLMUSSong(original, filename)
+{
+}
+
+void OPLMUSDumper::Play(bool looping)
+{
+	Music->Dump();
 }

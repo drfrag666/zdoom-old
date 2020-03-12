@@ -2,7 +2,7 @@
 ** i_music.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,42 +35,64 @@
 #define __I_MUSIC_H__
 
 #include "doomdef.h"
-#include "doomstat.h"
-#include "files.h"
+
+class FileReader;
+struct FOptionValues;
 
 //
 //	MUSIC I/O
 //
 void I_InitMusic ();
-void STACK_ARGS I_ShutdownMusic ();
-void I_BuildMIDIMenuList (struct value_s **values, float *numValues);
+void I_ShutdownMusic ();
+void I_BuildMIDIMenuList (FOptionValues *);
+void I_UpdateMusic ();
 
 // Volume.
 void I_SetMusicVolume (float volume);
 
-// PAUSE game handling.
-void I_PauseSong (void *handle);
-void I_ResumeSong (void *handle);
-
 // Registers a song handle to song data.
-void *I_RegisterSong (const char *file, int offset, int length);
-void *I_RegisterCDSong (int track, int cdid = 0);
+class MusInfo;
+MusInfo *I_RegisterSong (const char *file, BYTE *musiccache, int offset, int length, int device);
+MusInfo *I_RegisterCDSong (int track, int cdid = 0);
+MusInfo *I_RegisterURLSong (const char *url);
 
-// Called by anything that wishes to start music.
-//	Plays a song, and when the song is done,
-//	starts playing it again in an endless loop.
-void I_PlaySong (void *handle, int looping, float relative_vol=1.f);
+// The base music class. Everything is derived from this --------------------
 
-// Stops a song.
-void I_StopSong (void *handle);
+class MusInfo
+{
+public:
+	MusInfo ();
+	virtual ~MusInfo ();
+	virtual void MusicVolumeChanged();		// snd_musicvolume changed
+	virtual void TimidityVolumeChanged();	// timidity_mastervolume changed
+	virtual void Play (bool looping, int subsong) = 0;
+	virtual void Pause () = 0;
+	virtual void Resume () = 0;
+	virtual void Stop () = 0;
+	virtual bool IsPlaying () = 0;
+	virtual bool IsMIDI () const;
+	virtual bool IsValid () const = 0;
+	virtual bool SetPosition (unsigned int ms);
+	virtual bool SetSubsong (int subsong);
+	virtual void Update();
+	virtual FString GetStats();
+	virtual MusInfo *GetOPLDumper(const char *filename);
+	virtual MusInfo *GetWaveDumper(const char *filename, int rate);
+	virtual void FluidSettingInt(const char *setting, int value);			// FluidSynth settings
+	virtual void FluidSettingNum(const char *setting, double value);		// "
+	virtual void FluidSettingStr(const char *setting, const char *value);	// "
 
-// See above (register), then think backwards
-void I_UnRegisterSong (void *handle);
+	void Start(bool loop, float rel_vol = -1.f, int subsong = 0);
 
-// Set the current order (position) for a MOD
-bool I_SetSongPosition (void *handle, int order);
-
-// Is the song still playing?
-bool I_QrySongPlaying (void *handle);
+	enum EState
+	{
+		STATE_Stopped,
+		STATE_Playing,
+		STATE_Paused
+	} m_Status;
+	bool m_Looping;
+	bool m_NotStartedYet;	// Song has been created but not yet played
+};
+extern int nomusic;
 
 #endif //__I_MUSIC_H__

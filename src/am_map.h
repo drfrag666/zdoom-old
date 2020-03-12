@@ -22,10 +22,14 @@
 #ifndef __AMMAP_H__
 #define __AMMAP_H__
 
-#include "d_event.h"
+struct event_t;
+class FArchive;
+
+
+void AM_StaticInit();
 
 // Called by main loop.
-BOOL AM_Responder (event_t* ev);
+bool AM_Responder (event_t* ev, bool last);
 
 // Called by main loop.
 void AM_Ticker (void);
@@ -38,7 +42,10 @@ void AM_Drawer (void);
 // if the level is completed while it is up.
 void AM_Stop (void);
 
+void AM_NewResolution ();
 void AM_ToggleMap ();
+void AM_LevelInit ();
+void AM_SerializeMarkers(FArchive &arc);
 
 
 #endif

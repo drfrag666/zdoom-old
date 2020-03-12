@@ -9,10 +9,11 @@
 #include "v_video.h"
 #include "v_pfx.h"
 #include "stats.h"
-
+#include "v_palette.h"
 #include "sdlvideo.h"
+#include "r_swrenderer.h"
 
-#include <SDL/SDL.h>
+#include <SDL.h>
 
 // MACROS ------------------------------------------------------------------
 
@@ -20,6 +21,7 @@
 
 class SDLFB : public DFrameBuffer
 {
+	DECLARE_CLASS(SDLFB, DFrameBuffer)
 public:
 	SDLFB (int width, int height, bool fullscreen);
 	~SDLFB ();
@@ -56,7 +58,10 @@ private:
 	bool NotPaletted;
 	
 	void UpdateColors ();
+
+	SDLFB () {}
 };
+IMPLEMENT_CLASS(SDLFB)
 
 struct MiniModeInfo
 {
@@ -65,15 +70,18 @@ struct MiniModeInfo
 
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
 
-void DoBlending (const PalEntry *from, PalEntry *to, int count, int r, int g, int b, int a);
-
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 extern IVideo *Video;
+extern SDL_Surface *cursorSurface;
+extern SDL_Rect cursorBlit;
+extern bool GUICapture;
 
 EXTERN_CVAR (Float, Gamma)
+EXTERN_CVAR (Int, vid_maxfps)
+EXTERN_CVAR (Bool, cl_capfps)
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -108,17 +116,41 @@ static MiniModeInfo WinModes[] =
 {
 	{ 320, 200 },
 	{ 320, 240 },
+	{ 400, 225 },	// 16:9
 	{ 400, 300 },
+	{ 480, 270 },	// 16:9
 	{ 480, 360 },
+	{ 512, 288 },	// 16:9
 	{ 512, 384 },
+	{ 640, 360 },	// 16:9
 	{ 640, 400 },
 	{ 640, 480 },
+	{ 720, 480 },	// 16:10
 	{ 720, 540 },
+	{ 800, 450 },	// 16:9
+	{ 800, 500 },	// 16:10
 	{ 800, 600 },
+	{ 848, 480 },	// 16:9
+	{ 960, 600 },	// 16:10
 	{ 960, 720 },
+	{ 1024, 576 },	// 16:9
+	{ 1024, 640 },	// 16:10
 	{ 1024, 768 },
+	{ 1088, 612 },	// 16:9
+	{ 1152, 648 },	// 16:9
+	{ 1152, 720 },	// 16:10
 	{ 1152, 864 },
-	{ 1280, 960 }
+	{ 1280, 720 },	// 16:9
+	{ 1280, 800 },	// 16:10
+	{ 1280, 960 },
+	{ 1360, 768 },	// 16:9
+	{ 1400, 787 },	// 16:9
+	{ 1400, 875 },	// 16:10
+	{ 1400, 1050 },
+	{ 1600, 900 },	// 16:9
+	{ 1600, 1000 },	// 16:10
+	{ 1600, 1200 },
+	{ 1920, 1080 },
 };
 
 static cycle_t BlitCycles;
@@ -136,17 +168,11 @@ SDLVideo::~SDLVideo ()
 {
 }
 
-// This only changes how the iterator lists modes
-bool SDLVideo::FullscreenChanged (bool fs)
-{
-	IteratorFS = fs;
-	return true;
-}
-
-void SDLVideo::StartModeIterator (int bits)
+void SDLVideo::StartModeIterator (int bits, bool fs)
 {
 	IteratorMode = 0;
 	IteratorBits = bits;
+	IteratorFS = fs;
 }
 
 bool SDLVideo::NextMode (int *width, int *height, bool *letterbox)
@@ -201,6 +227,8 @@ DFrameBuffer *SDLVideo::CreateFrameBuffer (int width, int height, bool fullscree
 			return old;
 		}
 		old->GetFlash (flashColor, flashAmount);
+		old->ObjectFlags |= OF_YesReallyDelete;
+		if (screen == old) screen = NULL;
 		delete old;
 	}
 	else
@@ -252,11 +280,6 @@ DFrameBuffer *SDLVideo::CreateFrameBuffer (int width, int height, bool fullscree
 		fb = static_cast<SDLFB *>(CreateFrameBuffer (width, height, fullscreen, NULL));
 	}
 
-	if (fb->IsFullscreen() != fullscreen)
-	{
-		Video->FullscreenChanged (!fullscreen);
-	}
-
 	fb->SetFlash (flashColor, flashAmount);
 
 	return fb;
@@ -277,6 +300,7 @@ SDLFB::SDLFB (int width, int height, bool fullscreen)
 	NeedGammaUpdate = false;
 	UpdatePending = false;
 	NotPaletted = false;
+	FlashAmount = 0;
 	
 	Screen = SDL_SetVideoMode (width, height, vid_displaybits,
 		SDL_HWSURFACE|SDL_HWPALETTE|SDL_DOUBLEBUF|SDL_ANYFORMAT|
@@ -352,13 +376,20 @@ void SDLFB::Update ()
 
 	DrawRateStuff ();
 
+#ifndef __APPLE__
+	if(vid_maxfps && !cl_capfps)
+	{
+		SEMAPHORE_WAIT(FPSLimitSemaphore)
+	}
+#endif
+
 	Buffer = NULL;
 	LockCount = 0;
 	UpdatePending = false;
 
-	BlitCycles = 0;
-	SDLFlipCycles = 0;
-	clock (BlitCycles);
+	BlitCycles.Reset();
+	SDLFlipCycles.Reset();
+	BlitCycles.Clock();
 
 	if (SDL_LockSurface (Screen) == -1)
 		return;
@@ -385,12 +416,18 @@ void SDLFB::Update ()
 	}
 	
 	SDL_UnlockSurface (Screen);
-	
-	clock (SDLFlipCycles);
-	SDL_Flip (Screen);
-	unclock (SDLFlipCycles);
 
-	unclock (BlitCycles);
+	if (cursorSurface != NULL && GUICapture)
+	{
+		// SDL requires us to draw a surface to get true color cursors.
+		SDL_BlitSurface(cursorSurface, NULL, Screen, &cursorBlit);
+	}
+
+	SDLFlipCycles.Clock();
+	SDL_Flip (Screen);
+	SDLFlipCycles.Unclock();
+
+	BlitCycles.Unclock();
 
 	if (NeedGammaUpdate)
 	{
@@ -495,11 +532,10 @@ bool SDLFB::IsFullscreen ()
 	return (Screen->flags & SDL_FULLSCREEN) != 0;
 }
 
-ADD_STAT (blit, out)
+ADD_STAT (blit)
 {
-	sprintf (out,
-		"blit=%04.1f ms  flip=%04.1f ms",
-		(double)BlitCycles * SecondsPerCycle * 1000,
-		(double)SDLFlipCycles * SecondsPerCycle * 1000
-		);
+	FString out;
+	out.Format ("blit=%04.1f ms  flip=%04.1f ms",
+		BlitCycles.Time() * 1e-3, SDLFlipCycles.TimeMS());
+	return out;
 }

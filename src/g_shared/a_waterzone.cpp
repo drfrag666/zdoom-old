@@ -3,7 +3,7 @@
 ** Actor that makes BOOM deep water swimmable
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -37,14 +37,12 @@
 
 class AWaterZone : public AActor
 {
-	DECLARE_STATELESS_ACTOR (AWaterZone, AActor)
+	DECLARE_CLASS (AWaterZone, AActor)
 public:
 	void PostBeginPlay ();
 };
 
-IMPLEMENT_STATELESS_ACTOR (AWaterZone, Any, 9045, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR|MF_NOGRAVITY)
-END_DEFAULTS
+IMPLEMENT_CLASS (AWaterZone)
 
 void AWaterZone::PostBeginPlay ()
 {

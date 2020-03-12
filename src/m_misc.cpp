@@ -29,7 +29,11 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <malloc.h>
+#include <stdlib.h>
+#include <time.h>
+#ifdef __APPLE__
+#include <CoreServices/CoreServices.h>
+#endif
 
 #include "doomtype.h"
 #include "version.h"
@@ -41,8 +45,6 @@
 #endif
 
 #include <ctype.h>
-
-#include "m_alloc.h"
 
 #include "doomdef.h"
 
@@ -58,6 +60,7 @@
 #include "i_system.h"
 #include "i_video.h"
 #include "v_video.h"
+#include "r_defs.h"
 
 #include "hu_stuff.h"
 
@@ -80,6 +83,7 @@ FGameConfigFile *GameConfig;
 CVAR(Bool, screenshot_quiet, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 CVAR(String, screenshot_type, "png", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 CVAR(String, screenshot_dir, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+EXTERN_CVAR(Bool, longsavemessages);
 
 static long ParseCommandLine (const char *args, int *argc, char **argv);
 
@@ -90,7 +94,7 @@ static long ParseCommandLine (const char *args, int *argc, char **argv);
 #define O_BINARY 0
 #endif
 
-BOOL M_WriteFile (char const *name, void *source, int length)
+bool M_WriteFile (char const *name, void *source, int length)
 {
 	int handle;
 	int count;
@@ -113,11 +117,11 @@ BOOL M_WriteFile (char const *name, void *source, int length)
 //
 // M_ReadFile
 //
-int M_ReadFile (char const *name, byte **buffer)
+int M_ReadFile (char const *name, BYTE **buffer)
 {
 	int handle, count, length;
 	struct stat fileinfo;
-	byte *buf;
+	BYTE *buf;
 
 	handle = open (name, O_RDONLY | O_BINARY, 0666);
 	if (handle == -1)
@@ -144,67 +148,101 @@ int M_ReadFile (char const *name, byte **buffer)
 
 void M_FindResponseFile (void)
 {
-	int i;
+	const int limit = 100;	// avoid infinite recursion
+	int added_stuff = 0;
+	int i = 1;
 
-	for (i = 1; i < Args.NumArgs(); i++)
+	while (i < Args->NumArgs())
 	{
-		if (Args.GetArg(i)[0] == '@')
+		if (Args->GetArg(i)[0] != '@')
+		{
+			i++;
+		}
+		else
 		{
 			char	**argv;
-			char	*file;
-			int		argc;
-			int		argcinresp;
+			char	*file = NULL;
+			int		argc = 0;
 			FILE	*handle;
 			int 	size;
-			long	argsize;
-			int 	k;
+			long	argsize = 0;
 			int 	index;
 
-			// READ THE RESPONSE FILE INTO MEMORY
-			handle = fopen (Args.GetArg(i) + 1,"rb");
-			if (!handle)
-			{ // [RH] Make this a warning, not an error.
-				Printf ("No such response file (%s)!", Args.GetArg(i) + 1);
-				continue;
+			// Any more response files after the limit will be removed from the
+			// command line.
+			if (added_stuff < limit)
+			{
+				// READ THE RESPONSE FILE INTO MEMORY
+				handle = fopen (Args->GetArg(i) + 1,"rb");
+				if (!handle)
+				{ // [RH] Make this a warning, not an error.
+					Printf ("No such response file (%s)!\n", Args->GetArg(i) + 1);
+				}
+				else
+				{
+					Printf ("Found response file %s!\n", Args->GetArg(i) + 1);
+					fseek (handle, 0, SEEK_END);
+					size = ftell (handle);
+					fseek (handle, 0, SEEK_SET);
+					file = new char[size+1];
+					fread (file, size, 1, handle);
+					file[size] = 0;
+					fclose (handle);
+
+					argsize = ParseCommandLine (file, &argc, NULL);
+				}
 			}
-
-			Printf ("Found response file %s!\n", Args.GetArg(i) + 1);
-			fseek (handle, 0, SEEK_END);
-			size = ftell (handle);
-			fseek (handle, 0, SEEK_SET);
-			file = new char[size+1];
-			fread (file, size, 1, handle);
-			file[size] = 0;
-			fclose (handle);
-
-			argsize = ParseCommandLine (file, &argcinresp, NULL);
-			argc = argcinresp + Args.NumArgs() - 1;
+			else
+			{
+				Printf ("Ignored response file %s.\n", Args->GetArg(i) + 1);
+			}
 
 			if (argc != 0)
 			{
-				argv = (char **)Malloc (argc*sizeof(char *) + argsize);
-				argv[i] = (char *)argv + argc*sizeof(char *);
-				ParseCommandLine (file, NULL, argv+i);
+				argv = (char **)M_Malloc (argc*sizeof(char *) + argsize);
+				argv[0] = (char *)argv + argc*sizeof(char *);
+				ParseCommandLine (file, NULL, argv);
 
+				// Create a new argument vector
+				DArgs *newargs = new DArgs;
+
+				// Copy parameters before response file.
 				for (index = 0; index < i; ++index)
-					argv[index] = Args.GetArg (index);
+					newargs->AppendArg(Args->GetArg(index));
 
-				for (index = i + 1, i += argcinresp; index < Args.NumArgs (); ++index)
-					argv[i++] = Args.GetArg (index);
+				// Copy parameters from response file.
+				for (index = 0; index < argc; ++index)
+					newargs->AppendArg(argv[index]);
 
-				DArgs newargs (i, argv);
+				// Copy parameters after response file.
+				for (index = i + 1; index < Args->NumArgs(); ++index)
+					newargs->AppendArg(Args->GetArg(index));
+
+				// Use the new argument vector as the global Args object.
 				Args = newargs;
+				if (++added_stuff == limit)
+				{
+					Printf("Response file limit of %d hit.\n", limit);
+				}
 			}
-
-			delete[] file;
-		
-			// DISPLAY ARGS
-			Printf ("%d command-line args:\n", Args.NumArgs ());
-			for (k = 1; k < Args.NumArgs (); k++)
-				Printf ("%s\n", Args.GetArg (k));
-
-			break;
+			else
+			{
+				// Remove the response file from the Args object
+				Args->RemoveArg(i);
+			}
+			if (file != NULL)
+			{
+				delete[] file;
+			}
 		}
+	}
+	if (added_stuff > 0)
+	{
+		// DISPLAY ARGS
+		Printf ("Added %d response file%s, now have %d command-line args:\n",
+			added_stuff, added_stuff > 1 ? "s" : "", Args->NumArgs ());
+		for (int k = 1; k < Args->NumArgs (); k++)
+			Printf ("%s\n", Args->GetArg (k));
 	}
 }
 
@@ -295,39 +333,60 @@ static long ParseCommandLine (const char *args, int *argc, char **argv)
 }
 
 
-#ifdef unix
-string GetUserFile (string file, bool nodir)
+#if defined(unix)
+FString GetUserFile (const char *file)
 {
-	char *home = getenv ("HOME");
-	if (home == NULL || *home == '\0')
-		I_FatalError ("Please set your HOME environment variable");
+	FString path;
+	struct stat info;
 
-	string path = home;
-	if (path[path.Len()-1] != '/')
-		path += nodir ? "/" : "/.zdoom";
-	else if (!nodir)
-		path += ".zdoom";
+	path = NicePath("~/" GAME_DIR "/");
 
-	if (!nodir)
+	if (stat (path, &info) == -1)
 	{
-		struct stat info;
-		if (stat (path, &info) == -1)
+		struct stat extrainfo;
+
+		// Sanity check for ~/.config
+		FString configPath = NicePath("~/.config/");
+		if (stat (configPath, &extrainfo) == -1)
 		{
-			if (mkdir (path.GetChars(), S_IRUSR | S_IWUSR | S_IXUSR) == -1)
+			if (mkdir (configPath, S_IRUSR | S_IWUSR | S_IXUSR) == -1)
 			{
-				I_FatalError ("Failed to create %s directory:\n%s",
-					path.GetChars(), strerror (errno));
+				I_FatalError ("Failed to create ~/.config directory:\n%s", strerror(errno));
 			}
 		}
-		else
+		else if (!S_ISDIR(extrainfo.st_mode))
 		{
-			if (!S_ISDIR(info.st_mode))
+			I_FatalError ("~/.config must be a directory");
+		}
+
+		// This can be removed after a release or two
+		// Transfer the old zdoom directory to the new location
+		bool moved = false;
+		FString oldpath = NicePath("~/.zdoom/");
+		if (stat (oldpath, &extrainfo) != -1)
+		{
+			if (rename(oldpath, path) == -1)
 			{
-				I_FatalError ("%s must be a directory", path.GetChars());
+				I_Error ("Failed to move old zdoom directory (%s) to new location (%s).",
+					oldpath.GetChars(), path.GetChars());
 			}
+			else
+				moved = true;
+		}
+
+		if (!moved && mkdir (path, S_IRUSR | S_IWUSR | S_IXUSR) == -1)
+		{
+			I_FatalError ("Failed to create %s directory:\n%s",
+				path.GetChars(), strerror (errno));
 		}
 	}
-	path += '/';
+	else
+	{
+		if (!S_ISDIR(info.st_mode))
+		{
+			I_FatalError ("%s must be a directory", path.GetChars());
+		}
+	}
 	path += file;
 	return path;
 }
@@ -337,17 +396,51 @@ string GetUserFile (string file, bool nodir)
 // M_SaveDefaults
 //
 
-void STACK_ARGS M_SaveDefaults ()
+bool M_SaveDefaults (const char *filename)
 {
-	GameConfig->ArchiveGlobalData ();
-	if (GameNames[gameinfo.gametype] != NULL)
+	FString oldpath;
+	bool success;
+
+	if (filename != NULL)
 	{
-		GameConfig->ArchiveGameData (GameNames[gameinfo.gametype]);
+		oldpath = GameConfig->GetPathName();
+		GameConfig->ChangePathName (filename);
 	}
-	GameConfig->WriteConfigFile ();
-	delete GameConfig;
+	GameConfig->ArchiveGlobalData ();
+	if (gameinfo.ConfigName.IsNotEmpty())
+	{
+		GameConfig->ArchiveGameData (gameinfo.ConfigName);
+	}
+	success = GameConfig->WriteConfigFile ();
+	if (filename != NULL)
+	{
+		GameConfig->ChangePathName (filename);
+	}
+	return success;
 }
 
+void M_SaveDefaultsFinal ()
+{
+	while (!M_SaveDefaults (NULL) && I_WriteIniFailed ())
+	{
+		/* Loop until the config saves or I_WriteIniFailed() returns false */
+	}
+	delete GameConfig;
+	GameConfig = NULL;
+}
+
+CCMD (writeini)
+{
+	const char *filename = (argv.argc() == 1) ? NULL : argv[1];
+	if (!M_SaveDefaults (filename))
+	{
+		Printf ("Writing config failed: %s\n", strerror(errno));
+	}
+	else
+	{
+		Printf ("Config saved.\n");
+	}
+}
 
 //
 // M_LoadDefaults
@@ -357,7 +450,7 @@ void M_LoadDefaults ()
 {
 	GameConfig = new FGameConfigFile;
 	GameConfig->DoGlobalSetup ();
-	atterm (M_SaveDefaults);
+	atterm (M_SaveDefaultsFinal);
 }
 
 
@@ -366,7 +459,7 @@ void M_LoadDefaults ()
 //
 
 
-typedef struct
+struct pcx_t
 {
 	char				manufacturer;
 	char				version;
@@ -389,52 +482,85 @@ typedef struct
 	unsigned short		palette_type;
 	
 	char				filler[58];
-} pcx_t;
+};
 
 
 //
 // WritePCXfile
 //
-void WritePCXfile (FILE *file, const DCanvas *canvas, const PalEntry *palette)
+void WritePCXfile (FILE *file, const BYTE *buffer, const PalEntry *palette,
+				   ESSType color_type, int width, int height, int pitch)
 {
+	BYTE temprow[MAXWIDTH * 3];
+	const BYTE *data;
 	int x, y;
 	int runlen;
+	int bytes_per_row_minus_one;
 	BYTE color;
 	pcx_t pcx;
-	BYTE *data;
-	int width, height, pitch;
-
-	data = canvas->GetBuffer ();
-	width = canvas->GetWidth ();
-	height = canvas->GetHeight ();
-	pitch = canvas->GetPitch ();
 
 	pcx.manufacturer = 10;				// PCX id
-	pcx.version = 5;					// 256 color
+	pcx.version = 5;					// 256 (or more) colors
 	pcx.encoding = 1;
-	pcx.bits_per_pixel = 8;				// 256 color
+	pcx.bits_per_pixel = 8;				// 256 (or more) colors
 	pcx.xmin = 0;
 	pcx.ymin = 0;
-	pcx.xmax = LittleShort(width-1);
-	pcx.ymax = LittleShort(height-1);
-	pcx.hdpi = LittleShort(75);
-	pcx.vdpi = LittleShort(75);
+	pcx.xmax = LittleShort((unsigned short)(width-1));
+	pcx.ymax = LittleShort((unsigned short)(height-1));
+	pcx.hdpi = LittleShort((unsigned short)75);
+	pcx.vdpi = LittleShort((unsigned short)75);
 	memset (pcx.palette, 0, sizeof(pcx.palette));
 	pcx.reserved = 0;
-	pcx.color_planes = 1;				// chunky image
+	pcx.color_planes = (color_type == SS_PAL) ? 1 : 3;	// chunky image
 	pcx.bytes_per_line = width + (width & 1);
 	pcx.palette_type = 1;				// not a grey scale
 	memset (pcx.filler, 0, sizeof(pcx.filler));
 
 	fwrite (&pcx, 128, 1, file);
 
+	bytes_per_row_minus_one = ((color_type == SS_PAL) ? width : width * 3) - 1;
+
 	// pack the image
 	for (y = height; y > 0; y--)
 	{
+		switch (color_type)
+		{
+		case SS_PAL:
+			data = buffer;
+			break;
+
+		case SS_RGB:
+			// Unpack RGB into separate planes.
+			for (int i = 0; i < width; ++i)
+			{
+				temprow[i            ] = buffer[i*3];
+				temprow[i + width    ] = buffer[i*3 + 1];
+				temprow[i + width * 2] = buffer[i*3 + 2];
+			}
+			data = temprow;
+			break;
+
+		case SS_BGRA:
+			// Unpack RGB into separate planes, discarding A.
+			for (int i = 0; i < width; ++i)
+			{
+				temprow[i            ] = buffer[i*4 + 2];
+				temprow[i + width    ] = buffer[i*4 + 1];
+				temprow[i + width * 2] = buffer[i*4];
+			}
+			data = temprow;
+			break;
+
+		default:
+			// Should never happen.
+			return;
+		}
+		buffer += pitch;
+
 		color = *data++;
 		runlen = 1;
 
-		for (x = width - 1; x > 0; x--)
+		for (x = bytes_per_row_minus_one; x > 0; x--)
 		{
 			if (*data == color)
 			{
@@ -485,27 +611,29 @@ void WritePCXfile (FILE *file, const DCanvas *canvas, const PalEntry *palette)
 
 		if (width & 1)
 			putc (0, file);
-
-		data += pitch - width;
 	}
 
 	// write the palette
-	putc (12, file);		// palette ID byte
-	for (x = 0; x < 256; x++, palette++)
+	if (color_type == SS_PAL)
 	{
-		putc (palette->r, file);
-		putc (palette->g, file);
-		putc (palette->b, file);
+		putc (12, file);		// palette ID byte
+		for (x = 0; x < 256; x++, palette++)
+		{
+			putc (palette->r, file);
+			putc (palette->g, file);
+			putc (palette->b, file);
+		}
 	}
 }
 
 //
 // WritePNGfile
 //
-void WritePNGfile (FILE *file, const DCanvas *canvas, const PalEntry *palette)
+void WritePNGfile (FILE *file, const BYTE *buffer, const PalEntry *palette,
+				   ESSType color_type, int width, int height, int pitch)
 {
-	if (!M_CreatePNG (file, canvas, palette) ||
-		!M_AppendPNGText (file, "Software", "ZDoom " DOTVERSIONSTR) ||
+	if (!M_CreatePNG (file, buffer, palette, color_type, width, height, pitch) ||
+		!M_AppendPNGText (file, "Software", GAMENAME DOTVERSIONSTR) ||
 		!M_FinishPNG (file))
 	{
 		Printf ("Could not create screenshot.\n");
@@ -516,14 +644,40 @@ void WritePNGfile (FILE *file, const DCanvas *canvas, const PalEntry *palette)
 //
 // M_ScreenShot
 //
-static BOOL FindFreeName (string &fullname, const char *extension)
+static bool FindFreeName (FString &fullname, const char *extension)
 {
-	string lbmname;
+	FString lbmname;
 	int i;
 
 	for (i = 0; i <= 9999; i++)
 	{
-		lbmname.Format ("%sDOOM%04d.%s", fullname.GetChars(), i, extension);
+		const char *gamename = gameinfo.ConfigName;
+
+		time_t now;
+		tm *tm;
+
+		time(&now);
+		tm = localtime(&now);
+
+		if (tm == NULL)
+		{
+			lbmname.Format ("%sScreenshot_%s_%04d.%s", fullname.GetChars(), gamename, i, extension);
+		}
+		else if (i == 0)
+		{
+			lbmname.Format ("%sScreenshot_%s_%04d%02d%02d_%02d%02d%02d.%s", fullname.GetChars(), gamename,
+				tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+				tm->tm_hour, tm->tm_min, tm->tm_sec,
+				extension);
+		}
+		else
+		{
+			lbmname.Format ("%sScreenshot_%s_%04d%02d%02d_%02d%02d%02d_%02d.%s", fullname.GetChars(), gamename,
+				tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+				tm->tm_hour, tm->tm_min, tm->tm_sec,
+				i, extension);
+		}
+
 		if (!FileExists (lbmname.GetChars()))
 		{
 			fullname = lbmname;
@@ -533,37 +687,61 @@ static BOOL FindFreeName (string &fullname, const char *extension)
 	return false;
 }
 
-void M_ScreenShot (char *filename)
+void M_ScreenShot (const char *filename)
 {
 	FILE *file;
-	string autoname;
+	FString autoname;
 	bool writepcx = (stricmp (screenshot_type, "pcx") == 0);	// PNG is the default
 
 	// find a file name to save it to
-	if (filename == NULL)
+	if (filename == NULL || filename[0] == '\0')
 	{
-#ifndef unix
-		if (Args.CheckParm ("-cdrom"))
+#if !defined(unix) && !defined(__APPLE__)
+		if (Args->CheckParm ("-cdrom"))
 		{
-			autoname = "C:\\ZDOOMDAT\\";
+			autoname = CDROM_DIR "\\";
 		}
 		else
 #endif
 		{
-			int dirlen = (int)strlen (screenshot_dir);
+			size_t dirlen;
+			autoname = Args->CheckValue("-shotdir");
+			if (autoname.IsEmpty())
+			{
+				autoname = screenshot_dir;
+			}
+			dirlen = autoname.Len();
 			if (dirlen == 0)
 			{
+#ifdef unix
+				autoname = "~/" GAME_DIR "/screenshots/";
+#elif defined(__APPLE__)
+				char cpath[PATH_MAX];
+				FSRef folder;
+				
+				if (noErr == FSFindFolder(kUserDomain, kDocumentsFolderType, kCreateFolder, &folder) &&
+					noErr == FSRefMakePath(&folder, (UInt8*)cpath, PATH_MAX))
+				{
+					autoname << cpath << "/" GAME_DIR "/Screenshots/";
+				}
+				else
+				{
+					autoname = "~";
+				}
+#else
 				autoname = progdir;
+#endif
 			}
 			else if (dirlen > 0)
 			{
-				autoname = screenshot_dir;
 				if (autoname[dirlen-1] != '/' && autoname[dirlen-1] != '\\')
 				{
 					autoname += '/';
 				}
 			}
 		}
+		autoname = NicePath(autoname);
+		CreatePath(autoname);
 		if (!FindFreeName (autoname, writepcx ? "pcx" : "png"))
 		{
 			Printf ("M_ScreenShot: Delete some screenshots\n");
@@ -577,34 +755,52 @@ void M_ScreenShot (char *filename)
 	}
 
 	// save the screenshot
-	screen->Lock (true);
-	//D_Display (true);
+	const BYTE *buffer;
+	int pitch;
+	ESSType color_type;
 
-	PalEntry palette[256];
-	screen->GetFlashedPalette (palette);
-
-	file = fopen (autoname.GetChars(), "wb");
-	if (file == NULL)
+	screen->GetScreenshotBuffer(buffer, pitch, color_type);
+	if (buffer != NULL)
 	{
-		Printf ("Could not open %s\n", autoname.GetChars());
-		screen->Unlock ();
-		return;
-	}
+		PalEntry palette[256];
 
-	if (writepcx)
-	{
-		WritePCXfile (file, screen, palette);
+		if (color_type == SS_PAL)
+		{
+			screen->GetFlashedPalette(palette);
+		}
+		file = fopen (autoname, "wb");
+		if (file == NULL)
+		{
+			Printf ("Could not open %s\n", autoname.GetChars());
+			screen->ReleaseScreenshotBuffer();
+			return;
+		}
+		if (writepcx)
+		{
+			WritePCXfile(file, buffer, palette, color_type,
+				screen->GetWidth(), screen->GetHeight(), pitch);
+		}
+		else
+		{
+			WritePNGfile(file, buffer, palette, color_type,
+				screen->GetWidth(), screen->GetHeight(), pitch);
+		}
+		fclose(file);
+		screen->ReleaseScreenshotBuffer();
+
+		if (!screenshot_quiet)
+		{
+			int slash = -1;
+			if (!longsavemessages) slash = autoname.LastIndexOfAny(":/\\");
+			Printf ("Captured %s\n", autoname.GetChars()+slash+1);
+		}
 	}
 	else
 	{
-		WritePNGfile (file, screen, palette);
-	}
-	fclose (file);
-	screen->Unlock ();
-
-	if (!screenshot_quiet)
-	{
-		Printf ("Captured %s\n", autoname.GetChars());
+		if (!screenshot_quiet)
+		{
+			Printf ("Could not create screenshot.\n");
+		}
 	}
 }
 
@@ -614,4 +810,34 @@ CCMD (screenshot)
 		G_ScreenShot (NULL);
 	else
 		G_ScreenShot (argv[1]);
+}
+
+//
+// M_ZlibError
+//
+FString M_ZLibError(int zerr)
+{
+	if (zerr >= 0)
+	{
+		return "OK";
+	}
+	else if (zerr < -6)
+	{
+		FString out;
+		out.Format("%d", zerr);
+		return out;
+	}
+	else
+	{
+		static const char *errs[6] =
+		{
+			"Errno",
+			"Stream Error",
+			"Data Error",
+			"Memory Error",
+			"Buffer Error",
+			"Version Error"
+		};
+		return errs[-zerr - 1];
+	}
 }

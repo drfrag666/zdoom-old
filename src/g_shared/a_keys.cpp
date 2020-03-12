@@ -8,17 +8,23 @@
 #include "sc_man.h"
 #include "v_palette.h"
 #include "w_wad.h"
-
+#include "doomstat.h"
+#include "v_font.h"
 
 
 struct OneKey
 {
-	const TypeInfo * key;
+	const PClass *key;
 	int count;
 
 	bool check(AActor * owner)
 	{
-		return !!owner->FindInventory(key);
+		// P_GetMapColorForKey() checks the key directly
+		if (owner->IsKindOf (RUNTIME_CLASS(AKey)))
+			return owner->IsA(key);
+		// Other calls check an actor that may have a key in its inventory.
+		else
+			return !!owner->FindInventory(key);
 	}
 };
 
@@ -26,9 +32,9 @@ struct Keygroup
 {
 	TArray<OneKey> anykeylist;
 
-	bool check(AActor * owner)
+	bool check(AActor *owner)
 	{
-		for(int i=0;i<anykeylist.Size();i++)
+		for(unsigned int i=0;i<anykeylist.Size();i++)
 		{
 			if (anykeylist[i].check(owner)) return true;
 		}
@@ -39,23 +45,20 @@ struct Keygroup
 struct Lock
 {
 	TArray<Keygroup *> keylist;
-	char * message;
-	char * remotemsg;
-	int locksound;
+	TArray<FSoundID> locksound;
+	FString Message;
+	FString RemoteMsg;
 	int	rgb;
 
 	Lock()
 	{
-		message=remotemsg=NULL;
 		rgb=0;
 	}
 
 	~Lock()
 	{
-		for(int i=0;i<keylist.Size();i++) delete keylist[i];
+		for(unsigned int i=0;i<keylist.Size();i++) delete keylist[i];
 		keylist.Clear();
-		if (message) delete [] message;
-		if (remotemsg) delete [] remotemsg;
 	}
 
 	bool check(AActor * owner)
@@ -70,8 +73,9 @@ struct Lock
 					return true;
 				}
 			}
+			return false;
 		}
-		else for(int i=0;i<keylist.Size();i++)
+		else for(unsigned int i=0;i<keylist.Size();i++)
 		{
 			if (!keylist[i]->check(owner)) return false;
 		}
@@ -80,11 +84,12 @@ struct Lock
 };
 
 
-static Lock * locks[256];		// all valid locks
+static Lock *locks[256];		// all valid locks
 static bool keysdone=false;		// have the locks been initialized?
 static int currentnumber;		// number to be assigned to next key
 static bool ignorekey;			// set to true when the current lock is not being used
 
+static void ClearLocks();
 
 static const char * keywords_lock[]={
 	"ANY",
@@ -100,7 +105,7 @@ static const char * keywords_lock[]={
 //
 //===========================================================================
 
-static void AddOneKey(Keygroup * keygroup, const TypeInfo * mi)
+static void AddOneKey(Keygroup *keygroup, const PClass *mi, FScanner &sc)
 {
 	if (mi)
 	{
@@ -122,12 +127,12 @@ static void AddOneKey(Keygroup * keygroup, const TypeInfo * mi)
 		}
 		else
 		{
-			SC_ScriptError("'%s' is not an inventory item", sc_String);
+			sc.ScriptError("'%s' is not an inventory item", sc.String);
 		}
 	}
 	else
 	{
-		SC_ScriptError("Unknown item '%s'", sc_String);
+		sc.ScriptError("Unknown item '%s'", sc.String);
 	}
 }
 
@@ -137,20 +142,20 @@ static void AddOneKey(Keygroup * keygroup, const TypeInfo * mi)
 //
 //===========================================================================
 
-static Keygroup * ParseKeygroup()
+static Keygroup * ParseKeygroup(FScanner &sc)
 {
 	Keygroup * keygroup;
-	const TypeInfo * mi;
+	const PClass * mi;
 
-	SC_MustGetStringName("{");
-	keygroup=new Keygroup;
-	while (!SC_CheckString("}"))
+	sc.MustGetStringName("{");
+	keygroup = new Keygroup;
+	while (!sc.CheckString("}"))
 	{
-		SC_MustGetString();
-		mi=TypeInfo::FindType(sc_String);
-		AddOneKey(keygroup, mi);
+		sc.MustGetString();
+		mi = PClass::FindClass(sc.String);
+		AddOneKey(keygroup, mi, sc);
 	}
-	if (keygroup->anykeylist.Size()==0)
+	if (keygroup->anykeylist.Size() == 0)
 	{
 		delete keygroup;
 		return NULL;
@@ -168,27 +173,11 @@ static void PrintMessage (const char *str)
 {
 	if (str != NULL)
 	{
-		string temp;
-
-		if (strchr (str, '$'))
+		if (str[0]=='$') 
 		{
-			// The message or part of it is from the LANGUAGE lump
-			string name;
-
-			size_t part1 = strcspn (str, "$");
-			temp = string(str, part1);
-
-			size_t part2 = strcspn (str + part1 + 1, "$");
-			name = string(str + part1 + 1, part2);
-
-			temp += GStrings(name.GetChars());
-			if (str[part1 + 1 + part2] == '$')
-			{
-				temp += str + part1 + part2 + 2;
-			}
-			str = temp.GetChars();
+			str = GStrings(str+1);
 		}
-		C_MidPrint (str);
+		C_MidPrint (SmallFont, str);
 	}
 }
 
@@ -197,93 +186,100 @@ static void PrintMessage (const char *str)
 //
 //===========================================================================
 
-static void ParseLock()
+static void ParseLock(FScanner &sc)
 {
 	int i,r,g,b;
 	int keynum;
 	Lock sink;
 	Lock * lock=&sink;
 	Keygroup * keygroup;
-	const TypeInfo * mi;
+	const PClass * mi;
 
-	SC_MustGetNumber();
-	keynum=sc_Number;
+	sc.MustGetNumber();
+	keynum = sc.Number;
 
-	SC_MustGetString();
-	if (SC_Compare("DOOM"))
+	sc.MustGetString();
+	if (!sc.Compare("{"))
 	{
-		if (gameinfo.gametype != GAME_Doom) keynum=-1;
+		if (!CheckGame(sc.String, false)) keynum = -1;
+		sc.MustGetStringName("{");
 	}
-	else if (SC_Compare("HERETIC"))
-	{
-		if (gameinfo.gametype != GAME_Heretic) keynum=-1;
-	}
-	else if (SC_Compare("HEXEN"))
-	{
-		if (gameinfo.gametype != GAME_Hexen) keynum=-1;
-	}
-	else if (SC_Compare("STRIFE"))
-	{
-		if (gameinfo.gametype != GAME_Strife) keynum=-1;
-	}
-	else SC_UnGet();
 
-	ignorekey=true;
-	if (keynum>0 && keynum<255) 
+	ignorekey = true;
+	if (keynum > 0 && keynum < 255) 
 	{
-		lock=new Lock;
-		if (locks[keynum]) delete locks[keynum];
-		locks[keynum]=lock;
-		locks[keynum]->locksound = S_FindSound("misc/keytry");
+		lock = new Lock;
+		if (locks[keynum])
+		{
+			delete locks[keynum];
+		}
+		locks[keynum] = lock;
+		locks[keynum]->locksound.Push("*keytry");
+		locks[keynum]->locksound.Push("misc/keytry");
 		ignorekey=false;
 	}
-	else if (keynum!=-1)
+	else if (keynum != -1)
 	{
-		SC_ScriptError("Lock index %d out of range", keynum);
+		sc.ScriptError("Lock index %d out of range", keynum);
 	}
 
-	SC_MustGetStringName("{");
-	while (!SC_CheckString("}"))
+	while (!sc.CheckString("}"))
 	{
-		SC_MustGetString();
-		switch(i=SC_MatchString(keywords_lock))
+		sc.MustGetString();
+		switch(i = sc.MatchString(keywords_lock))
 		{
 		case 0:	// Any
-			keygroup=ParseKeygroup();
-			if (keygroup) lock->keylist.Push(keygroup);
+			keygroup = ParseKeygroup(sc);
+			if (keygroup)
+			{
+				lock->keylist.Push(keygroup);
+			}
 			break;
 
 		case 1:	// message
-			SC_MustGetString();
-			lock->message=copystring(sc_String);
+			sc.MustGetString();
+			lock->Message = sc.String;
 			break;
 
 		case 2: // remotemsg
-			SC_MustGetString();
-			lock->remotemsg=copystring(sc_String);
+			sc.MustGetString();
+			lock->RemoteMsg = sc.String;
 			break;
 
 		case 3:	// mapcolor
-			SC_MustGetNumber();
-			r=sc_Number;
-			SC_MustGetNumber();
-			g=sc_Number;
-			SC_MustGetNumber();
-			b=sc_Number;
-			lock->rgb=MAKERGB(r,g,b);
+			sc.MustGetNumber();
+			r = sc.Number;
+			sc.MustGetNumber();
+			g = sc.Number;
+			sc.MustGetNumber();
+			b = sc.Number;
+			lock->rgb = MAKERGB(r,g,b);
 			break;
 
 		case 4:	// locksound
-			SC_MustGetString();
-			lock->locksound = S_FindSound(sc_String);
+			lock->locksound.Clear();
+			for (;;)
+			{
+				sc.MustGetString();
+				lock->locksound.Push(sc.String);
+				if (!sc.GetString())
+				{
+					break;
+				}
+				if (!sc.Compare(","))
+				{
+					sc.UnGet();
+					break;
+				}
+			}
 			break;
 
 		default:
-			mi=TypeInfo::FindType(sc_String);
+			mi = PClass::FindClass(sc.String);
 			if (mi) 
 			{
-				keygroup=new Keygroup;
-				AddOneKey(keygroup, mi);
+				keygroup = new Keygroup;
+				AddOneKey(keygroup, mi, sc);
 				if (keygroup) 
 				{
 					keygroup->anykeylist.ShrinkToFit();
@@ -294,8 +290,14 @@ static void ParseLock()
 		}
 	}
 	// copy the messages if the other one does not exist
-	if (!lock->remotemsg && lock->message) lock->remotemsg=strdup(lock->message);
-	if (!lock->message && lock->remotemsg) lock->message=strdup(lock->remotemsg);
+	if (lock->RemoteMsg.IsEmpty() && lock->Message.IsNotEmpty())
+	{
+		lock->RemoteMsg = lock->Message;
+	}
+	if (lock->Message.IsEmpty() && lock->RemoteMsg.IsNotEmpty())
+	{
+		lock->Message = lock->RemoteMsg;
+	}
 	lock->keylist.ShrinkToFit();
 }
 
@@ -308,12 +310,16 @@ static void ParseLock()
 
 static void ClearLocks()
 {
-	int i;
-	for(i=0;i<TypeInfo::m_NumTypes;i++)
+	unsigned int i;
+	for(i=0;i<PClass::m_Types.Size();i++)
 	{
-		if (TypeInfo::m_Types[i]->IsDescendantOf(RUNTIME_CLASS(AKey)))
+		if (PClass::m_Types[i]->IsDescendantOf(RUNTIME_CLASS(AKey)))
 		{
-			static_cast<AKey*>(GetDefaultByType(TypeInfo::m_Types[i]))->KeyNumber=0;
+			AKey *key = static_cast<AKey*>(GetDefaultByType(PClass::m_Types[i]));
+			if (key != NULL)
+			{
+				key->KeyNumber = 0;
+			}
 		}
 	}
 	for(i=0;i<256;i++)
@@ -330,6 +336,7 @@ static void ClearLocks()
 
 //===========================================================================
 //
+// P_InitKeyMessages
 //
 //===========================================================================
 
@@ -342,26 +349,38 @@ void P_InitKeyMessages()
 	ClearLocks();
 	while ((lump = Wads.FindLump ("LOCKDEFS", &lastlump)) != -1)
 	{
-		SC_OpenLumpNum (lump, "LOCKDEFS");
-		while (SC_GetString ())
+		FScanner sc(lump);
+		while (sc.GetString ())
 		{
-			if (SC_Compare("LOCK")) 
+			if (sc.Compare("LOCK")) 
 			{
-				ParseLock();
+				ParseLock(sc);
 			}
-			else if (SC_Compare("CLEARLOCKS"))
+			else if (sc.Compare("CLEARLOCKS"))
 			{
-				// clear all existing lock defintions and key numbers
+				// clear all existing lock definitions and key numbers
 				ClearLocks();
 			}
-			else 
-				SC_ScriptError("Unknown command %s in LockDef", sc_String);
+			else
+			{
+				sc.ScriptError("Unknown command %s in LockDef", sc.String);
+			}
 		}
-		SC_Close();
+		sc.Close();
 	}
-	keysdone=true;
+	keysdone = true;
 }
 
+//===========================================================================
+//
+// P_DeinitKeyMessages
+//
+//===========================================================================
+
+void P_DeinitKeyMessages()
+{
+	ClearLocks();
+}
 
 //===========================================================================
 //
@@ -376,29 +395,32 @@ void P_InitKeyMessages()
 bool P_CheckKeys (AActor *owner, int keynum, bool remote)
 {
 	const char *failtext = NULL;
-	int failsound = 0;
+	FSoundID *failsound;
+	int numfailsounds;
 
-	failtext = NULL;
-	failsound = NULL;
-
+	if (owner == NULL) return false;
 	if (keynum<=0 || keynum>255) return true;
 	// Just a safety precaution. The messages should have been initialized upon game start.
 	if (!keysdone) P_InitKeyMessages();
 
+	FSoundID failage[2] = { "*keytry", "misc/keytry" };
+
 	if (!locks[keynum]) 
 	{
-		if (keynum==103 && gameinfo.gametype == GAME_Strife)
-			failtext = "THIS AREA IS ONLY AVAILABLE IN THE RETAIL VERSION OF STRIFE";
+		if (keynum == 103 && (gameinfo.flags & GI_SHAREWARE))
+			failtext = "$TXT_RETAIL_ONLY";
 		else
-			failtext = "That doesn't seem to work";
+			failtext = "$TXT_DOES_NOT_WORK";
 
-		failsound = S_FindSound("misc/keytry");
+		failsound = failage;
+		numfailsounds = countof(failage);
 	}
 	else
 	{
 		if (locks[keynum]->check(owner)) return true;
-		failtext = remote? locks[keynum]->remotemsg : locks[keynum]->message;
-		failsound = locks[keynum]->locksound;
+		failtext = remote? locks[keynum]->RemoteMsg : locks[keynum]->Message;
+		failsound = &locks[keynum]->locksound[0];
+		numfailsounds = locks[keynum]->locksound.Size();
 	}
 
 	// If we get here, that means the actor isn't holding an appropriate key.
@@ -406,7 +428,20 @@ bool P_CheckKeys (AActor *owner, int keynum, bool remote)
 	if (owner == players[consoleplayer].camera)
 	{
 		PrintMessage(failtext);
-		S_SoundID (owner, CHAN_VOICE, failsound, 1, ATTN_NORM);
+
+		// Play the first defined key sound.
+		for (int i = 0; i < numfailsounds; ++i)
+		{
+			if (failsound[i] != 0)
+			{
+				int snd = S_FindSkinnedSound(owner, failsound[i]);
+				if (snd != 0)
+				{
+					S_Sound (owner, CHAN_VOICE, snd, 1, ATTN_NORM);
+					break;
+				}
+			}
+		}
 	}
 
 	return false;
@@ -418,10 +453,7 @@ bool P_CheckKeys (AActor *owner, int keynum, bool remote)
 //
 //==========================================================================
 
-IMPLEMENT_STATELESS_ACTOR (AKey, Any, -1, 0)
- PROP_Inventory_FlagsSet (IF_INTERHUBSTRIP)
- PROP_Inventory_PickupSound ("misc/k_pkup")
-END_DEFAULTS
+IMPLEMENT_CLASS (AKey)
 
 bool AKey::HandlePickup (AInventory *item)
 {
@@ -450,23 +482,6 @@ bool AKey::ShouldStay ()
 
 //==========================================================================
 //
-// These 2 methods are practically obsolete... ;)
-//
-//==========================================================================
-
-const char *AKey::NeedKeyMessage (bool remote, int keynum)
-{
-	return "You don't have the key";
-}
-
-const char *AKey::NeedKeySound ()
-{
-	return "misc/keytry";
-}
-
-
-//==========================================================================
-//
 // These functions can be used to get color information for
 // automap display of keys and locked doors
 //
@@ -478,7 +493,7 @@ int P_GetMapColorForLock (int lock)
 	{
 		if (locks[lock]) return locks[lock]->rgb;
 	}
-	return 0;
+	return -1;
 }
 
 //==========================================================================

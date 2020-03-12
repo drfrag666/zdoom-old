@@ -3,7 +3,7 @@
 ** Holds a collection of images
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -39,52 +39,52 @@
 #include "w_wad.h"
 
 FImageCollection::FImageCollection ()
-: NumImages (0), ImageMap (0)
 {
 }
 
 FImageCollection::FImageCollection (const char **patchNames, int numPatches)
 {
-	Init (patchNames, numPatches);
-}
-
-FImageCollection::~FImageCollection ()
-{
-	Uninit ();
+	Add (patchNames, numPatches);
 }
 
 void FImageCollection::Init (const char **patchNames, int numPatches, int namespc)
 {
-	NumImages = numPatches;
-	ImageMap = new int[numPatches];
+	ImageMap.Clear();
+	Add(patchNames, numPatches, namespc);
+}
+
+// [MH] Mainly for mugshots with skins and SBARINFO
+void FImageCollection::Add (const char **patchNames, int numPatches, int namespc)
+{
+	int OldCount = ImageMap.Size();
+
+	ImageMap.Resize(OldCount + numPatches);
 
 	for (int i = 0; i < numPatches; ++i)
 	{
-		int picnum = TexMan.AddPatch (patchNames[i], namespc);
-
-		if (picnum == -1 && namespc != ns_sprites)
+		FTextureID picnum = TexMan.CheckForTexture(patchNames[i], namespc);
+		if (!picnum.isValid())
 		{
-			picnum = TexMan.AddPatch (patchNames[i], ns_sprites);
+			int lumpnum = Wads.CheckNumForName(patchNames[i], namespc);
+			if (lumpnum >= 0)
+			{
+				picnum = TexMan.CreateTexture(lumpnum, namespc);
+			}
 		}
-		ImageMap[i] = picnum;
+		ImageMap[OldCount + i] = picnum;
 	}
 }
 
 void FImageCollection::Uninit ()
 {
-	if (ImageMap != NULL)
-	{
-		delete[] ImageMap;
-		ImageMap = NULL;
-	}
-	NumImages = 0;
+	ImageMap.Clear();
 }
 
 FTexture *FImageCollection::operator[] (int index) const
 {
-	if ((unsigned int)index >= (unsigned int)NumImages)
+	if ((unsigned int)index >= ImageMap.Size())
 	{
 		return NULL;
 	}
-	return ImageMap[index] < 0 ? NULL : TexMan[ImageMap[index]];
+	return ImageMap[index].Exists()? TexMan(ImageMap[index]) : NULL;
 }

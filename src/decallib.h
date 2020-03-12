@@ -2,7 +2,7 @@
 ** decallib.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -37,43 +37,48 @@
 #include <string.h>
 
 #include "doomtype.h"
-#include "tarray.h"
+#include "r_data/renderstyle.h"
+#include "textures/textures.h"
 
-class AActor;
-class FDecal;
+class FScanner;
+class FDecalTemplate;
 struct FDecalAnimator;
-struct TypeInfo;
+struct PClass;
+class DBaseDecal;
+struct side_t;
 
 class FDecalBase
 {
 	friend class FDecalLib;
 public:
-	virtual const FDecal *GetDecal () const;
+	virtual const FDecalTemplate *GetDecal () const;
+	virtual void ReplaceDecalRef (FDecalBase *from, FDecalBase *to) = 0;
 	
 protected:
 	FDecalBase ();
 	virtual ~FDecalBase ();
 
 	FDecalBase *Left, *Right;
-	char *Name;
-	BYTE SpawnID;
-	TArray<const TypeInfo *> Users;	// Which actors generate this decal
+	FName Name;
+	WORD SpawnID;
+	TArray<const PClass *> Users;	// Which actors generate this decal
 };
 
-class FDecal : public FDecalBase
+class FDecalTemplate : public FDecalBase
 {
 	friend class FDecalLib;
 public:
-	FDecal () : Translation (0) {}
+	FDecalTemplate () : Translation (0) {}
 
-	void ApplyToActor (AActor *actor) const;
-	const FDecal *GetDecal () const;
+	void ApplyToDecal (DBaseDecal *actor, side_t *wall) const;
+	const FDecalTemplate *GetDecal () const;
+	void ReplaceDecalRef (FDecalBase *from, FDecalBase *to);
 
+	fixed_t ScaleX, ScaleY;
 	DWORD ShadeColor;
-	WORD Translation;
-	BYTE ScaleX, ScaleY;
-	BYTE RenderStyle;
-	WORD PicNum;
+	DWORD Translation;
+	FRenderStyle RenderStyle;
+	FTextureID PicNum;
 	WORD RenderFlags;
 	WORD Alpha;				// same as (actor->alpha >> 1)
 	const FDecalAnimator *Animator;
@@ -89,32 +94,33 @@ public:
 	~FDecalLib ();
 
 	void Clear ();
-	void ReadDecals ();		// SC_Open() should have just been called
+	void ReadDecals (FScanner &sc);
 	void ReadAllDecals ();
 
-	const FDecal *GetDecalByNum (byte num) const;
-	const FDecal *GetDecalByName (const char *name) const;
+	const FDecalTemplate *GetDecalByNum (WORD num) const;
+	const FDecalTemplate *GetDecalByName (const char *name) const;
 
 private:
 	struct FTranslation;
 
 	static void DelTree (FDecalBase *root);
-	static FDecalBase *ScanTreeForNum (const BYTE num, FDecalBase *root);
+	static FDecalBase *ScanTreeForNum (const WORD num, FDecalBase *root);
 	static FDecalBase *ScanTreeForName (const char *name, FDecalBase *root);
+	static void ReplaceDecalRef (FDecalBase *from, FDecalBase *to, FDecalBase *root);
 	FTranslation *GenerateTranslation (DWORD start, DWORD end);
-	void AddDecal (const char *name, byte num, const FDecal &decal);
+	void AddDecal (const char *name, WORD num, const FDecalTemplate &decal);
 	void AddDecal (FDecalBase *decal);
 	FDecalAnimator *FindAnimator (const char *name);
 
-	BYTE GetDecalID ();
-	void ParseDecal ();
-	void ParseDecalGroup ();
-	void ParseGenerator ();
-	void ParseFader ();
-	void ParseStretcher ();
-	void ParseSlider ();
-	void ParseCombiner ();
-	void ParseColorchanger ();
+	WORD GetDecalID (FScanner &sc);
+	void ParseDecal (FScanner &sc);
+	void ParseDecalGroup (FScanner &sc);
+	void ParseGenerator (FScanner &sc);
+	void ParseFader (FScanner &sc);
+	void ParseStretcher (FScanner &sc);
+	void ParseSlider (FScanner &sc);
+	void ParseCombiner (FScanner &sc);
+	void ParseColorchanger (FScanner &sc);
 
 	FDecalBase *Root;
 	FTranslation *Translations;

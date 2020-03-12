@@ -3,7 +3,7 @@
 ** Actor that makes a particle spark when activated
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -40,20 +40,12 @@
 
 class ASpark : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASpark, AActor)
+	DECLARE_CLASS (ASpark, AActor)
 public:
-	angle_t AngleIncrements ();
 	void Activate (AActor *activator);
 };
 
-IMPLEMENT_STATELESS_ACTOR (ASpark, Any, 9026, 0)
-	PROP_Flags (MF_NOSECTOR|MF_NOBLOCKMAP|MF_NOGRAVITY)
-END_DEFAULTS
-
-angle_t ASpark::AngleIncrements ()
-{
-	return ANGLE_1;
-}
+IMPLEMENT_CLASS (ASpark)
 
 void ASpark::Activate (AActor *activator)
 {

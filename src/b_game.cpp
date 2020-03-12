@@ -48,7 +48,6 @@ Everything that is changed is marked (maybe commented) with "Added by MC"
 #include "b_bot.h"
 #include "g_game.h"
 #include "m_random.h"
-#include "r_things.h"
 #include "doomstat.h"
 #include "cmdlib.h"
 #include "sc_man.h"
@@ -56,13 +55,18 @@ Everything that is changed is marked (maybe commented) with "Added by MC"
 #include "m_misc.h"
 #include "sbar.h"
 #include "p_acs.h"
+#include "teaminfo.h"
+#include "i_system.h"
+#include "d_net.h"
+#include "d_netinf.h"
 
 static FRandom pr_botspawn ("BotSpawn");
 
 //Externs
-DCajunMaster bglobal;
+FCajunMaster bglobal;
 
-cycle_t BotThinkCycles, BotSupportCycles, BotWTG;
+cycle_t BotThinkCycles, BotSupportCycles;
+int BotWTG;
 
 static const char *BotConfigStrings[] =
 {
@@ -87,17 +91,18 @@ enum
 
 static bool waitingforspawn[MAXPLAYERS];
 
-
-void G_DoReborn (int playernum, bool freshbot);
-
+FCajunMaster::~FCajunMaster()
+{
+	ForgetBots();
+}
 
 //This function is called every tick (from g_game.c),
 //send bots into thinking (+more).
-void DCajunMaster::Main (int buf)
+void FCajunMaster::Main (int buf)
 {
 	int i;
 
-	BotThinkCycles = 0;
+	BotThinkCycles.Reset();
 
 	if (consoleplayer != Net_Arbitrator || demoplayback)
 		return;
@@ -110,13 +115,13 @@ void DCajunMaster::Main (int buf)
 	//Think for bots.
 	if (botnum)
 	{
-		clock (BotThinkCycles);
+		BotThinkCycles.Clock();
 		for (i = 0; i < MAXPLAYERS; i++)
 		{
 			if (playeringame[i] && players[i].mo && !freeze && players[i].isbot)
 				Think (players[i].mo, &netcmds[i][buf]);
 		}
-		unclock (BotThinkCycles);
+		BotThinkCycles.Unclock();
 	}
 
 	//Add new bots?
@@ -124,7 +129,7 @@ void DCajunMaster::Main (int buf)
 	{
 		if (t_join == ((wanted_botnum - botnum) * SPAWN_DELAY))
 		{
-            if (!SpawnBot (getspawned->GetArg (spawn_tries)))
+            if (!SpawnBot (getspawned[spawn_tries]))
 				wanted_botnum--;
             spawn_tries++;
 		}
@@ -133,21 +138,21 @@ void DCajunMaster::Main (int buf)
 	}
 
 	//Check if player should go observer. Or un observe
-	if (bot_observer && !observer)
+	if (bot_observer && !observer && !netgame)
 	{
-		Printf ("%s is now observer\n", players[consoleplayer].userinfo.netname);
+		Printf ("%s is now observer\n", players[consoleplayer].userinfo.GetName());
 		observer = true;
 		players[consoleplayer].mo->UnlinkFromWorld ();
-		players[consoleplayer].mo->flags = MF_DROPOFF|MF_NOBLOCKMAP|MF_NOCLIP|MF_NOTDMATCH|MF_NOGRAVITY;
+		players[consoleplayer].mo->flags = MF_DROPOFF|MF_NOBLOCKMAP|MF_NOCLIP|MF_NOTDMATCH|MF_NOGRAVITY|MF_FRIENDLY;
 		players[consoleplayer].mo->flags2 |= MF2_FLY;
 		players[consoleplayer].mo->LinkToWorld ();
 	}
-	else if (!bot_observer && observer) //Go back
+	else if (!bot_observer && observer && !netgame) //Go back
 	{
-		Printf ("%s returned to the fray\n", players[consoleplayer].userinfo.netname);
+		Printf ("%s returned to the fray\n", players[consoleplayer].userinfo.GetName());
 		observer = false;
 		players[consoleplayer].mo->UnlinkFromWorld ();
-		players[consoleplayer].mo->flags = MF_SOLID|MF_SHOOTABLE|MF_DROPOFF|MF_PICKUP|MF_NOTDMATCH;
+		players[consoleplayer].mo->flags = MF_SOLID|MF_SHOOTABLE|MF_DROPOFF|MF_PICKUP|MF_NOTDMATCH|MF_FRIENDLY;
 		players[consoleplayer].mo->flags2 &= ~MF2_FLY;
 		players[consoleplayer].mo->LinkToWorld ();
 	}
@@ -155,7 +160,7 @@ void DCajunMaster::Main (int buf)
 	m_Thinking = false;
 }
 
-void DCajunMaster::Init ()
+void FCajunMaster::Init ()
 {
 	int i;
 
@@ -201,22 +206,19 @@ void DCajunMaster::Init ()
 }
 
 //Called on each level exit (from g_game.c).
-void DCajunMaster::End ()
+void FCajunMaster::End ()
 {
 	int i;
 
 	//Arrange wanted botnum and their names, so they can be spawned next level.
-	if (getspawned)
-		getspawned->FlushArgs ();
-	else
-		getspawned = new DArgs;
+	getspawned.Clear();
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
 		if (playeringame[i] && players[i].isbot)
 		{
 			if (deathmatch)
 			{
-				getspawned->AppendArg (players[i].userinfo.netname);
+				getspawned.Push(players[i].userinfo.GetName());
 			}
 			CleanBotstuff (&players[i]);
 		}
@@ -240,7 +242,7 @@ void DCajunMaster::End ()
 //The color parameter overides bots
 //induvidual colors if not = NOCOLOR.
 
-bool DCajunMaster::SpawnBot (const char *name, int color)
+bool FCajunMaster::SpawnBot (const char *name, int color)
 {
 	int playernumber;
 
@@ -326,9 +328,10 @@ bool DCajunMaster::SpawnBot (const char *name, int color)
 		{
 			strcat (concat, colors[bot_next_color]);
 		}
-		if (thebot->lastteam < NUM_TEAMS)
+		if (TeamLibrary.IsValidTeam (thebot->lastteam))
 		{ // Keep the bot on the same team when switching levels
-			sprintf (concat+strlen(concat), "\\team\\%d\n", thebot->lastteam);
+			mysnprintf (concat + strlen(concat), countof(concat) - strlen(concat),
+				"\\team\\%d\n", thebot->lastteam);
 		}
 		Net_WriteString (concat);
 	}
@@ -343,15 +346,19 @@ bool DCajunMaster::SpawnBot (const char *name, int color)
 	return true;
 }
 
-void DCajunMaster::DoAddBot (int bnum, char *info)
+void FCajunMaster::DoAddBot (int bnum, char *info)
 {
-	D_ReadUserInfoStrings (bnum, (byte **)&info, false);
+	BYTE *infob = (BYTE *)info;
+	D_ReadUserInfoStrings (bnum, &infob, false);
 	if (!deathmatch && playerstarts[bnum].type == 0)
 	{
 		Printf ("%s tried to join, but there was no player %d start\n",
-			players[bnum].userinfo.netname, bnum+1);
+			players[bnum].userinfo.GetName(), bnum+1);
 		ClearPlayer (bnum, false);	// Make the bot inactive again
-		botnum--;
+		if (botnum > 0)
+		{
+			botnum--;
+		}
 	}
 	else
 	{
@@ -361,7 +368,11 @@ void DCajunMaster::DoAddBot (int bnum, char *info)
 		players[bnum].mo = NULL;
 		players[bnum].playerstate = PST_ENTER;
 		botingame[bnum] = true;
-		Printf ("%s joined the game\n", players[bnum].userinfo.netname);
+
+		if (teamplay)
+			Printf ("%s joined the %s team\n", players[bnum].userinfo.GetName(), Teams[players[bnum].userinfo.GetTeam()].GetName());
+		else
+			Printf ("%s joined the game\n", players[bnum].userinfo.GetName());
 
 		G_DoReborn (bnum, true);
 		if (StatusBar != NULL)
@@ -372,7 +383,7 @@ void DCajunMaster::DoAddBot (int bnum, char *info)
 	waitingforspawn[bnum] = false;
 }
 
-void DCajunMaster::RemoveAllBots (bool fromlist)
+void FCajunMaster::RemoveAllBots (bool fromlist)
 {
 	int i, j;
 
@@ -412,7 +423,7 @@ void DCajunMaster::RemoveAllBots (bool fromlist)
 
 //Clean the bot part of the player_t
 //Used when bots are respawned or at level starts.
-void DCajunMaster::CleanBotstuff (player_t *p)
+void FCajunMaster::CleanBotstuff (player_t *p)
 {
 	p->angle = ANG45;
 	p->dest = NULL;
@@ -463,13 +474,14 @@ static void appendinfo (char *&front, const char *back)
 	{
 		size_t newlen = strlen (back) + 2;
 		newstr = new char[newlen];
+		newstr[0] = 0;
 	}
 	strcat (newstr, "\\");
 	strcat (newstr, back);
 	front = newstr;
 }
 
-void DCajunMaster::ForgetBots ()
+void FCajunMaster::ForgetBots ()
 {
 	botinfo_t *thebot = botinfo;
 
@@ -486,23 +498,24 @@ void DCajunMaster::ForgetBots ()
 	loaded_bots = 0;
 }
 
-bool DCajunMaster::LoadBots ()
+bool FCajunMaster::LoadBots ()
 {
-	string tmp;
+	FScanner sc;
+	FString tmp;
 	bool gotteam = false;
 
 	bglobal.ForgetBots ();
 #ifndef unix
 	tmp = progdir;
 	tmp += "zcajun/" BOTFILENAME;
-	if (!FileExists (tmp.GetChars()))
+	if (!FileExists (tmp))
 	{
 		DPrintf ("No " BOTFILENAME ", so no bots\n");
 		return false;
 	}
 #else
 	tmp = GetUserFile (BOTFILENAME);
-	if (!FileExists (tmp.GetChars()))
+	if (!FileExists (tmp))
 	{
 		if (!FileExists (SHARE_DIR BOTFILENAME))
 		{
@@ -510,19 +523,19 @@ bool DCajunMaster::LoadBots ()
 			return false;
 		}
 		else
-			SC_OpenFile (SHARE_DIR BOTFILENAME);
+			sc.OpenFile (SHARE_DIR BOTFILENAME);
 	}
 #endif
 	else
 	{
-		SC_OpenFile (tmp.GetChars());
+		sc.OpenFile (tmp);
 	}
 
-	while (SC_GetString ())
+	while (sc.GetString ())
 	{
-		if (!SC_Compare ("{"))
+		if (!sc.Compare ("{"))
 		{
-			SC_ScriptError ("Unexpected token '%s'\n", sc_String);
+			sc.ScriptError ("Unexpected token '%s'\n", sc.String);
 		}
 
 		botinfo_t *newinfo = new botinfo_t;
@@ -534,59 +547,59 @@ bool DCajunMaster::LoadBots ()
 
 		for (;;)
 		{
-			SC_MustGetString ();
-			if (SC_Compare ("}"))
+			sc.MustGetString ();
+			if (sc.Compare ("}"))
 				break;
 
-			switch (SC_MatchString (BotConfigStrings))
+			switch (sc.MatchString (BotConfigStrings))
 			{
 			case BOTCFG_NAME:
-				SC_MustGetString ();
+				sc.MustGetString ();
 				appendinfo (newinfo->info, "name");
-				appendinfo (newinfo->info, sc_String);
-				newinfo->name = copystring (sc_String);
+				appendinfo (newinfo->info, sc.String);
+				newinfo->name = copystring (sc.String);
 				break;
 
 			case BOTCFG_AIMING:
-				SC_MustGetNumber ();
-				newinfo->skill.aiming = sc_Number;
+				sc.MustGetNumber ();
+				newinfo->skill.aiming = sc.Number;
 				break;
 
 			case BOTCFG_PERFECTION:
-				SC_MustGetNumber ();
-				newinfo->skill.perfection = sc_Number;
+				sc.MustGetNumber ();
+				newinfo->skill.perfection = sc.Number;
 				break;
 
 			case BOTCFG_REACTION:
-				SC_MustGetNumber ();
-				newinfo->skill.reaction = sc_Number;
+				sc.MustGetNumber ();
+				newinfo->skill.reaction = sc.Number;
 				break;
 
 			case BOTCFG_ISP:
-				SC_MustGetNumber ();
-				newinfo->skill.isp = sc_Number;
+				sc.MustGetNumber ();
+				newinfo->skill.isp = sc.Number;
 				break;
 
 			case BOTCFG_TEAM:
 				{
-					char teamstr[4];
-					unsigned int teamnum;
+					char teamstr[16];
+					BYTE teamnum;
 
-					SC_MustGetString ();
-					if (IsNum (sc_String))
+					sc.MustGetString ();
+					if (IsNum (sc.String))
 					{
-						teamnum = atoi (sc_String);
-						if (teamnum >= NUM_TEAMS)
+						teamnum = atoi (sc.String);
+						if (!TeamLibrary.IsValidTeam (teamnum))
 						{
-							teamnum = TEAM_None;
+							teamnum = TEAM_NONE;
 						}
 					}
 					else
 					{
-						teamnum = TEAM_None;
-						for (int i = 0; i < NUM_TEAMS; ++i)
+						teamnum = TEAM_NONE;
+						for (unsigned int i = 0; i < Teams.Size(); ++i)
 						{
-							if (stricmp (TeamNames[i], sc_String) == 0)
+							if (stricmp (Teams[i].GetName (), sc.String) == 0)
 							{
 								teamnum = i;
 								break;
@@ -594,20 +607,20 @@ bool DCajunMaster::LoadBots ()
 						}
 					}
 					appendinfo (newinfo->info, "team");
-					sprintf (teamstr, "%u", teamnum);
+					mysnprintf (teamstr, countof(teamstr), "%d", teamnum);
 					appendinfo (newinfo->info, teamstr);
 					gotteam = true;
 					break;
 				}
 
 			default:
-				if (stricmp (sc_String, "playerclass") == 0)
+				if (stricmp (sc.String, "playerclass") == 0)
 				{
 					gotclass = true;
 				}
-				appendinfo (newinfo->info, sc_String);
-				SC_MustGetString ();
-				appendinfo (newinfo->info, sc_String);
+				appendinfo (newinfo->info, sc.String);
+				sc.MustGetString ();
+				appendinfo (newinfo->info, sc.String);
 				break;
 			}
 		}
@@ -622,21 +635,19 @@ bool DCajunMaster::LoadBots ()
 			appendinfo (newinfo->info, "255");
 		}
 		newinfo->next = bglobal.botinfo;
-		newinfo->lastteam = TEAM_None;
+		newinfo->lastteam = TEAM_NONE;
 		bglobal.botinfo = newinfo;
 		bglobal.loaded_bots++;
 	}
-	SC_Close ();
-
 	Printf ("%d bots read from %s\n", bglobal.loaded_bots, BOTFILENAME);
-
 	return true;
 }
 
-ADD_STAT (bots, out)
+ADD_STAT (bots)
 {
-	sprintf (out, "think = %04.1f ms  support = %04.1f ms  wtg = %lu",
-		(double)BotThinkCycles * 1000 * SecondsPerCycle,
-		(double)BotSupportCycles * 1000 * SecondsPerCycle,
+	FString out;
+	out.Format ("think = %04.1f ms  support = %04.1f ms  wtg = %d",
+		BotThinkCycles.TimeMS(), BotSupportCycles.TimeMS(),
 		BotWTG);
+	return out;
 }

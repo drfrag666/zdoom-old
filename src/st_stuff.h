@@ -24,13 +24,12 @@
 #ifndef __STSTUFF_H__
 #define __STSTUFF_H__
 
-#include "d_event.h"
+struct event_t;
 
 extern int ST_X;
 extern int ST_Y;
 
-extern int SB_state;
-BOOL ST_Responder(event_t* ev);
+bool ST_Responder(event_t* ev);
 
 // [RH] Base blending values (for e.g. underwater)
 extern int BaseBlendR, BaseBlendG, BaseBlendB;

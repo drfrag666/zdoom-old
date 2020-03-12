@@ -3,7 +3,7 @@
 ** Arrays built at link-time
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,72 +32,71 @@
 **
 */
 
-#if defined(__GNUC__) && defined(_WIN32)
-
-void InitAutoSegMarkers ();
-
-#define REGEXEPEEK
-#define REGMARKER(x) (*x)
-typedef void **REGINFO;
-
-#else
+#ifndef AUTOSEGS_H
+#define AUTOSEGS_H
 
 #define REGMARKER(x) (x)
 typedef void *REGINFO;
 
-#endif
-
-// List of ActorInfos and the TypeInfos they belong to
+// List of Action functons
 extern REGINFO ARegHead;
 extern REGINFO ARegTail;
-
-// List of AT_GAME_SET functions
-extern REGINFO GRegHead;
-extern REGINFO GRegTail;
-
-// List of AT_SPEED_SET functions
-extern REGINFO SRegHead;
-extern REGINFO SRegTail;
 
 // List of TypeInfos
 extern REGINFO CRegHead;
 extern REGINFO CRegTail;
 
-template<class T, REGINFO *head, REGINFO *tail>
-class TAutoSegIteratorNoArrow
+// List of properties
+extern REGINFO GRegHead;
+extern REGINFO GRegTail;
+
+// List of variables
+extern REGINFO MRegHead;
+extern REGINFO MRegTail;
+
+// List of MAPINFO map options
+extern REGINFO YRegHead;
+extern REGINFO YRegTail;
+
+class FAutoSegIterator
 {
 	public:
-		TAutoSegIteratorNoArrow ()
+		FAutoSegIterator(REGINFO &head, REGINFO &tail)
 		{
-			Probe = (T *)REGMARKER(head);
+			// Weirdness. Mingw's linker puts these together backwards.
+			if (&head <= &tail)
+			{
+				Head = &head;
+				Tail = &tail;
+			}
+			else
+			{
+				Head = &tail;
+				Tail = &head;
+			}
+			Probe = Head;
 		}
-		operator T () const
+		REGINFO operator*() const
 		{
 			return *Probe;
 		}
-		TAutoSegIteratorNoArrow &operator++()
+		FAutoSegIterator &operator++()
 		{
 			do
 			{
 				++Probe;
-			} while (*Probe == 0 && Probe < (T *)REGMARKER(tail));
+			} while (*Probe == 0 && Probe < Tail);
 			return *this;
 		}
-		void Reset ()
+		void Reset()
 		{
-			Probe = (T *)REGMARKER(head);
+			Probe = Head;
 		}
 
 	protected:
-		T *Probe;
+		REGINFO *Probe;
+		REGINFO *Head;
+		REGINFO *Tail;
 };
 
-template<class T, REGINFO *head, REGINFO *tail>
-class TAutoSegIterator : public TAutoSegIteratorNoArrow<T, head, tail>
-{
-	public:
-		T operator->() const
-		{
-			return *(this->Probe);
-		}
-};
+#endif

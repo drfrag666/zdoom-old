@@ -6,8 +6,9 @@
 #include "cmdlib.h"
 #include "templates.h"
 #include "w_wad.h"
+#include "i_system.h"
 
-struct FEAXField
+struct FReverbField
 {
 	int Min, Max;
 	float REVERB_PROPERTIES::*Float;
@@ -15,7 +16,7 @@ struct FEAXField
 	unsigned int Flag;
 };
 
-static const FEAXField EAXFields[] =
+static const FReverbField ReverbFields[] =
 {
 	{        0,       25, 0, &REVERB_PROPERTIES::Environment, 0 },
 	{     1000,   100000, &REVERB_PROPERTIES::EnvSize, 0, 0 },
@@ -55,9 +56,9 @@ static const FEAXField EAXFields[] =
 	{ 0, 0, 0, 0, 6 },
 	{ 0, 0, 0, 0, 7 }
 };
-#define NUM_EAX_FIELDS (int(sizeof(EAXFields)/sizeof(EAXFields[0])))
+#define NUM_REVERB_FIELDS (int(countof(ReverbFields)))
 
-static const char *EAXFieldNames[NUM_EAX_FIELDS+2] =
+static const char *ReverbFieldNames[NUM_REVERB_FIELDS+2] =
 {
 	"Environment",
 	"EnvironmentSize",
@@ -102,14 +103,28 @@ static const char *EAXFieldNames[NUM_EAX_FIELDS+2] =
 
 static const char *BoolNames[3] = { "False", "True", NULL };
 
+static ReverbContainer DSPWater =
+{
+	// Based on the "off" reverb, this one uses the software water effect,
+	// which is completely independant from EAX-like reverb.
+	NULL,
+	"DSP Water",
+	0xffff,
+	true,
+	false,
+	{0, 0,	7.5f,	1.00f, -10000, -10000, 0,   1.00f,  1.00f, 1.0f,  -2602, 0.007f, 0.0f,0.0f,0.0f,   200, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,   0.0f,   0.0f, 0x33f },
+	true
+};
+
 static ReverbContainer Psychotic =
 {
-	NULL,
+	&DSPWater,
 	"Psychotic",
 	0x1900,
 	true,
 	false,
-	{25,	1.0f,	0.50f, -1000,  -151,   0,   7.56f,  0.91f, 1.0f,  -626,  0.020f, 0.0f,0.0f,0.0f,   774, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 4.00f, 1.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f }
+	{0,25,	1.0f,	0.50f, -1000,  -151,   0,   7.56f,  0.91f, 1.0f,  -626,  0.020f, 0.0f,0.0f,0.0f,   774, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 4.00f, 1.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f },
+	false
 };
 
 static ReverbContainer Dizzy =
@@ -119,7 +134,8 @@ static ReverbContainer Dizzy =
 	0x1800,
 	true,
 	false,
-	{24,	1.8f,	0.60f, -1000,  -400,   0,   17.23f, 0.56f, 1.0f,  -1713, 0.020f, 0.0f,0.0f,0.0f,  -613, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 1.00f, 0.81f, 0.310f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f }
+	{0,24,	1.8f,	0.60f, -1000,  -400,   0,   17.23f, 0.56f, 1.0f,  -1713, 0.020f, 0.0f,0.0f,0.0f,  -613, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 1.00f, 0.81f, 0.310f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f },
+	false
 };
 
 static ReverbContainer Drugged =
@@ -129,7 +145,8 @@ static ReverbContainer Drugged =
 	0x1700,
 	true,
 	false,
-	{23,	1.9f,	0.50f, -1000,  0,      0,   8.39f,  1.39f, 1.0f,  -115,  0.002f, 0.0f,0.0f,0.0f,   985, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 1.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f }
+	{0,23,	1.9f,	0.50f, -1000,  0,      0,   8.39f,  1.39f, 1.0f,  -115,  0.002f, 0.0f,0.0f,0.0f,   985, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 1.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f },
+	false
 };
 
 static ReverbContainer Underwater =
@@ -139,7 +156,8 @@ static ReverbContainer Underwater =
 	0x1600,
 	true,
 	false,
-	{22,	1.8f,	1.00f, -1000,  -4000,  0,   1.49f,  0.10f, 1.0f,   -449, 0.007f, 0.0f,0.0f,0.0f,  1700, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 1.18f, 0.348f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,22,	1.8f,	1.00f, -1000,  -4000,  0,   1.49f,  0.10f, 1.0f,   -449, 0.007f, 0.0f,0.0f,0.0f,  1700, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 1.18f, 0.348f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer SewerPipe =
@@ -149,7 +167,8 @@ static ReverbContainer SewerPipe =
 	0x1500,
 	true,
 	false,
-	{21,	1.7f,	0.80f, -1000,  -1000,  0,   2.81f,  0.14f, 1.0f,    429, 0.014f, 0.0f,0.0f,0.0f,  1023, 0.021f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  80.0f,  60.0f, 0x3f }
+	{0,21,	1.7f,	0.80f, -1000,  -1000,  0,   2.81f,  0.14f, 1.0f,    429, 0.014f, 0.0f,0.0f,0.0f,  1023, 0.021f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  80.0f,  60.0f, 0x3f },
+	false
 };
 
 static ReverbContainer ParkingLot =
@@ -159,7 +178,8 @@ static ReverbContainer ParkingLot =
 	0x1400,
 	true,
 	false,
-	{20,	8.3f,	1.00f, -1000,  0,      0,   1.65f,  1.50f, 1.0f,  -1363, 0.008f, 0.0f,0.0f,0.0f, -1153, 0.012f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f }
+	{0,20,	8.3f,	1.00f, -1000,  0,      0,   1.65f,  1.50f, 1.0f,  -1363, 0.008f, 0.0f,0.0f,0.0f, -1153, 0.012f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f },
+	false
 };
 
 static ReverbContainer Plain =
@@ -169,7 +189,8 @@ static ReverbContainer Plain =
 	0x1300,
 	true,
 	false,
-	{19,	42.5f,	0.21f, -1000,  -2000,  0,   1.49f,  0.50f, 1.0f,  -2466, 0.179f, 0.0f,0.0f,0.0f, -1926, 0.100f, 0.0f,0.0f,0.0f, 0.250f, 1.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  21.0f, 100.0f, 0x3f }
+	{0,19,	42.5f,	0.21f, -1000,  -2000,  0,   1.49f,  0.50f, 1.0f,  -2466, 0.179f, 0.0f,0.0f,0.0f, -1926, 0.100f, 0.0f,0.0f,0.0f, 0.250f, 1.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  21.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Quarry =
@@ -179,7 +200,8 @@ static ReverbContainer Quarry =
 	0x1200,
 	true,
 	false,
-	{18,	17.5f,	1.00f, -1000,  -1000,  0,   1.49f,  0.83f, 1.0f, -10000, 0.061f, 0.0f,0.0f,0.0f,   500, 0.025f, 0.0f,0.0f,0.0f, 0.125f, 0.70f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,18,	17.5f,	1.00f, -1000,  -1000,  0,   1.49f,  0.83f, 1.0f, -10000, 0.061f, 0.0f,0.0f,0.0f,   500, 0.025f, 0.0f,0.0f,0.0f, 0.125f, 0.70f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Mountains =
@@ -189,7 +211,8 @@ static ReverbContainer Mountains =
 	0x1100,
 	true,
 	false,
-	{17,	100.0f, 0.27f, -1000,  -2500,  0,   1.49f,  0.21f, 1.0f,  -2780, 0.300f, 0.0f,0.0f,0.0f, -1434, 0.100f, 0.0f,0.0f,0.0f, 0.250f, 1.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  27.0f, 100.0f, 0x1f }
+	{0,17,	100.0f, 0.27f, -1000,  -2500,  0,   1.49f,  0.21f, 1.0f,  -2780, 0.300f, 0.0f,0.0f,0.0f, -1434, 0.100f, 0.0f,0.0f,0.0f, 0.250f, 1.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  27.0f, 100.0f, 0x1f },
+	false
 };
 
 static ReverbContainer City =
@@ -199,7 +222,8 @@ static ReverbContainer City =
 	0x1000,
 	true,
 	false,
-	{16,	7.5f,	0.50f, -1000,  -800,   0,   1.49f,  0.67f, 1.0f,  -2273, 0.007f, 0.0f,0.0f,0.0f, -1691, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  50.0f, 100.0f, 0x3f }
+	{0,16,	7.5f,	0.50f, -1000,  -800,   0,   1.49f,  0.67f, 1.0f,  -2273, 0.007f, 0.0f,0.0f,0.0f, -1691, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  50.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Forest =
@@ -209,7 +233,8 @@ static ReverbContainer Forest =
 	0x0F00,
 	true,
 	false,
-	{15,	38.0f,	0.30f, -1000,  -3300,  0,   1.49f,  0.54f, 1.0f,  -2560, 0.162f, 0.0f,0.0f,0.0f,  -229, 0.088f, 0.0f,0.0f,0.0f, 0.125f, 1.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  79.0f, 100.0f, 0x3f }
+	{0,15,	38.0f,	0.30f, -1000,  -3300,  0,   1.49f,  0.54f, 1.0f,  -2560, 0.162f, 0.0f,0.0f,0.0f,  -229, 0.088f, 0.0f,0.0f,0.0f, 0.125f, 1.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,  79.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Alley =
@@ -219,7 +244,8 @@ static ReverbContainer Alley =
 	0x0E00,
 	true,
 	false,
-	{14,	7.5f,	0.30f, -1000,  -270,   0,   1.49f,  0.86f, 1.0f,  -1204, 0.007f, 0.0f,0.0f,0.0f,    -4, 0.011f, 0.0f,0.0f,0.0f, 0.125f, 0.95f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,14,	7.5f,	0.30f, -1000,  -270,   0,   1.49f,  0.86f, 1.0f,  -1204, 0.007f, 0.0f,0.0f,0.0f,    -4, 0.011f, 0.0f,0.0f,0.0f, 0.125f, 0.95f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer StoneCorridor =
@@ -229,7 +255,8 @@ static ReverbContainer StoneCorridor =
 	0x0D00,
 	true,
 	false,
-	{13,	13.5f,	1.00f, -1000,  -237,   0,   2.70f,  0.79f, 1.0f,  -1214, 0.013f, 0.0f,0.0f,0.0f,   395, 0.020f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,13,	13.5f,	1.00f, -1000,  -237,   0,   2.70f,  0.79f, 1.0f,  -1214, 0.013f, 0.0f,0.0f,0.0f,   395, 0.020f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Hallway =
@@ -239,7 +266,8 @@ static ReverbContainer Hallway =
 	0x0C00,
 	true,
 	false,
-	{12,	1.8f,	1.00f, -1000,  -300,   0,   1.49f,  0.59f, 1.0f,  -1219, 0.007f, 0.0f,0.0f,0.0f,   441, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,12,	1.8f,	1.00f, -1000,  -300,   0,   1.49f,  0.59f, 1.0f,  -1219, 0.007f, 0.0f,0.0f,0.0f,   441, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer CarpettedHallway =
@@ -249,7 +277,8 @@ static ReverbContainer CarpettedHallway =
 	0x0B00,
 	true,
 	false,
-	{11,	1.9f,	1.00f, -1000,  -4000,  0,   0.30f,  0.10f, 1.0f,  -1831, 0.002f, 0.0f,0.0f,0.0f, -1630, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,11,	1.9f,	1.00f, -1000,  -4000,  0,   0.30f,  0.10f, 1.0f,  -1831, 0.002f, 0.0f,0.0f,0.0f, -1630, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Hangar =
@@ -259,7 +288,8 @@ static ReverbContainer Hangar =
 	0x0A00,
 	true,
 	false,
-	{10,	50.3f,	1.00f, -1000,  -1000,  0,   10.05f, 0.23f, 1.0f,   -602, 0.020f, 0.0f,0.0f,0.0f,   198, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0,10,	50.3f,	1.00f, -1000,  -1000,  0,   10.05f, 0.23f, 1.0f,   -602, 0.020f, 0.0f,0.0f,0.0f,   198, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Arena =
@@ -269,7 +299,8 @@ static ReverbContainer Arena =
 	0x0900,
 	true,
 	false,
-	{9,	36.2f,	1.00f, -1000,  -698,   0,   7.24f,  0.33f, 1.0f,  -1166, 0.020f, 0.0f,0.0f,0.0f,    16, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 9,	36.2f,	1.00f, -1000,  -698,   0,   7.24f,  0.33f, 1.0f,  -1166, 0.020f, 0.0f,0.0f,0.0f,    16, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Cave =
@@ -279,7 +310,8 @@ static ReverbContainer Cave =
 	0x0800,
 	true,
 	false,
-	{8,	14.6f,	1.00f, -1000,  0,      0,   2.91f,  1.30f, 1.0f,   -602, 0.015f, 0.0f,0.0f,0.0f,  -302, 0.022f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f }
+	{0, 8,	14.6f,	1.00f, -1000,  0,      0,   2.91f,  1.30f, 1.0f,   -602, 0.015f, 0.0f,0.0f,0.0f,  -302, 0.022f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x1f },
+	false
 };
 
 static ReverbContainer ConcertHall =
@@ -289,7 +321,8 @@ static ReverbContainer ConcertHall =
 	0x0700,
 	true,
 	false,
-	{7,	19.6f,	1.00f, -1000,  -500,   0,   3.92f,  0.70f, 1.0f,  -1230, 0.020f, 0.0f,0.0f,0.0f,    -2, 0.029f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 7,	19.6f,	1.00f, -1000,  -500,   0,   3.92f,  0.70f, 1.0f,  -1230, 0.020f, 0.0f,0.0f,0.0f,    -2, 0.029f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Auditorium =
@@ -299,7 +332,8 @@ static ReverbContainer Auditorium =
 	0x0600,
 	true,
 	false,
-	{6,	21.6f,	1.00f, -1000,  -476,   0,   4.32f,  0.59f, 1.0f,   -789, 0.020f, 0.0f,0.0f,0.0f,  -289, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 6,	21.6f,	1.00f, -1000,  -476,   0,   4.32f,  0.59f, 1.0f,   -789, 0.020f, 0.0f,0.0f,0.0f,  -289, 0.030f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer StoneRoom =
@@ -309,7 +343,8 @@ static ReverbContainer StoneRoom =
 	0x0500,
 	true,
 	false,
-	{5,	11.6f,	1.00f, -1000,  -300,   0,   2.31f,  0.64f, 1.0f,   -711, 0.012f, 0.0f,0.0f,0.0f,    83, 0.017f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 5,	11.6f,	1.00f, -1000,  -300,   0,   2.31f,  0.64f, 1.0f,   -711, 0.012f, 0.0f,0.0f,0.0f,    83, 0.017f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer LivingRoom =
@@ -319,7 +354,8 @@ static ReverbContainer LivingRoom =
 	0x0400,
 	true,
 	false,
-	{4,	2.5f,	1.00f, -1000,  -6000,  0,   0.50f,  0.10f, 1.0f,  -1376, 0.003f, 0.0f,0.0f,0.0f, -1104, 0.004f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 4,	2.5f,	1.00f, -1000,  -6000,  0,   0.50f,  0.10f, 1.0f,  -1376, 0.003f, 0.0f,0.0f,0.0f, -1104, 0.004f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Bathroom =
@@ -329,7 +365,8 @@ static ReverbContainer Bathroom =
 	0x0300,
 	true,
 	false,
-	{3,	1.4f,	1.00f, -1000,  -1200,  0,   1.49f,  0.54f, 1.0f,   -370, 0.007f, 0.0f,0.0f,0.0f,  1030, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f,  60.0f, 0x3f }
+	{0, 3,	1.4f,	1.00f, -1000,  -1200,  0,   1.49f,  0.54f, 1.0f,   -370, 0.007f, 0.0f,0.0f,0.0f,  1030, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f,  60.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Room =
@@ -339,7 +376,8 @@ static ReverbContainer Room =
 	0x0200,
 	true,
 	false,
-	{2,	1.9f,	1.00f, -1000,  -454,   0,   0.40f,  0.83f, 1.0f,  -1646, 0.002f, 0.0f,0.0f,0.0f,    53, 0.003f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 2,	1.9f,	1.00f, -1000,  -454,   0,   0.40f,  0.83f, 1.0f,  -1646, 0.002f, 0.0f,0.0f,0.0f,    53, 0.003f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer PaddedCell =
@@ -349,7 +387,8 @@ static ReverbContainer PaddedCell =
 	0x0100,
 	true,
 	false,
-	{1,	1.4f,	1.00f, -1000,  -6000,  0,   0.17f,  0.10f, 1.0f,  -1204, 0.001f, 0.0f,0.0f,0.0f,   207, 0.002f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 1,	1.4f,	1.00f, -1000,  -6000,  0,   0.17f,  0.10f, 1.0f,  -1204, 0.001f, 0.0f,0.0f,0.0f,   207, 0.002f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Generic =
@@ -359,7 +398,8 @@ static ReverbContainer Generic =
 	0x0001,
 	true,
 	false,
-	{0,	7.5f,	1.00f, -1000,  -100,   0,   1.49f,  0.83f, 1.0f,  -2602, 0.007f, 0.0f,0.0f,0.0f,   200, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f }
+	{0, 0,	7.5f,	1.00f, -1000,  -100,   0,   1.49f,  0.83f, 1.0f,  -2602, 0.007f, 0.0f,0.0f,0.0f,   200, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f, 100.0f, 100.0f, 0x3f },
+	false
 };
 
 static ReverbContainer Off =
@@ -369,7 +409,8 @@ static ReverbContainer Off =
 	0x0000,
 	true,
 	false,
-	{0,	7.5f,	1.00f, -10000, -10000, 0,   1.00f,  1.00f, 1.0f,  -2602, 0.007f, 0.0f,0.0f,0.0f,   200, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,   0.0f,   0.0f, 0x33f }
+	{0, 0,	7.5f,	1.00f, -10000, -10000, 0,   1.00f,  1.00f, 1.0f,  -2602, 0.007f, 0.0f,0.0f,0.0f,   200, 0.011f, 0.0f,0.0f,0.0f, 0.250f, 0.00f, 0.25f, 0.000f, -5.0f, 5000.0f, 250.0f, 0.0f,   0.0f,   0.0f, 0x33f },
+	false
 };
 
 ReverbContainer *DefaultEnvironments[26] =
@@ -464,81 +505,84 @@ FArchive &operator<< (FArchive &arc, ReverbContainer *&env)
 	return arc;
 }
 
-static void ReadEAX ()
+static void ReadReverbDef (int lump)
 {
+	FScanner sc;
 	const ReverbContainer *def;
 	ReverbContainer *newenv;
 	REVERB_PROPERTIES props;
 	char *name;
 	int id1, id2, i, j;
-	bool inited[NUM_EAX_FIELDS];
+	bool inited[NUM_REVERB_FIELDS];
 	BYTE bools[32];
 
-	while (SC_GetString ())
+	sc.OpenLumpNum(lump);
+	while (sc.GetString ())
 	{
-		name = copystring (sc_String);
-		SC_MustGetNumber ();
-		id1 = sc_Number;
-		SC_MustGetNumber ();
-		id2 = sc_Number;
-		SC_MustGetStringName ("{");
+		name = copystring (sc.String);
+		sc.MustGetNumber ();
+		id1 = sc.Number;
+		sc.MustGetNumber ();
+		id2 = sc.Number;
+		sc.MustGetStringName ("{");
 		memset (inited, 0, sizeof(inited));
+		props.Instance = 0;
 		props.Flags = 0;
-		while (SC_MustGetString (), NUM_EAX_FIELDS > (i = SC_MustMatchString (EAXFieldNames)))
+		while (sc.MustGetString (), NUM_REVERB_FIELDS > (i = sc.MustMatchString (ReverbFieldNames)))
 		{
-			if (EAXFields[i].Float)
+			if (ReverbFields[i].Float)
 			{
-				SC_MustGetFloat ();
-				props.*EAXFields[i].Float = clamp (sc_Float,
-					float(EAXFields[i].Min)/1000.f,
-					float(EAXFields[i].Max)/1000.f);
+				sc.MustGetFloat ();
+				props.*ReverbFields[i].Float = (float)clamp (sc.Float,
+					double(ReverbFields[i].Min)/1000,
+					double(ReverbFields[i].Max)/1000);
 			}
-			else if (EAXFields[i].Int)
+			else if (ReverbFields[i].Int)
 			{
-				SC_MustGetNumber ();
-				props.*EAXFields[i].Int = (j = clamp (sc_Number,
-					EAXFields[i].Min, EAXFields[i].Max));
-				if (i == 0 && j != sc_Number)
+				sc.MustGetNumber ();
+				props.*ReverbFields[i].Int = (j = clamp (sc.Number,
+					ReverbFields[i].Min, ReverbFields[i].Max));
+				if (i == 0 && j != sc.Number)
 				{
-					SC_ScriptError ("The Environment field is out of range.");
+					sc.ScriptError ("The Environment field is out of range.");
 				}
 			}
 			else
 			{
-				SC_MustGetString ();
-				bools[EAXFields[i].Flag] = SC_MustMatchString (BoolNames);
+				sc.MustGetString ();
+				bools[ReverbFields[i].Flag] = sc.MustMatchString (BoolNames);
 			}
 			inited[i] = true;
 		}
 		if (!inited[0])
 		{
-			SC_ScriptError ("Sound %s is missing an Environment field.", name);
+			sc.ScriptError ("Sound %s is missing an Environment field.", name);
 		}
 
 		// Add the new environment to the list, filling in uninitialized fields
 		// with values from the standard environment specified.
 		def = DefaultEnvironments[props.Environment];
-		for (i = 0; i < NUM_EAX_FIELDS; ++i)
+		for (i = 0; i < NUM_REVERB_FIELDS; ++i)
 		{
-			if (EAXFields[i].Float)
+			if (ReverbFields[i].Float)
 			{
 				if (!inited[i])
 				{
-					props.*EAXFields[i].Float = def->Properties.*EAXFields[i].Float;
+					props.*ReverbFields[i].Float = def->Properties.*ReverbFields[i].Float;
 				}
 			}
-			else if (EAXFields[i].Int)
+			else if (ReverbFields[i].Int)
 			{
 				if (!inited[i])
 				{
-					props.*EAXFields[i].Int = def->Properties.*EAXFields[i].Int;
+					props.*ReverbFields[i].Int = def->Properties.*ReverbFields[i].Int;
 				}
 			}
 			else
 			{
 				if (!inited[i])
 				{
-					int mask = 1 << EAXFields[i].Flag;
+					int mask = 1 << ReverbFields[i].Flag;
 					if (def->Properties.Flags & mask)
 					{
 						props.Flags |= mask;
@@ -546,9 +590,9 @@ static void ReadEAX ()
 				}
 				else
 				{
-					if (bools[EAXFields[i].Flag])
+					if (bools[ReverbFields[i].Flag])
 					{
-						props.Flags |= 1 << EAXFields[i].Flag;
+						props.Flags |= 1 << ReverbFields[i].Flag;
 					}
 				}
 			}
@@ -560,18 +604,43 @@ static void ReadEAX ()
 		newenv->ID = (id1 << 8) | id2;
 		newenv->Builtin = false;
 		newenv->Properties = props;
+		newenv->SoftwareWater = false;
 		S_AddEnvironment (newenv);
 	}
 }
 
-void S_ParseSndEax ()
+void S_ParseReverbDef ()
 {
 	int lump, lastlump = 0;
 
-	while ((lump = Wads.FindLump ("SNDEAX", &lastlump)) != -1)
+	atterm (S_UnloadReverbDef);
+	S_UnloadReverbDef ();
+
+	while ((lump = Wads.FindLump ("REVERBS", &lastlump)) != -1)
 	{
-		SC_OpenLumpNum (lump, "SNDEAX");
-		ReadEAX ();
-		SC_Close ();
+		ReadReverbDef (lump);
 	}
+}
+
+void S_UnloadReverbDef ()
+{
+	ReverbContainer *probe = Environments;
+	ReverbContainer **pNext = NULL;
+
+	while (probe != NULL)
+	{
+		ReverbContainer *next = probe->Next;
+		if (!probe->Builtin)
+		{
+			if (pNext != NULL) *pNext = probe->Next;
+			delete[] const_cast<char *>(probe->Name);
+			delete probe;
+		}
+		else
+		{
+			pNext = &probe->Next;
+		}
+		probe = next;
+	}
+	Environments = &Off;
 }

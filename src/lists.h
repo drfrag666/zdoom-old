@@ -3,7 +3,7 @@
 ** Essentially, Amiga Exec lists and nodes
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -138,6 +138,9 @@ struct List
 		TailPred->Succ = (Node *)&Tail;
 		return node;
 	}
+
+private:
+	List &operator= (const List&) { return *this; }
 };
 
 #endif //__LISTS_H__

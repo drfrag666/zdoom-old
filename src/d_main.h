@@ -25,7 +25,10 @@
 #ifndef __D_MAIN__
 #define __D_MAIN__
 
-#include "d_event.h"
+#include "doomtype.h"
+#include "gametype.h"
+
+struct event_t;
 
 //
 // D_DoomMain()
@@ -33,13 +36,16 @@
 // calls all startup code, parses command line options.
 // If not overrided by user input, calls N_AdvanceDemo.
 //
+
+struct CRestartException
+{
+	char dummy;
+};
+
 void D_DoomMain (void);
 
-// Called by IO functions when input is detected.
-void D_PostEvent (const event_t* ev);
 
-// [RH] Passed true if just drawing for a screenshot
-void D_Display (bool screenshot);
+void D_Display ();
 
 
 //
@@ -49,38 +55,84 @@ void D_PageTicker (void);
 void D_PageDrawer (void);
 void D_AdvanceDemo (void);
 void D_StartTitle (void);
+bool D_AddFile (TArray<FString> &wadfiles, const char *file, bool check = true, int position = -1);
 
 
 // [RH] Set this to something to draw an icon during the next screen refresh.
-extern char *D_DrawIcon;
+extern const char *D_DrawIcon;
 
-
-enum EIWADType
-{
-	IWAD_Doom2TNT,
-	IWAD_Doom2Plutonia,
-	IWAD_Hexen,
-	IWAD_HexenDK,
-	IWAD_Doom2,
-	IWAD_HereticShareware,
-	IWAD_HereticExtended,
-	IWAD_Heretic,
-	IWAD_DoomShareware,
-	IWAD_UltimateDoom,
-	IWAD_DoomRegistered,
-	IWAD_Strife,
-	IWAD_StrifeTeaser,
-	IWAD_StrifeTeaser2,
-
-	NUM_IWAD_TYPES
-};
 
 struct WadStuff
 {
-	char *Path;
-	EIWADType Type;
+	WadStuff() : Type(0) {}
+
+	FString Path;
+	FString Name;
+	int Type;
 };
 
-extern const char *IWADTypeNames[NUM_IWAD_TYPES];
+struct FIWADInfo
+{
+	FString Name;			// Title banner text for this IWAD
+	FString Autoname;		// Name of autoload ini section for this IWAD
+	FString Configname;		// Name of config section for this IWAD
+	FString Required;		// Requires another IWAD
+	DWORD FgColor;			// Foreground color for title banner
+	DWORD BkColor;			// Background color for title banner
+	EGameType gametype;		// which game are we playing?
+	FString MapInfo;		// Base mapinfo to load
+	TArray<FString> Load;	// Wads to be loaded with this one.
+	TArray<FString> Lumps;	// Lump names for identification
+	int flags;
+	int preload;
+
+	FIWADInfo() { flags = 0; preload = -1; FgColor = 0; BkColor= 0xc0c0c0; gametype = GAME_Doom; }
+};
+
+struct FStartupInfo
+{
+	FString Name;
+	DWORD FgColor;			// Foreground color for title banner
+	DWORD BkColor;			// Background color for title banner
+	FString Song;
+	int Type;
+	enum
+	{
+		DefaultStartup,
+		DoomStartup,
+		HereticStartup,
+		HexenStartup,
+		StrifeStartup,
+	};
+
+};
+
+extern FStartupInfo DoomStartupInfo;
+
+//==========================================================================
+//
+// IWAD identifier class
+//
+//==========================================================================
+
+struct FIWadManager
+{
+private:
+	TArray<FIWADInfo> mIWads;
+	TArray<FString> mIWadNames;
+	TArray<int> mLumpsFound;
+
+	void ParseIWadInfo(const char *fn, const char *data, int datasize);
+	void ParseIWadInfos(const char *fn);
+	void ClearChecks();
+	void CheckLumpName(const char *name);
+	int GetIWadInfo();
+	int ScanIWAD (const char *iwad);
+	int CheckIWAD (const char *doomwaddir, WadStuff *wads);
+	int IdentifyVersion (TArray<FString> &wadfiles, const char *iwad, const char *zdoom_wad);
+public:
+	const FIWADInfo *FindIWAD(TArray<FString> &wadfiles, const char *iwad, const char *basewad);
+};
+
 
 #endif

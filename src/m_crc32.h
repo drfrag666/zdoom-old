@@ -3,7 +3,7 @@
 ** Simple interface to zlib's CRC table
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -33,7 +33,7 @@
 */
 
 #include <zlib.h>
-#include "doomtype.h"
+#include "basictypes.h"
 
 // zlib includes some CRC32 stuff, so just use that
 

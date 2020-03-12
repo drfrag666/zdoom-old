@@ -37,20 +37,21 @@
 #define __TABLES_H__
 
 #include <math.h>
+#include "basictypes.h"
 
 #ifndef PI
 #define PI				3.14159265358979323846		// matches value in gcc v2 math.h
 #endif
 
 
-#include "m_fixed.h"
-		
+#define FINEANGLEBITS	13
 #define FINEANGLES		8192
 #define FINEMASK		(FINEANGLES-1)
 
-
 // 0x100000000 to 0x2000
 #define ANGLETOFINESHIFT		19
+
+#define BOBTOFINESHIFT			(FINEANGLEBITS - 6)
 
 // Effective size is 10240.
 extern	fixed_t 		finesine[5*FINEANGLES/4];
@@ -60,7 +61,7 @@ extern	fixed_t 		finesine[5*FINEANGLES/4];
 // (encapsulated in a struct so that we can still use array accesses).
 struct cosine_inline
 {
-	fixed_t operator[] (unsigned int x)
+	fixed_t operator[] (unsigned int x) const
 	{
 		return finesine[x+FINEANGLES/4];
 	}
@@ -89,7 +90,7 @@ extern fixed_t			finetangent[FINEANGLES/2];
 #define SLOPEBITS		11
 #define DBITS			(FRACBITS-SLOPEBITS)
 
-typedef DWORD			angle_t;
+typedef uint32			angle_t;
 
 // Avoid "ambiguous call to overloaded function" errors
 // Only to be used when you have subtracted two angles.
@@ -105,19 +106,13 @@ inline angle_t abs (angle_t ang)
 //	without additional checking.
 extern angle_t			tantoangle[SLOPERANGE+1];
 
-
-// Utility function,
-//	called by R_PointToAngle.
-inline int SlopeDiv (unsigned int num, unsigned den)
+inline double bam2rad(angle_t ang)
 {
-	unsigned int ans;
-
-	if (den < 512)
-		return SLOPERANGE;
-
-	ans = (num << 3) / (den >> 8);
-
-	return ans <= SLOPERANGE ? ans : SLOPERANGE;
+	return double(ang >> 1) * (PI / ANGLE_90);
+}
+inline angle_t rad2bam(double ang)
+{
+	return angle_t(ang * (double(1<<30) / PI)) << 1;
 }
 
 #endif // __TABLES_H__

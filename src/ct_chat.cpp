@@ -22,12 +22,15 @@
 #include "c_console.h"
 #include "c_dispatch.h"
 #include "c_cvars.h"
+#include "d_player.h"
 #include "v_text.h"
 #include "v_video.h"
 #include "gi.h"
 #include "d_gui.h"
 #include "i_input.h"
 #include "templates.h"
+#include "d_net.h"
+#include "d_event.h"
 
 #define QUEUESIZE		128
 #define MESSAGESIZE		128
@@ -35,13 +38,19 @@
 #define HU_INPUTX		0
 #define HU_INPUTY		(0 + (screen->Font->GetHeight () + 1))
 
+void CT_PasteChat(const char *clip);
+
 EXTERN_CVAR (Int, con_scaletext)
+
+EXTERN_CVAR (Bool, sb_cooperative_enable)
+EXTERN_CVAR (Bool, sb_deathmatch_enable)
+EXTERN_CVAR (Bool, sb_teamdeathmatch_enable)
 
 // Public data
 
 void CT_Init ();
 void CT_Drawer ();
-BOOL CT_Responder (event_t *ev);
+bool CT_Responder (event_t *ev);
 
 int chatmodeon;
 
@@ -51,10 +60,10 @@ static void CT_ClearChatMessage ();
 static void CT_AddChar (char c);
 static void CT_BackSpace ();
 static void ShoveChatStr (const char *str, BYTE who);
-static bool DoSubstitution (char *out, const char *in);
+static bool DoSubstitution (FString &out, const char *in);
 
 static int len;
-static byte ChatQueue[QUEUESIZE];
+static BYTE ChatQueue[QUEUESIZE];
 
 CVAR (String, chatmacro1, "I'm ready to kick butt!", CVAR_ARCHIVE)
 CVAR (String, chatmacro2, "I'm OK.", CVAR_ARCHIVE)
@@ -114,7 +123,7 @@ void CT_Stop ()
 //
 //===========================================================================
 
-BOOL CT_Responder (event_t *ev)
+bool CT_Responder (event_t *ev)
 {
 	if (chatmodeon && ev->type == EV_GUI_Event)
 	{
@@ -143,17 +152,7 @@ BOOL CT_Responder (event_t *ev)
 			}
 			else if (ev->data1 == 'V' && (ev->data3 & GKM_CTRL))
 			{
-				char *clip = I_GetFromClipboard ();
-				if (clip != NULL)
-				{
-					char *clip_p = clip;
-					strtok (clip, "\n\r\b");
-					while (*clip_p)
-					{
-						CT_AddChar (*clip_p++);
-					}
-					delete[] clip;
-				}
+				CT_PasteChat(I_GetFromClipboard(false));
 			}
 		}
 		else if (ev->subtype == EV_GUI_Char)
@@ -166,13 +165,41 @@ BOOL CT_Responder (event_t *ev)
 			}
 			else
 			{
-				CT_AddChar (ev->data1);
+				CT_AddChar (char(ev->data1));
 			}
 			return true;
 		}
+#ifdef unix
+		else if (ev->subtype == EV_GUI_MButtonDown)
+		{
+			CT_PasteChat(I_GetFromClipboard(true));
+		}
+#endif
 	}
 
 	return false;
+}
+
+//===========================================================================
+//
+// CT_PasteChat
+//
+//===========================================================================
+
+void CT_PasteChat(const char *clip)
+{
+	if (clip != NULL && *clip != '\0')
+	{
+		// Only paste the first line.
+		while (*clip != '\0')
+		{
+			if (*clip == '\n' || *clip == '\r' || *clip == '\b')
+			{
+				break;
+			}
+			CT_AddChar (*clip++);
+		}
+	}
 }
 
 //===========================================================================
@@ -203,16 +230,16 @@ void CT_Drawer (void)
 		int screen_height = con_scaletext > 1? SCREENHEIGHT/2 : SCREENHEIGHT;
 		int st_y = con_scaletext > 1?  ST_Y/2 : ST_Y;
 
-		y += ((SCREENHEIGHT == realviewheight && viewactive) || gamestate != GS_LEVEL) ? screen_height : st_y;
+		y += ((SCREENHEIGHT == viewheight && viewactive) || gamestate != GS_LEVEL) ? screen_height : st_y;
 
 		promptwidth = SmallFont->StringWidth (prompt) * scalex;
-		x = screen->Font->GetCharWidth ('_') * scalex * 2 + promptwidth;
+		x = SmallFont->GetCharWidth ('_') * scalex * 2 + promptwidth;
 
 		// figure out if the text is wider than the screen->
 		// if so, only draw the right-most portion of it.
 		for (i = len - 1; i >= 0 && x < screen_width; i--)
 		{
-			x += screen->Font->GetCharWidth (ChatQueue[i] & 0x7f) * scalex;
+			x += SmallFont->GetCharWidth (ChatQueue[i] & 0x7f) * scalex;
 		}
 
 		if (i >= 0)
@@ -225,18 +252,18 @@ void CT_Drawer (void)
 		}
 
 		// draw the prompt, text, and cursor
-		ChatQueue[len] = gameinfo.gametype == GAME_Doom ? '_' : '[';
+		ChatQueue[len] = SmallFont->GetCursor();
 		ChatQueue[len+1] = '\0';
 		if (con_scaletext < 2)
 		{
-			screen->DrawText (CR_GREEN, 0, y, prompt, DTA_CleanNoMove, *con_scaletext, TAG_DONE);
-			screen->DrawText (CR_GREY, promptwidth, y, (char *)(ChatQueue + i), DTA_CleanNoMove, *con_scaletext, TAG_DONE);
+			screen->DrawText (SmallFont, CR_GREEN, 0, y, prompt, DTA_CleanNoMove, *con_scaletext, TAG_DONE);
+			screen->DrawText (SmallFont, CR_GREY, promptwidth, y, (char *)(ChatQueue + i), DTA_CleanNoMove, *con_scaletext, TAG_DONE);
 		}
 		else
 		{
-			screen->DrawText (CR_GREEN, 0, y, prompt, 
+			screen->DrawText (SmallFont, CR_GREEN, 0, y, prompt, 
 				DTA_VirtualWidth, screen_width, DTA_VirtualHeight, screen_height, DTA_KeepRatio, true, TAG_DONE);
-			screen->DrawText (CR_GREY, promptwidth, y, (char *)(ChatQueue + i), 
+			screen->DrawText (SmallFont, CR_GREY, promptwidth, y, (char *)(ChatQueue + i), 
 				DTA_VirtualWidth, screen_width, DTA_VirtualHeight, screen_height, DTA_KeepRatio, true, TAG_DONE);
 		}
 		ChatQueue[len] = '\0';
@@ -244,9 +271,11 @@ void CT_Drawer (void)
 		BorderTopRefresh = screen->GetPageCount ();
 	}
 
-	if (players[consoleplayer].camera != NULL && deathmatch &&
+	if (players[consoleplayer].camera != NULL &&
 		(Button_ShowScores.bDown ||
-		 players[consoleplayer].camera->health <= 0))
+		 players[consoleplayer].camera->health <= 0) &&
+		 // Don't draw during intermission, since it has its own scoreboard in wi_stuff.cpp.
+		 gamestate != GS_INTERMISSION)
 	{
 		HU_DrawScores (&players[consoleplayer]);
 	}
@@ -305,7 +334,7 @@ static void CT_ClearChatMessage ()
 
 static void ShoveChatStr (const char *str, BYTE who)
 {
-	char substBuff[256];
+	FString substBuff;
 
 	if (str[0] == '/' &&
 		(str[1] == 'm' || str[1] == 'M') &&
@@ -337,20 +366,20 @@ static void ShoveChatStr (const char *str, BYTE who)
 //
 //===========================================================================
 
-static bool DoSubstitution (char *out, const char *in)
+static bool DoSubstitution (FString &out, const char *in)
 {
 	player_t *player = &players[consoleplayer];
 	AWeapon *weapon = player->ReadyWeapon;
 	const char *a, *b;
 
 	a = in;
-	while ((b = strchr (a, '$')))
+	out = "";
+	while ( (b = strchr(a, '$')) )
 	{
-		strncpy (out, a, b - a);
-		out += b - a;
+		out.AppendCStrPart(a, b - a);
 
 		a = ++b;
-		while (*b && isalpha (*b))
+		while (*b && isalpha(*b))
 		{
 			++b;
 		}
@@ -359,71 +388,69 @@ static bool DoSubstitution (char *out, const char *in)
 
 		if (len == 6)
 		{
-			if (strnicmp (a, "health", 6) == 0)
+			if (strnicmp(a, "health", 6) == 0)
 			{
-				out += sprintf (out, "%d", player->health);
+				out.AppendFormat("%d", player->health);
 			}
-			else if (strnicmp (a, "weapon", 6) == 0)
+			else if (strnicmp(a, "weapon", 6) == 0)
 			{
 				if (weapon == NULL)
 				{
-					out += sprintf (out, "no weapon");
+					out += "no weapon";
 				}
 				else
 				{
-					out += sprintf (out, "%s", weapon->GetClass()->Name+1);
+					out += weapon->GetClass()->TypeName;
 				}
 			}
 		}
 		else if (len == 5)
 		{
-			if (strnicmp (a, "armor", 5) == 0)
+			if (strnicmp(a, "armor", 5) == 0)
 			{
 				AInventory *armor = player->mo->FindInventory<ABasicArmor>();
-				int armorpoints = armor != NULL ? armor->Amount : 0;
-				out += sprintf (out, "%d", armorpoints);
+				out.AppendFormat("%d", armor != NULL ? armor->Amount : 0);
 			}
 		}
 		else if (len == 9)
 		{
-			if (strnicmp (a, "ammocount", 9) == 0)
+			if (strnicmp(a, "ammocount", 9) == 0)
 			{
 				if (weapon == NULL)
 				{
-					out += sprintf (out, "0");
+					out += '0';
 				}
 				else
 				{
-					out += sprintf (out, "%d", weapon->Ammo1 != NULL ? weapon->Ammo1->Amount : 0);
+					out.AppendFormat("%d", weapon->Ammo1 != NULL ? weapon->Ammo1->Amount : 0);
 					if (weapon->Ammo2 != NULL)
 					{
-						out += sprintf (out, "/%d", weapon->Ammo2->Amount);
+						out.AppendFormat("/%d", weapon->Ammo2->Amount);
 					}
 				}
 			}
 		}
 		else if (len == 4)
 		{
-			if (strnicmp (a, "ammo", 4) == 0)
+			if (strnicmp(a, "ammo", 4) == 0)
 			{
 				if (weapon == NULL || weapon->Ammo1 == NULL)
 				{
-					out += sprintf (out, "no ammo");
+					out += "no ammo";
 				}
 				else
 				{
-					out += sprintf (out, "%s", weapon->Ammo1->GetClass()->Name+1);
+					out.AppendFormat("%s", weapon->Ammo1->GetClass()->TypeName.GetChars());
 					if (weapon->Ammo2 != NULL)
 					{
-						out += sprintf (out, "/%s", weapon->Ammo2->GetClass()->Name+1);
+						out.AppendFormat("/%s", weapon->Ammo2->GetClass()->TypeName.GetChars());
 					}
 				}
 			}
 		}
 		else if (len == 0)
 		{
-			*out++ = '$';
-			*out = 0;
+			out += '$';
 			if (*b == '$')
 			{
 				b++;
@@ -431,9 +458,8 @@ static bool DoSubstitution (char *out, const char *in)
 		}
 		else
 		{
-			*out++ = '$';
-			strncpy (out, a, len);
-			out += len;
+			out += '$';
+			out.AppendCStrPart(a, len);
 		}
 		a = b;
 	}
@@ -444,7 +470,7 @@ static bool DoSubstitution (char *out, const char *in)
 		return false;
 	}
 
-	strcpy (out, a);
+	out += a;
 	return true;
 }
 

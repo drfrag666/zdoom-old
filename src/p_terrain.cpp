@@ -3,7 +3,7 @@
 ** Terrain maintenance
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -49,7 +49,7 @@
 
 // MACROS ------------------------------------------------------------------
 
-#define SET_FIELD(type,val) *((type*)((byte *)fields + \
+#define SET_FIELD(type,val) *((type*)((BYTE *)fields + \
 							parser[keyword].u.Offset)) = val;
 
 // TYPES -------------------------------------------------------------------
@@ -63,7 +63,8 @@ enum EOuterKeywords
 	OUT_IFHERETIC,
 	OUT_IFHEXEN,
 	OUT_IFSTRIFE,
-	OUT_ENDIF
+	OUT_ENDIF,
+	OUT_DEFAULTTERRAIN
 };
 
 enum ETerrainKeywords
@@ -80,14 +81,8 @@ enum ETerrainKeywords
 	TR_LEFTSTEPSOUNDS,
 	TR_RIGHTSTEPSOUNDS,
 	TR_LIQUID,
-	TR_FRICTION
-};
-
-enum EDamageKeywords
-{
-	DAM_Lava,
-	DAM_Ice,
-	DAM_Slime
+	TR_FRICTION,
+	TR_ALLOWPROTECTION
 };
 
 enum EGenericType
@@ -110,7 +105,7 @@ struct FGenericParse
 	EGenericType Type;
 	union {
 		size_t Offset;
-		void (*Handler) (int type, void *fields);
+		void (*Handler) (FScanner &sc, int type, void *fields);
 	} u;
 };
 
@@ -121,24 +116,26 @@ struct FGenericParse
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
 
 static void MakeDefaultTerrain ();
-static void ParseOuter ();
-static void ParseSplash ();
-static void ParseTerrain ();
-static void ParseFloor ();
-static int FindSplash (const char *name);
-static int FindTerrain (const char *name);
-static void GenericParse (FGenericParse *parser, const char **keywords,
-	void *fields, const char *type, const char *name);
-static void ParseDamage (int keyword, void *fields);
-static void ParseFriction (int keyword, void *fields);
+static void ParseOuter (FScanner &sc);
+static void ParseSplash (FScanner &sc);
+static void ParseTerrain (FScanner &sc);
+static void ParseFloor (FScanner &sc);
+static int FindSplash (FName name);
+static int FindTerrain (FName name);
+static void GenericParse (FScanner &sc, FGenericParse *parser, const char **keywords,
+	void *fields, const char *type, FName name);
+static void ParseDamage (FScanner &sc, int keyword, void *fields);
+static void ParseFriction (FScanner &sc, int keyword, void *fields);
+static void ParseDefault (FScanner &sc);
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
-byte *TerrainTypes;
+FTerrainTypeArray TerrainTypes;
 TArray<FSplashDef> Splashes;
 TArray<FTerrainDef> Terrains;
+WORD DefaultTerrainType;
 
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
@@ -152,6 +149,7 @@ static const char *OuterKeywords[] =
 	"ifhexen",
 	"ifstrife",
 	"endif",
+	"defaultterrain",
 	NULL
 };
 
@@ -187,71 +185,48 @@ static const char *TerrainKeywords[] =
 	"rightstepsounds",
 	"liquid",
 	"friction",
+	"allowprotection",
 	NULL
 };
 
-static const char *DamageKeywords[] =
-{
-	"lava",
-	"ice",
-	"slime",
-	NULL
-};
+// Alternate offsetof macro to shut GCC up
+#define theoffsetof(type,field) ((size_t)&((type*)1)->field - 1)
 
 static FGenericParse SplashParser[] =
 {
 	{ GEN_End,	  {0} },
-	{ GEN_Sound,  {myoffsetof(FSplashDef, SmallSplashSound)} },
-	{ GEN_Fixed,  {myoffsetof(FSplashDef, SmallSplashClip)} },
-	{ GEN_Sound,  {myoffsetof(FSplashDef, NormalSplashSound)} },
-	{ GEN_Class,  {myoffsetof(FSplashDef, SmallSplash)} },
-	{ GEN_Class,  {myoffsetof(FSplashDef, SplashBase)} },
-	{ GEN_Class,  {myoffsetof(FSplashDef, SplashChunk)} },
-	{ GEN_Byte,   {myoffsetof(FSplashDef, ChunkXVelShift)} },
-	{ GEN_Byte,   {myoffsetof(FSplashDef, ChunkYVelShift)} },
-	{ GEN_Byte,   {myoffsetof(FSplashDef, ChunkZVelShift)} },
-	{ GEN_Fixed,  {myoffsetof(FSplashDef, ChunkBaseZVel)} },
-	{ GEN_Bool,	  {myoffsetof(FSplashDef, NoAlert)} }
+	{ GEN_Sound,  {theoffsetof(FSplashDef, SmallSplashSound)} },
+	{ GEN_Fixed,  {theoffsetof(FSplashDef, SmallSplashClip)} },
+	{ GEN_Sound,  {theoffsetof(FSplashDef, NormalSplashSound)} },
+	{ GEN_Class,  {theoffsetof(FSplashDef, SmallSplash)} },
+	{ GEN_Class,  {theoffsetof(FSplashDef, SplashBase)} },
+	{ GEN_Class,  {theoffsetof(FSplashDef, SplashChunk)} },
+	{ GEN_Byte,   {theoffsetof(FSplashDef, ChunkXVelShift)} },
+	{ GEN_Byte,   {theoffsetof(FSplashDef, ChunkYVelShift)} },
+	{ GEN_Byte,   {theoffsetof(FSplashDef, ChunkZVelShift)} },
+	{ GEN_Fixed,  {theoffsetof(FSplashDef, ChunkBaseZVel)} },
+	{ GEN_Bool,	  {theoffsetof(FSplashDef, NoAlert)} }
 };
 
 static FGenericParse TerrainParser[] =
 {
 	{ GEN_End,	  {0} },
-	{ GEN_Splash, {myoffsetof(FTerrainDef, Splash)} },
-	{ GEN_Int,    {myoffsetof(FTerrainDef, DamageAmount)} },
+	{ GEN_Splash, {theoffsetof(FTerrainDef, Splash)} },
+	{ GEN_Int,    {theoffsetof(FTerrainDef, DamageAmount)} },
 	{ GEN_Custom, {(size_t)ParseDamage} },
-	{ GEN_Int,    {myoffsetof(FTerrainDef, DamageTimeMask)} },
-	{ GEN_Fixed,  {myoffsetof(FTerrainDef, FootClip)} },
-	{ GEN_Float,  {myoffsetof(FTerrainDef, StepVolume)} },
-	{ GEN_Time,   {myoffsetof(FTerrainDef, WalkStepTics)} },
-	{ GEN_Time,   {myoffsetof(FTerrainDef, RunStepTics)} },
-	{ GEN_Sound,  {myoffsetof(FTerrainDef, LeftStepSound)} },
-	{ GEN_Sound,  {myoffsetof(FTerrainDef, RightStepSound)} },
-	{ GEN_Bool,   {myoffsetof(FTerrainDef, IsLiquid)} },
-	{ GEN_Custom, {(size_t)ParseFriction} }
+	{ GEN_Int,    {theoffsetof(FTerrainDef, DamageTimeMask)} },
+	{ GEN_Fixed,  {theoffsetof(FTerrainDef, FootClip)} },
+	{ GEN_Float,  {theoffsetof(FTerrainDef, StepVolume)} },
+	{ GEN_Time,   {theoffsetof(FTerrainDef, WalkStepTics)} },
+	{ GEN_Time,   {theoffsetof(FTerrainDef, RunStepTics)} },
+	{ GEN_Sound,  {theoffsetof(FTerrainDef, LeftStepSound)} },
+	{ GEN_Sound,  {theoffsetof(FTerrainDef, RightStepSound)} },
+	{ GEN_Bool,   {theoffsetof(FTerrainDef, IsLiquid)} },
+	{ GEN_Custom, {(size_t)ParseFriction} },
+	{ GEN_Bool,   {theoffsetof(FTerrainDef, AllowProtection)} },
 };
 
-/*
-struct
-{
-	char *name;
-	int type;
-	bool Heretic;
-}
- TerrainTypeDefs[] =
-{
-	{ "FLTWAWA1", FLOOR_WATER, true },
-	{ "FLTFLWW1", FLOOR_WATER, true },
-	{ "FLTLAVA1", FLOOR_LAVA, true },
-	{ "FLATHUH1", FLOOR_LAVA, true },
-	{ "FLTSLUD1", FLOOR_SLUDGE, true },
-	{ "X_005", FLOOR_WATER, false },
-	{ "X_001", FLOOR_LAVA, false },
-	{ "X_009", FLOOR_SLUDGE, false },
-	{ "F_033", FLOOR_ICE, false },
-	{ "END", -1 }
-};
-*/
+
 
 // CODE --------------------------------------------------------------------
 
@@ -267,18 +242,19 @@ void P_InitTerrainTypes ()
 	int lump;
 	int size;
 
-	size = (TexMan.NumTextures()+1)*sizeof(byte);
-	TerrainTypes = (byte *)Malloc (size);
-	memset (TerrainTypes, 0, size);
+	Splashes.Clear();
+	Terrains.Clear();
+	size = (TexMan.NumTextures()+1);
+	TerrainTypes.Resize(size);
+	TerrainTypes.Clear();
 
 	MakeDefaultTerrain ();
 
 	lastlump = 0;
 	while (-1 != (lump = Wads.FindLump ("TERRAIN", &lastlump)) )
 	{
-		SC_OpenLumpNum (lump, "TERRAIN");
-		ParseOuter ();
-		SC_Close ();
+		FScanner sc(lump);
+		ParseOuter (sc);
 	}
 	Splashes.ShrinkToFit ();
 	Terrains.ShrinkToFit ();
@@ -295,7 +271,7 @@ static void MakeDefaultTerrain ()
 	FTerrainDef def;
 
 	memset (&def, 0, sizeof(def));
-	def.Name = copystring ("Solid");
+	def.Name = "Solid";
 	def.Splash = -1;
 	Terrains.Push (def);
 }
@@ -306,79 +282,62 @@ static void MakeDefaultTerrain ()
 //
 //==========================================================================
 
-static void ParseOuter ()
+static void ParseOuter (FScanner &sc)
 {
 	int bracedepth = 0;
 	bool ifskip = false;
 
-	while (SC_GetString ())
+	while (sc.GetString ())
 	{
 		if (ifskip)
 		{
 			if (bracedepth > 0)
 			{
-				if (SC_Compare ("}"))
+				if (sc.Compare ("}"))
 				{
 					bracedepth--;
 					continue;
 				}
 			}
-			else if (SC_Compare ("endif"))
+			else if (sc.Compare ("endif"))
 			{
 				ifskip = false;
 				continue;
 			}
-			if (SC_Compare ("{"))
+			if (sc.Compare ("{"))
 			{
 				bracedepth++;
 			}
-			else if (SC_Compare ("}"))
+			else if (sc.Compare ("}"))
 			{
-				SC_ScriptError ("Too many left braces ('}')");
+				sc.ScriptError ("Too many left braces ('}')");
 			}
 		}
 		else
 		{
-			switch (SC_MustMatchString (OuterKeywords))
+			switch (sc.MustMatchString (OuterKeywords))
 			{
 			case OUT_SPLASH:
-				ParseSplash ();
+				ParseSplash (sc);
 				break;
 
 			case OUT_TERRAIN:
-				ParseTerrain ();
+				ParseTerrain (sc);
 				break;
 
 			case OUT_FLOOR:
-				ParseFloor ();
+				ParseFloor (sc);
+				break;
+
+			case OUT_DEFAULTTERRAIN:
+				ParseDefault (sc);
 				break;
 
 			case OUT_IFDOOM:
-				if (gameinfo.gametype != GAME_Doom)
-				{
-					ifskip = true;
-				}
-				break;
-
 			case OUT_IFHERETIC:
-				if (gameinfo.gametype != GAME_Heretic)
-				{
-					ifskip = true;
-				}
-				break;
-
 			case OUT_IFHEXEN:
-				if (gameinfo.gametype != GAME_Hexen)
-				{
-					ifskip = true;
-				}
-				break;
-
 			case OUT_IFSTRIFE:
-				if (gameinfo.gametype != GAME_Strife)
-				{
-					ifskip = true;
-				}
+				ifskip = !CheckGame(sc.String+2, true);
 				break;
 
 			case OUT_ENDIF:
@@ -390,49 +349,70 @@ static void ParseOuter ()
 
 //==========================================================================
 //
+// SetSplashDefaults
+//
+//==========================================================================
+
+static void SetSplashDefaults (FSplashDef *splashdef)
+{
+	splashdef->SmallSplashSound =
+		splashdef->NormalSplashSound = 0;
+	splashdef->SmallSplash =
+		splashdef->SplashBase =
+		splashdef->SplashChunk = NULL;
+	splashdef->ChunkXVelShift =
+		splashdef->ChunkYVelShift =
+		splashdef->ChunkZVelShift = 8;
+	splashdef->ChunkBaseZVel = FRACUNIT;
+	splashdef->SmallSplashClip = 12*FRACUNIT;
+	splashdef->NoAlert = false;
+}
+
+//==========================================================================
+//
 // ParseSplash
 //
 //==========================================================================
 
-void ParseSplash ()
+void ParseSplash (FScanner &sc)
 {
 	int splashnum;
 	FSplashDef *splashdef;
 	bool isnew = false;
+	FName name;
 
-	SC_MustGetString ();
-	splashnum = (int)FindSplash (sc_String);
+	sc.MustGetString ();
+	name = sc.String;
+	splashnum = (int)FindSplash (name);
 	if (splashnum < 0)
 	{
 		FSplashDef def;
-		def.Name = copystring (sc_String);
+		SetSplashDefaults (&def);
+		def.Name = name;
 		splashnum = (int)Splashes.Push (def);
 		isnew = true;
 	}
 	splashdef = &Splashes[splashnum];
 
-	SC_MustGetString ();
-	if (!SC_Compare ("modify") || (SC_MustGetString(), isnew))
+	sc.MustGetString ();
+	if (!sc.Compare ("modify"))
 	{ // Set defaults
-		splashdef->SmallSplashSound =
-			splashdef->NormalSplashSound = 0;
-		splashdef->SmallSplash =
-			splashdef->SplashBase =
-			splashdef->SplashChunk = NULL;
-		splashdef->ChunkXVelShift =
-			splashdef->ChunkYVelShift =
-			splashdef->ChunkZVelShift = 8;
-		splashdef->ChunkBaseZVel = FRACUNIT;
-		splashdef->SmallSplashClip = 12*FRACUNIT;
-		splashdef->NoAlert = false;
-	}
-	if (!SC_Compare ("{"))
-	{
-		SC_ScriptError ("Expected {");
+		if (!isnew)
+		{ // New ones already have their defaults set before they're pushed.
+			SetSplashDefaults (splashdef);
+		}
 	}
 	else
 	{
-		GenericParse (SplashParser, SplashKeywords, splashdef, "splash",
+		sc.MustGetString();
+	}
+	if (!sc.Compare ("{"))
+	{
+		sc.ScriptError ("Expected {");
+	}
+	else
+	{
+		GenericParse (sc, SplashParser, SplashKeywords, splashdef, "splash",
 			splashdef->Name);
 	}
 }
@@ -443,25 +423,26 @@ void ParseSplash ()
 //
 //==========================================================================
 
-void ParseTerrain ()
+void ParseTerrain (FScanner &sc)
 {
 	int terrainnum;
-	const char *name;
+	FName name;
 
-	SC_MustGetString ();
-	terrainnum = (int)FindTerrain (sc_String);
+	sc.MustGetString ();
+	name = sc.String;
+	terrainnum = (int)FindTerrain (name);
 	if (terrainnum < 0)
 	{
 		FTerrainDef def;
 		memset (&def, 0, sizeof(def));
 		def.Splash = -1;
-		def.Name = copystring (sc_String);
+		def.Name = name;
 		terrainnum = (int)Terrains.Push (def);
 	}
 
 	// Set defaults
-	SC_MustGetString ();
-	if (!SC_Compare ("modify"))
+	sc.MustGetString ();
+	if (!sc.Compare ("modify"))
 	{
 		name = Terrains[terrainnum].Name;
 		memset (&Terrains[terrainnum], 0, sizeof(FTerrainDef));
@@ -470,17 +451,17 @@ void ParseTerrain ()
 	}
 	else
 	{
-		SC_MustGetString ();
+		sc.MustGetString ();
 	}
 
-	if (SC_Compare ("{"))
+	if (sc.Compare ("{"))
 	{
-		GenericParse (TerrainParser, TerrainKeywords, &Terrains[terrainnum],
+		GenericParse (sc, TerrainParser, TerrainKeywords, &Terrains[terrainnum],
 			"terrain", Terrains[terrainnum].Name);
 	}
 	else
 	{
-		SC_ScriptError ("Expected {");
+		sc.ScriptError ("Expected {");
 	}
 }
 
@@ -490,25 +471,14 @@ void ParseTerrain ()
 //
 //==========================================================================
 
-static void ParseDamage (int keyword, void *fields)
+static void ParseDamage (FScanner &sc, int keyword, void *fields)
 {
 	FTerrainDef *def = (FTerrainDef *)fields;
 
-	SC_MustGetString ();
-	switch (SC_MustMatchString (DamageKeywords))
-	{
-	case DAM_Lava:
-		def->DamageMOD = MOD_FIRE;
-		break;
-
-	case DAM_Ice:
-		def->DamageMOD = MOD_ICE;
-		break;
-
-	case DAM_Slime:
-		def->DamageMOD = MOD_SLIME;
-		break;
-	}
+	sc.MustGetString ();
+	// Lava is synonymous with Fire here!
+	if (sc.Compare("Lava")) def->DamageMOD=NAME_Fire;
+	else def->DamageMOD=sc.String;
 }
 
 //==========================================================================
@@ -517,17 +487,17 @@ static void ParseDamage (int keyword, void *fields)
 //
 //==========================================================================
 
-static void ParseFriction (int keyword, void *fields)
+static void ParseFriction (FScanner &sc, int keyword, void *fields)
 {
 	FTerrainDef *def = (FTerrainDef *)fields;
 	fixed_t friction, movefactor;
 
-	SC_MustGetFloat ();
+	sc.MustGetFloat ();
 
 	// These calculations should match those in P_SetSectorFriction().
 	// A friction of 1.0 is equivalent to ORIG_FRICTION.
 
-	friction = (fixed_t)(0x1EB8*(sc_Float*100))/0x80 + 0xD001;
+	friction = (fixed_t)(0x1EB8*(sc.Float*100))/0x80 + 0xD001;
 	friction = clamp<fixed_t> (friction, 0, FRACUNIT);
 
 	if (friction > ORIG_FRICTION)	// ice
@@ -548,18 +518,18 @@ static void ParseFriction (int keyword, void *fields)
 //
 //==========================================================================
 
-static void GenericParse (FGenericParse *parser, const char **keywords,
-	void *fields, const char *type, const char *name)
+static void GenericParse (FScanner &sc, FGenericParse *parser, const char **keywords,
+	void *fields, const char *type, FName name)
 {
 	bool notdone = true;
 	int keyword;
-	int val;
-	const TypeInfo *info;
+	int val = 0;
+	const PClass *info;
 
 	do
 	{
-		SC_MustGetString ();
-		keyword = SC_MustMatchString (keywords);
+		sc.MustGetString ();
+		keyword = sc.MustMatchString (keywords);
 		switch (parser[keyword].Type)
 		{
 		case GEN_End:
@@ -567,69 +537,70 @@ static void GenericParse (FGenericParse *parser, const char **keywords,
 			break;
 
 		case GEN_Fixed:
-			SC_MustGetFloat ();
-			SET_FIELD (fixed_t, (fixed_t)(FRACUNIT * sc_Float));
+			sc.MustGetFloat ();
+			SET_FIELD (fixed_t, (fixed_t)(FRACUNIT * sc.Float));
 			break;
 
 		case GEN_Sound:
-			SC_MustGetString ();
-			val = S_FindSound (sc_String);
-			SET_FIELD (int, val);
+			sc.MustGetString ();
+			SET_FIELD (FSoundID, FSoundID(sc.String));
+			/* unknown sounds never produce errors anywhere else so they shouldn't here either.
 			if (val == 0)
 			{
 				Printf ("Unknown sound %s in %s %s\n",
-					sc_String, type, name);
+					sc.String, type, name.GetChars());
 			}
+			*/
 			break;
 
 		case GEN_Byte:
-			SC_MustGetNumber ();
-			SET_FIELD (byte, sc_Number);
+			sc.MustGetNumber ();
+			SET_FIELD (BYTE, sc.Number);
 			break;
 
 		case GEN_Class:
-			SC_MustGetString ();
-			if (SC_Compare ("None"))
+			sc.MustGetString ();
+			if (sc.Compare ("None"))
 			{
 				info = NULL;
 			}
 			else
 			{
-				info = TypeInfo::IFindType (sc_String);
+				info = PClass::FindClass (sc.String);
 				if (!info->IsDescendantOf (RUNTIME_CLASS(AActor)))
 				{
 					Printf ("%s is not an Actor (in %s %s)\n",
-						sc_String, type, name);
+						sc.String, type, name.GetChars());
 					info = NULL;
 				}
 				else if (info == NULL)
 				{
 					Printf ("Unknown actor %s in %s %s\n",
-						sc_String, type, name);
+						sc.String, type, name.GetChars());
 				}
 			}
-			SET_FIELD (const TypeInfo *, info);
+			SET_FIELD (const PClass *, info);
 			break;
 
 		case GEN_Splash:
-			SC_MustGetString ();
-			val = FindSplash (sc_String);
+			sc.MustGetString ();
+			val = FindSplash (sc.String);
 			SET_FIELD (int, val);
 			if (val == -1)
 			{
 				Printf ("Splash %s is not defined yet (in %s %s)\n",
-					sc_String, type, name);
+					sc.String, type, name.GetChars());
 			}
 			break;
 
 		case GEN_Float:
-			SC_MustGetFloat ();
-			SET_FIELD (float, sc_Float);
+			sc.MustGetFloat ();
+			SET_FIELD (float, float(sc.Float));
 			break;
 
 		case GEN_Time:
-			SC_MustGetFloat ();
-			SET_FIELD (int, (int)(sc_Float * TICRATE));
+			sc.MustGetFloat ();
+			SET_FIELD (int, (int)(sc.Float * TICRATE));
 			break;
 
 		case GEN_Bool:
@@ -637,12 +608,12 @@ static void GenericParse (FGenericParse *parser, const char **keywords,
 			break;
 
 		case GEN_Int:
-			SC_MustGetNumber ();
-			SET_FIELD (int, sc_Number);
+			sc.MustGetNumber ();
+			SET_FIELD (int, sc.Number);
 			break;
 
 		case GEN_Custom:
-			parser[keyword].u.Handler (keyword, fields);
+			parser[keyword].u.Handler (sc, keyword, fields);
 			break;
 		}
 	} while (notdone);
@@ -654,27 +625,48 @@ static void GenericParse (FGenericParse *parser, const char **keywords,
 //
 //==========================================================================
 
-static void ParseFloor ()
+static void ParseFloor (FScanner &sc)
 {
-	int picnum;
+	FTextureID picnum;
 	int terrain;
 
-	SC_MustGetString ();
-	picnum = TexMan.CheckForTexture (sc_String, FTexture::TEX_Flat);
-	if (picnum == -1)
+	sc.MustGetString ();
+	picnum = TexMan.CheckForTexture (sc.String, FTexture::TEX_Flat,
+		FTextureManager::TEXMAN_Overridable|FTextureManager::TEXMAN_TryAny);
+	if (!picnum.Exists())
 	{
-		Printf ("Unknown flat %s\n", sc_String);
-		SC_MustGetString ();
+		Printf ("Unknown flat %s\n", sc.String);
+		sc.MustGetString ();
 		return;
 	}
-	SC_MustGetString ();
-	terrain = FindTerrain (sc_String);
+	sc.MustGetString ();
+	terrain = FindTerrain (sc.String);
 	if (terrain == -1)
 	{
-		Printf ("Unknown terrain %s\n", sc_String);
+		Printf ("Unknown terrain %s\n", sc.String);
 		terrain = 0;
 	}
-	TerrainTypes[picnum] = terrain;
+	TerrainTypes.Set(picnum.GetIndex(), terrain);
+}
+
+//==========================================================================
+//
+// ParseDefault
+//
+//==========================================================================
+
+static void ParseDefault (FScanner &sc)
+{
+	int terrain;
+
+	sc.MustGetString ();
+	terrain = FindTerrain (sc.String);
+	if (terrain == -1)
+	{
+		Printf ("Unknown terrain %s\n", sc.String);
+		terrain = 0;
+	}
+	DefaultTerrainType = terrain;
 }
 
 //==========================================================================
@@ -683,13 +675,13 @@ static void ParseFloor ()
 //
 //==========================================================================
 
-int FindSplash (const char *name)
+int FindSplash (FName name)
 {
 	unsigned int i;
 
 	for (i = 0; i < Splashes.Size (); i++)
 	{
-		if (stricmp (Splashes[i].Name, name) == 0)
+		if (Splashes[i].Name == name)
 		{
 			return (int)i;
 		}
@@ -703,13 +695,13 @@ int FindSplash (const char *name)
 //
 //==========================================================================
 
-int FindTerrain (const char *name)
+int FindTerrain (FName name)
 {
 	unsigned int i;
 
 	for (i = 0; i < Terrains.Size (); i++)
 	{
-		if (stricmp (Terrains[i].Name, name) == 0)
+		if (Terrains[i].Name == name)
 		{
 			return (int)i;
 		}

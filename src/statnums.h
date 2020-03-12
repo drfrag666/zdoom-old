@@ -1,8 +1,10 @@
+#ifndef __STATNUMS_H
+#define __STATNUMS_H
 /*
 ** statnums.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -33,13 +35,14 @@
 ** lists for different types of thinkers is taken from Build. Every thinker
 ** is ticked by statnum, so a thinker with a low statnum will always tick
 ** before a thinker with a high statnum. If a thinker is not explicitly
-** created with a statnum, it will be given MAX_STATNUM.
+** created with a statnum, it will be given STAT_DEFAULT
 */
 
 enum
 { // Thinkers that don't actually think
 	STAT_INFO,								// An info queue
 	STAT_DECAL,								// A decal
+	STAT_AUTODECAL,							// A decal that can be automatically deleted
 	STAT_CORPSEPOINTER,						// An entry in Hexen's corpse queue
 	STAT_TRAVELLING,						// An actor temporarily travelling to a new map
 
@@ -53,4 +56,13 @@ enum
 	STAT_INVENTORY,							// An inventory item
 	STAT_LIGHT,								// A sector light effect
 	STAT_LIGHTTRANSFER,						// A sector light transfer. These must be ticked after the light effects!!!
+	STAT_EARTHQUAKE,						// Earthquake actors
+	STAT_MAPMARKER,							// Map marker actors
+
+	STAT_DEFAULT = 100,						// Thinkers go here unless specified otherwise.
+	STAT_SECTOREFFECT,						// All sector effects that cause floor and ceiling movement
+	STAT_ACTORMOVER,						// actor movers
+	STAT_SCRIPTS,							// The ACS thinker. This is to ensure that it can't tick before all actors called PostBeginPlay
 };
+
+#endif

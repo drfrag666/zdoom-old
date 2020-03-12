@@ -23,9 +23,8 @@
 #ifndef __G_GAME__
 #define __G_GAME__
 
-#include "doomdef.h"
-#include "d_event.h"
-
+struct event_t;
+struct PNGHandle;
 
 
 //
@@ -33,11 +32,18 @@
 //
 void G_DeathMatchSpawnPlayer (int playernum);
 
-void G_DeferedPlayDemo (char* demo);
+struct FPlayerStart *G_PickPlayerStart (int playernum, int flags = 0);
+enum
+{
+	PPS_FORCERANDOM			= 1,
+	PPS_NOBLOCKINGCHECK		= 2,
+};
+
+void G_DeferedPlayDemo (const char* demo);
 
 // Can be called by the startup code or M_Responder,
 // calls P_SetupLevel or W_EnterWorld.
-void G_LoadGame (char* name);
+void G_LoadGame (const char* name, bool hidecon=false);
 
 void G_DoLoadGame (void);
 
@@ -45,22 +51,22 @@ void G_DoLoadGame (void);
 void G_SaveGame (const char *filename, const char *description);
 
 // Only called by startup code.
-void G_RecordDemo (char* name);
+void G_RecordDemo (const char* name);
 
-void G_BeginRecording (void);
+void G_BeginRecording (const char *startmap);
 
 void G_PlayDemo (char* name);
-void G_TimeDemo (char* name);
-BOOL G_CheckDemoStatus (void);
+void G_TimeDemo (const char* name);
+bool G_CheckDemoStatus (void);
 
 void G_WorldDone (void);
 
 void G_Ticker (void);
-BOOL G_Responder (event_t*	ev);
+bool G_Responder (event_t*	ev);
 
 void G_ScreenShot (char *filename);
 
-string G_BuildSaveName (const char *prefix, int slot);
+FString G_BuildSaveName (const char *prefix, int slot);
 
 struct PNGHandle;
 bool G_CheckSaveGameWads (PNGHandle *png, bool printwarn);
@@ -72,7 +78,9 @@ enum EFinishLevelType
 	FINISH_NoHub
 };
 
-void G_PlayerFinishLevel (int player, EFinishLevelType mode);
+void G_PlayerFinishLevel (int player, EFinishLevelType mode, int flags);
+
+void G_DoReborn (int playernum, bool freshbot);
 
 // Adds pitch to consoleplayer's viewpitch and clamps it
 void G_AddViewPitch (int look);
@@ -84,6 +92,8 @@ void G_AddViewAngle (int yaw);
 class AActor;
 extern AActor *bodyque[BODYQUESIZE]; 
 extern int bodyqueslot; 
+class AInventory;
+extern const AInventory *SendItemUse, *SendItemDrop;
 
 
 #endif

@@ -1,108 +1,39 @@
+/*
 #include "actor.h"
 #include "info.h"
 #include "p_enemy.h"
 #include "p_local.h"
-#include "a_doomglobal.h"
 #include "a_action.h"
+#include "templates.h"
+#include "m_bbox.h"
+#include "thingdef/thingdef.h"
+#include "doomstat.h"
+*/
 
-void A_PainAttack (AActor *);
-void A_PainDie (AActor *);
+DECLARE_ACTION(A_SkullAttack)
 
-void A_SkullAttack (AActor *self);
-
-class APainElemental : public AActor
+static const PClass *GetSpawnType(DECLARE_PARAMINFO)
 {
-	DECLARE_ACTOR (APainElemental, AActor)
-public:
-	bool Massacre ();
-};
+	ACTION_PARAM_START(1);
+	ACTION_PARAM_CLASS(spawntype, 0);
 
-FState APainElemental::States[] =
-{
-#define S_PAIN_STND 0
-	S_NORMAL (PAIN, 'A',   10, A_Look						, &States[S_PAIN_STND]),
-
-#define S_PAIN_RUN (S_PAIN_STND+1)
-	S_NORMAL (PAIN, 'A',	3, A_Chase						, &States[S_PAIN_RUN+1]),
-	S_NORMAL (PAIN, 'A',	3, A_Chase						, &States[S_PAIN_RUN+2]),
-	S_NORMAL (PAIN, 'B',	3, A_Chase						, &States[S_PAIN_RUN+3]),
-	S_NORMAL (PAIN, 'B',	3, A_Chase						, &States[S_PAIN_RUN+4]),
-	S_NORMAL (PAIN, 'C',	3, A_Chase						, &States[S_PAIN_RUN+5]),
-	S_NORMAL (PAIN, 'C',	3, A_Chase						, &States[S_PAIN_RUN+0]),
-
-#define S_PAIN_ATK (S_PAIN_RUN+6)
-	S_NORMAL (PAIN, 'D',	5, A_FaceTarget 				, &States[S_PAIN_ATK+1]),
-	S_NORMAL (PAIN, 'E',	5, A_FaceTarget 				, &States[S_PAIN_ATK+2]),
-	S_BRIGHT (PAIN, 'F',	5, A_FaceTarget 				, &States[S_PAIN_ATK+3]),
-	S_BRIGHT (PAIN, 'F',	0, A_PainAttack 				, &States[S_PAIN_RUN+0]),
-
-#define S_PAIN_PAIN (S_PAIN_ATK+4)
-	S_NORMAL (PAIN, 'G',	6, NULL 						, &States[S_PAIN_PAIN+1]),
-	S_NORMAL (PAIN, 'G',	6, A_Pain						, &States[S_PAIN_RUN+0]),
-
-#define S_PAIN_DIE (S_PAIN_PAIN+2)
-	S_BRIGHT (PAIN, 'H',	8, NULL 						, &States[S_PAIN_DIE+1]),
-	S_BRIGHT (PAIN, 'I',	8, A_Scream 					, &States[S_PAIN_DIE+2]),
-	S_BRIGHT (PAIN, 'J',	8, NULL 						, &States[S_PAIN_DIE+3]),
-	S_BRIGHT (PAIN, 'K',	8, NULL 						, &States[S_PAIN_DIE+4]),
-	S_BRIGHT (PAIN, 'L',	8, A_PainDie					, &States[S_PAIN_DIE+5]),
-	S_BRIGHT (PAIN, 'M',	8, NULL 						, NULL),
-
-#define S_PAIN_RAISE (S_PAIN_DIE+6)
-	S_NORMAL (PAIN, 'M',	8, NULL 						, &States[S_PAIN_RAISE+1]),
-	S_NORMAL (PAIN, 'L',	8, NULL 						, &States[S_PAIN_RAISE+2]),
-	S_NORMAL (PAIN, 'K',	8, NULL 						, &States[S_PAIN_RAISE+3]),
-	S_NORMAL (PAIN, 'J',	8, NULL 						, &States[S_PAIN_RAISE+4]),
-	S_NORMAL (PAIN, 'I',	8, NULL 						, &States[S_PAIN_RAISE+5]),
-	S_NORMAL (PAIN, 'H',	8, NULL 						, &States[S_PAIN_RUN+0])
-};
-
-IMPLEMENT_ACTOR (APainElemental, Doom, 71, 115)
-	PROP_SpawnHealth (400)
-	PROP_RadiusFixed (31)
-	PROP_HeightFixed (56)
-	PROP_Mass (400)
-	PROP_SpeedFixed (8)
-	PROP_PainChance (128)
-	PROP_Flags (MF_SOLID|MF_SHOOTABLE|MF_FLOAT|MF_NOGRAVITY|MF_COUNTKILL)
-	PROP_Flags2 (MF2_MCROSS|MF2_PASSMOBJ|MF2_PUSHWALL)
-
-	PROP_SpawnState (S_PAIN_STND)
-	PROP_SeeState (S_PAIN_RUN)
-	PROP_PainState (S_PAIN_PAIN)
-	PROP_MissileState (S_PAIN_ATK)
-	PROP_DeathState (S_PAIN_DIE)
-	PROP_RaiseState (S_PAIN_RAISE)
-
-	PROP_SeeSound ("pain/sight")
-	PROP_PainSound ("pain/pain")
-	PROP_DeathSound ("pain/death")
-	PROP_ActiveSound ("pain/active")
-END_DEFAULTS
-
-bool APainElemental::Massacre ()
-{
-	if (Super::Massacre ())
-	{
-		FState *deadstate;
-		A_NoBlocking (this);	// [RH] Use this instead of A_PainDie
-		deadstate = DeathState;
-		if (deadstate != NULL)
-		{
-			while (deadstate->GetNextState() != NULL)
-				deadstate = deadstate->GetNextState();
-			SetState (deadstate);
-		}
-		return true;
-	}
-	return false;
+	if (spawntype == NULL) spawntype = PClass::FindClass("LostSoul");
+	return spawntype;
 }
+
+
+enum PA_Flags
+{
+	PAF_NOSKULLATTACK = 1,
+	PAF_AIMFACING = 2,
+	PAF_NOTARGET = 4,
+};
 
 //
 // A_PainShootSkull
 // Spawn a lost soul and launch it at the target
 //
-void A_PainShootSkull (AActor *self, angle_t angle)
+void A_PainShootSkull (AActor *self, angle_t angle, const PClass *spawntype, int flags = 0, int limit = -1)
 {
 	fixed_t x, y, z;
 	
@@ -110,21 +41,15 @@ void A_PainShootSkull (AActor *self, angle_t angle)
 	angle_t an;
 	int prestep;
 
-	const TypeInfo *spawntype = NULL;
-
-	int index=CheckIndex(1, NULL);
-	if (index>=0) 
-	{
-		spawntype = TypeInfo::FindType((const char *)StateParameters[index]);
-	}
-	if (spawntype == NULL) spawntype = RUNTIME_CLASS(ALostSoul);
+	if (spawntype == NULL) return;
+	if (self->DamageType==NAME_Massacre) return;
 
 	// [RH] check to make sure it's not too close to the ceiling
 	if (self->z + self->height + 8*FRACUNIT > self->ceilingz)
 	{
 		if (self->flags & MF_FLOAT)
 		{
-			self->momz -= 2*FRACUNIT;
+			self->velz -= 2*FRACUNIT;
 			self->flags |= MF_INFLOAT;
 			self->flags4 |= MF4_VFRICTION;
 		}
@@ -132,11 +57,14 @@ void A_PainShootSkull (AActor *self, angle_t angle)
 	}
 
 	// [RH] make this optional
-	if (compatflags & COMPATF_LIMITPAIN)
+	if (limit == -1 && (i_compatflags & COMPATF_LIMITPAIN))
+		limit = 21;
+
+	if (limit)
 	{
 		// count total number of skulls currently on the level
-		// if there are already 20 skulls on the level, don't spit another one
-		int count = 20;
+		// if there are already 21 skulls on the level, don't spit another one
+		int count = limit;
 		FThinkerIterator iterator (spawntype);
 		DThinker *othink;
 
@@ -161,13 +89,27 @@ void A_PainShootSkull (AActor *self, angle_t angle)
 	// wall or an impassible line, or a "monsters can't cross" line.//   |
 	// If it is, then we don't allow the spawn.						//   V
 
-	if (Check_Sides (self, x, y))
+	FBoundingBox box(MIN(self->x, x), MIN(self->y, y), MAX(self->x, x), MAX(self->y, y));
+	FBlockLinesIterator it(box);
+	line_t *ld;
+
+	while ((ld = it.Next()))
 	{
-		return;
+		if (!(ld->flags & ML_TWOSIDED) ||
+			(ld->flags & (ML_BLOCKING|ML_BLOCKMONSTERS|ML_BLOCKEVERYTHING)))
+		{
+			if (!(box.Left()   > ld->bbox[BOXRIGHT]  ||
+				  box.Right()  < ld->bbox[BOXLEFT]   ||
+				  box.Top()    < ld->bbox[BOXBOTTOM] ||
+				  box.Bottom() > ld->bbox[BOXTOP]))
+			{
+				if (P_PointOnLineSide(self->x,self->y,ld) != P_PointOnLineSide(x,y,ld))
+					return;  // line blocks trajectory				//   ^
+			}
+		}
 	}
 
-	other = Spawn (spawntype, x, y, z);
-
+	other = Spawn (spawntype, x, y, z, ALLOW_REPLACE);
 
 	// Check to see if the new Lost Soul's z value is above the
 	// ceiling of its new sector, or below the floor. If so, kill it.
@@ -177,7 +119,7 @@ void A_PainShootSkull (AActor *self, angle_t angle)
         (other->z < other->Sector->floorplane.ZatPoint (other->x, other->y)))
 	{
 		// kill it immediately
-		P_DamageMobj (other, self, self, 1000000, MOD_UNKNOWN);		//   ^
+		P_DamageMobj (other, self, self, TELEFRAG_DAMAGE, NAME_None);//  ^
 		return;														//   |
 	}																// phares
 
@@ -186,14 +128,15 @@ void A_PainShootSkull (AActor *self, angle_t angle)
 	if (!P_CheckPosition (other, other->x, other->y))
 	{
 		// kill it immediately
-		P_DamageMobj (other, self, self, 1000000, MOD_UNKNOWN);		
+		P_DamageMobj (other, self, self, TELEFRAG_DAMAGE, NAME_None);		
 		return;
 	}
 
 	// [RH] Lost souls hate the same things as their pain elementals
-	other->CopyFriendliness (self, true);
+	other->CopyFriendliness (self, !(flags & PAF_NOTARGET));
 
-	A_SkullAttack (other);
+	if (!(flags & PAF_NOSKULLATTACK))
+		A_SkullAttack(other, SKULLSPEED);
 }
 
 
@@ -201,23 +144,44 @@ void A_PainShootSkull (AActor *self, angle_t angle)
 // A_PainAttack
 // Spawn a lost soul and launch it at the target
 // 
-void A_PainAttack (AActor *self)
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_PainAttack)
 {
 	if (!self->target)
 		return;
 
-	A_FaceTarget (self);
-	A_PainShootSkull (self, self->angle);
+	ACTION_PARAM_START(4);
+	ACTION_PARAM_CLASS(spawntype, 0);
+	ACTION_PARAM_ANGLE(angle, 1);
+	ACTION_PARAM_INT(flags, 2);
+	ACTION_PARAM_INT(limit, 3);
+
+	if (spawntype == NULL) spawntype = PClass::FindClass("LostSoul");
+
+	if (!(flags & PAF_AIMFACING))
+		A_FaceTarget (self);
+	A_PainShootSkull (self, self->angle+angle, spawntype, flags, limit);
 }
 
-void A_PainDie (AActor *self)
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_DualPainAttack)
 {
-	if (P_IsFriend (self, self->target))
+	if (!self->target)
+		return;
+
+	const PClass *spawntype = GetSpawnType(PUSH_PARAMINFO);
+	A_FaceTarget (self);
+	A_PainShootSkull (self, self->angle + ANG45, spawntype);
+	A_PainShootSkull (self, self->angle - ANG45, spawntype);
+}
+
+DEFINE_ACTION_FUNCTION_PARAMS(AActor, A_PainDie)
+{
+	if (self->target != NULL && self->IsFriend (self->target))
 	{ // And I thought you were my friend!
 		self->flags &= ~MF_FRIENDLY;
 	}
-	A_NoBlocking (self);
-	A_PainShootSkull (self, self->angle + ANG90);
-	A_PainShootSkull (self, self->angle + ANG180);
-	A_PainShootSkull (self, self->angle + ANG270);
+	const PClass *spawntype = GetSpawnType(PUSH_PARAMINFO);
+	A_Unblock(self, true);
+	A_PainShootSkull (self, self->angle + ANG90, spawntype);
+	A_PainShootSkull (self, self->angle + ANG180, spawntype);
+	A_PainShootSkull (self, self->angle + ANG270, spawntype);
 }

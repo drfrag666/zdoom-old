@@ -2,7 +2,7 @@
 ** p_terrain.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,25 +34,59 @@
 #ifndef __P_TERRAIN_H__
 #define __P_TERRAIN_H__
 
-#include "dobject.h"
-#include "m_fixed.h"
+#include "s_sound.h"
+#include "textures/textures.h"
 
-extern byte *TerrainTypes;
+struct PClass;
+
+extern WORD DefaultTerrainType;
+
+
+class FTerrainTypeArray
+{
+public:
+	TArray<WORD> Types;
+
+	WORD operator [](FTextureID tex) const
+	{
+		WORD type = Types[tex.GetIndex()];
+		return type == 0xffff? DefaultTerrainType : type;
+	}
+	WORD operator [](int texnum) const
+	{
+		WORD type = Types[texnum];
+		return type == 0xffff? DefaultTerrainType : type;
+	}
+	void Resize(unsigned newsize)
+	{
+		Types.Resize(newsize);
+	}
+	void Clear()
+	{
+		memset (&Types[0], 0xff, Types.Size()*sizeof(WORD));
+	}
+	void Set(int index, int value)
+	{
+		Types[index] = value;
+	}
+};
+
+extern FTerrainTypeArray TerrainTypes;
 
 // at game start
 void P_InitTerrainTypes ();
 
 struct FSplashDef
 {
-	const char *Name;
-	int SmallSplashSound;
-	int NormalSplashSound;
-	const TypeInfo *SmallSplash;
-	const TypeInfo *SplashBase;
-	const TypeInfo *SplashChunk;
-	byte ChunkXVelShift;
-	byte ChunkYVelShift;
-	byte ChunkZVelShift;
+	FName Name;
+	FSoundID SmallSplashSound;
+	FSoundID NormalSplashSound;
+	const PClass *SmallSplash;
+	const PClass *SplashBase;
+	const PClass *SplashChunk;
+	BYTE ChunkXVelShift;
+	BYTE ChunkYVelShift;
+	BYTE ChunkZVelShift;
 	fixed_t ChunkBaseZVel;
 	fixed_t SmallSplashClip;
 	bool NoAlert;
@@ -60,18 +94,19 @@ struct FSplashDef
 
 struct FTerrainDef
 {
-	const char *Name;
+	FName Name;
 	int Splash;
 	int DamageAmount;
-	int DamageMOD;
+	FName DamageMOD;
 	int DamageTimeMask;
 	fixed_t FootClip;
 	float StepVolume;
 	int WalkStepTics;
 	int RunStepTics;
-	int LeftStepSound;
-	int RightStepSound;
+	FSoundID LeftStepSound;
+	FSoundID RightStepSound;
 	bool IsLiquid;
+	bool AllowProtection;
 	fixed_t Friction;
 	fixed_t MoveFactor;
 };

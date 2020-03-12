@@ -1,6 +1,7 @@
 #include "a_sharedglobal.h"
 #include "g_level.h"
 #include "d_player.h"
+#include "farchive.h"
 
 IMPLEMENT_POINTY_CLASS (DFlashFader)
  DECLARE_POINTER (ForWho)
@@ -19,9 +20,10 @@ DFlashFader::DFlashFader (float r1, float g1, float b1, float a1,
 	Blends[1][0]=r2; Blends[1][1]=g2; Blends[1][2]=b2; Blends[1][3]=a2;
 }
 
-DFlashFader::~DFlashFader ()
+void DFlashFader::Destroy ()
 {
 	SetBlend (1.f);
+	Super::Destroy();
 }
 
 void DFlashFader::Serialize (FArchive &arc)

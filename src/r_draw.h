@@ -23,8 +23,7 @@
 #ifndef __R_DRAW__
 #define __R_DRAW__
 
-#include "r_data.h"
-
+#include "r_defs.h"
 
 extern "C" int			ylookup[MAXHEIGHT];
 
@@ -38,13 +37,14 @@ extern "C" fixed_t		dc_iscale;
 extern "C" fixed_t		dc_texturemid;
 extern "C" fixed_t		dc_texturefrac;
 extern "C" int			dc_color;		// [RH] For flat colors (no texturing)
+extern "C" DWORD		dc_srccolor;
 extern "C" DWORD		*dc_srcblend;
 extern "C" DWORD		*dc_destblend;
 
 // first pixel in a column
-extern "C" const byte*	dc_source;
+extern "C" const BYTE*	dc_source;
 
-extern "C" byte			*dc_dest, *dc_destorg;
+extern "C" BYTE			*dc_dest, *dc_destorg;
 extern "C" int			dc_count;
 
 extern "C" DWORD		vplce[4];
@@ -53,7 +53,7 @@ extern "C" BYTE*		palookupoffse[4];
 extern "C" const BYTE*	bufplce[4];
 
 // [RH] Temporary buffer for column drawing
-extern "C" byte			dc_temp[MAXHEIGHT*4];
+extern "C" BYTE			*dc_temp;
 extern "C" unsigned int	dc_tspans[4][MAXHEIGHT];
 extern "C" unsigned int	*dc_ctspan[4];
 extern "C" unsigned int	horizspans[4];
@@ -67,8 +67,19 @@ extern void (*R_DrawColumn)(void);
 
 extern DWORD (STACK_ARGS *dovline1) ();
 extern DWORD (STACK_ARGS *doprevline1) ();
+#ifdef X64_ASM
+#define dovline4 vlinetallasm4
+extern "C" void vlinetallasm4();
+#else
 extern void (STACK_ARGS *dovline4) ();
+#endif
 extern void setupvline (int);
+
+extern DWORD (STACK_ARGS *domvline1) ();
+extern void (STACK_ARGS *domvline4) ();
+extern void setupmvline (int);
+
+extern void setuptmvline (int);
 
 // The Spectre/Invisibility effect.
 extern void (*R_DrawFuzzColumn)(void);
@@ -80,8 +91,11 @@ extern void (*R_DrawShadedColumn)(void);
 //	Green/Red/Blue/Indigo shirts.
 extern void (*R_DrawTranslatedColumn)(void);
 
-// Span drawing for rows, floor/ceiling. No Sepctre effect needed.
+// Span drawing for rows, floor/ceiling. No Spectre effect needed.
 extern void (*R_DrawSpan)(void);
+void R_SetupSpanBits(FTexture *tex);
+void R_SetSpanColormap(BYTE *colormap);
+void R_SetSpanSource(const BYTE *pixels);
 
 // Span drawing for masked textures.
 extern void (*R_DrawSpanMasked)(void);
@@ -92,6 +106,12 @@ extern void (*R_DrawSpanTranslucent)(void);
 // Span drawing for masked, translucent textures.
 extern void (*R_DrawSpanMaskedTranslucent)(void);
 
+// Span drawing for translucent, additive textures.
+extern void (*R_DrawSpanAddClamp)(void);
+
+// Span drawing for masked, translucent, additive textures.
+extern void (*R_DrawSpanMaskedAddClamp)(void);
+
 // [RH] Span blit into an interleaved intermediate buffer
 extern void (*R_DrawColumnHoriz)(void);
 void R_DrawMaskedColumnHoriz (const BYTE *column, const FTexture::Span *spans);
@@ -100,50 +120,88 @@ void R_DrawMaskedColumnHoriz (const BYTE *column, const FTexture::Span *spans);
 void R_InitColumnDrawers ();
 
 // [RH] Moves data from the temporary buffer to the screen.
+extern "C"
+{
 void rt_copy1col_c (int hx, int sx, int yl, int yh);
-void rt_copy4cols_c (int sx, int yl, int yh);
-void rt_map1col_c (int hx, int sx, int yl, int yh);
-void rt_map4cols_c (int sx, int yl, int yh);
-void rt_add1col (int hx, int sx, int yl, int yh);
-void rt_add4cols (int sx, int yl, int yh);
-void rt_tlate1col (int hx, int sx, int yl, int yh);
-void rt_tlate4cols (int sx, int yl, int yh);
-void rt_tlateadd1col (int hx, int sx, int yl, int yh);
-void rt_tlateadd4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_copy4cols_c (int sx, int yl, int yh);
+
 void rt_shaded1col (int hx, int sx, int yl, int yh);
-void rt_shaded4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_shaded4cols_c (int sx, int yl, int yh);
+void STACK_ARGS rt_shaded4cols_asm (int sx, int yl, int yh);
+
+void rt_map1col_c (int hx, int sx, int yl, int yh);
+void rt_add1col (int hx, int sx, int yl, int yh);
 void rt_addclamp1col (int hx, int sx, int yl, int yh);
-void rt_addclamp4cols (int sx, int yl, int yh);
+void rt_subclamp1col (int hx, int sx, int yl, int yh);
+void rt_revsubclamp1col (int hx, int sx, int yl, int yh);
+
+void rt_tlate1col (int hx, int sx, int yl, int yh);
+void rt_tlateadd1col (int hx, int sx, int yl, int yh);
 void rt_tlateaddclamp1col (int hx, int sx, int yl, int yh);
-void rt_tlateaddclamp4cols (int sx, int yl, int yh);
+void rt_tlatesubclamp1col (int hx, int sx, int yl, int yh);
+void rt_tlaterevsubclamp1col (int hx, int sx, int yl, int yh);
 
-extern "C" void rt_copy1col_asm (int hx, int sx, int yl, int yh);
-extern "C" void rt_copy4cols_asm (int sx, int yl, int yh);
-extern "C" void rt_map1col_asm (int hx, int sx, int yl, int yh);
-extern "C" void rt_map4cols_asm1 (int sx, int yl, int yh);
-extern "C" void rt_map4cols_asm2 (int sx, int yl, int yh);
+void STACK_ARGS rt_map4cols_c (int sx, int yl, int yh);
+void STACK_ARGS rt_add4cols_c (int sx, int yl, int yh);
+void STACK_ARGS rt_addclamp4cols_c (int sx, int yl, int yh);
+void STACK_ARGS rt_subclamp4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_revsubclamp4cols (int sx, int yl, int yh);
 
-extern void (*rt_map4cols)(int sx, int yl, int yh);
+void STACK_ARGS rt_tlate4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_tlateadd4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_tlateaddclamp4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_tlatesubclamp4cols (int sx, int yl, int yh);
+void STACK_ARGS rt_tlaterevsubclamp4cols (int sx, int yl, int yh);
 
-#ifdef USEASM
-#define rt_copy1col		rt_copy1col_asm
-#define rt_copy4cols	rt_copy4cols_asm
-#define rt_map1col		rt_map1col_asm
+void rt_copy1col_asm (int hx, int sx, int yl, int yh);
+void rt_map1col_asm (int hx, int sx, int yl, int yh);
+
+void STACK_ARGS rt_copy4cols_asm (int sx, int yl, int yh);
+void STACK_ARGS rt_map4cols_asm1 (int sx, int yl, int yh);
+void STACK_ARGS rt_map4cols_asm2 (int sx, int yl, int yh);
+void STACK_ARGS rt_add4cols_asm (int sx, int yl, int yh);
+void STACK_ARGS rt_addclamp4cols_asm (int sx, int yl, int yh);
+}
+
+extern void (STACK_ARGS *rt_map4cols)(int sx, int yl, int yh);
+
+#ifdef X86_ASM
+#define rt_copy1col			rt_copy1col_asm
+#define rt_copy4cols		rt_copy4cols_asm
+#define rt_map1col			rt_map1col_asm
+#define rt_shaded4cols		rt_shaded4cols_asm
+#define rt_add4cols			rt_add4cols_asm
+#define rt_addclamp4cols	rt_addclamp4cols_asm
 #else
-#define rt_copy1col		rt_copy1col_c
-#define rt_copy4cols	rt_copy4cols_c
-#define rt_map1col		rt_map1col_c
+#define rt_copy1col			rt_copy1col_c
+#define rt_copy4cols		rt_copy4cols_c
+#define rt_map1col			rt_map1col_c
+#define rt_shaded4cols		rt_shaded4cols_c
+#define rt_add4cols			rt_add4cols_c
+#define rt_addclamp4cols	rt_addclamp4cols_c
 #endif
 
 void rt_draw4cols (int sx);
 
 // [RH] Preps the temporary horizontal buffer.
-void rt_initcols (void);
+void rt_initcols (BYTE *buffer=NULL);
 
 void R_DrawFogBoundary (int x1, int x2, short *uclip, short *dclip);
 
 
-#ifndef USEASM
+#ifdef X86_ASM
+
+extern "C" void	R_DrawColumnP_Unrolled (void);
+extern "C" void	R_DrawColumnHorizP_ASM (void);
+extern "C" void	R_DrawColumnP_ASM (void);
+extern "C" void	R_DrawFuzzColumnP_ASM (void);
+		   void R_DrawTranslatedColumnP_C (void);
+		   void R_DrawShadedColumnP_C (void);
+extern "C" void	R_DrawSpanP_ASM (void);
+extern "C" void R_DrawSpanMaskedP_ASM (void);
+
+#else
+
 void	R_DrawColumnHorizP_C (void);
 void	R_DrawColumnP_C (void);
 void	R_DrawFuzzColumnP_C (void);
@@ -151,18 +209,6 @@ void	R_DrawTranslatedColumnP_C (void);
 void	R_DrawShadedColumnP_C (void);
 void	R_DrawSpanP_C (void);
 void	R_DrawSpanMaskedP_C (void);
-
-#else	/* USEASM */
-
-extern "C" void	R_DrawColumnP_Unrolled (void);
-
-extern "C" void	R_DrawColumnHorizP_ASM (void);
-extern "C" void	R_DrawColumnP_ASM (void);
-extern "C" void	R_DrawFuzzColumnP_ASM (void);
-void	R_DrawTranslatedColumnP_C (void);
-void	R_DrawShadedColumnP_C (void);
-extern "C" void	R_DrawSpanP_ASM (void);
-extern "C" void R_DrawSpanMaskedP_ASM (void);
 
 #endif
 
@@ -175,6 +221,17 @@ void	R_DrawTlatedLucentColumnP_C (void);
 void	R_FillColumnP (void);
 void	R_FillColumnHorizP (void);
 void	R_FillSpan (void);
+
+#ifdef X86_ASM
+#define R_SetupDrawSlab R_SetupDrawSlabA
+#define R_DrawSlab R_DrawSlabA
+#else
+#define R_SetupDrawSlab R_SetupDrawSlabC
+#define R_DrawSlab R_DrawSlabC
+#endif
+
+extern "C" void			   R_SetupDrawSlab(const BYTE *colormap);
+extern "C" void STACK_ARGS R_DrawSlab(int dx, fixed_t v, int dy, fixed_t vi, const BYTE *vptr, BYTE *p);
 
 extern "C" int				ds_y;
 extern "C" int				ds_x1;
@@ -191,61 +248,17 @@ extern "C" int				ds_ybits;
 extern "C" fixed_t			ds_alpha;
 
 // start of a 64*64 tile image
-extern "C" const byte*		ds_source;
+extern "C" const BYTE*		ds_source;
 
 extern "C" int				ds_color;		// [RH] For flat color (no texturing)
 
-enum
-{
-	TRANSLATION_Shaded,
-	TRANSLATION_Players,
-	TRANSLATION_PlayersExtra,
-	TRANSLATION_Standard,
-	TRANSLATION_LevelScripted,
-	TRANSLATION_Decals,
-	TRANSLATION_PlayerCorpses,
-	TRANSLATION_Decorate,
-	TRANSLATION_Blood,
-
-	NUM_TRANSLATION_TABLES
-};
-
-extern byte*			translationtables[NUM_TRANSLATION_TABLES];
-extern byte*			dc_translation;
-
-inline WORD TRANSLATION(BYTE a, BYTE b)
-{
-	return (a<<8) | b;
-}
-
-const int MAX_ACS_TRANSLATIONS = 255;
-const int MAX_DECORATE_TRANSLATIONS = 255;
-
-inline void R_CopyTranslation (WORD to, WORD from)
-{
-	memcpy (&translationtables[to>>8][(to&255)*256],
-		&translationtables[from>>8][(from&255)*256], 256);
-}
-
-
-// [RH] Double view pixels by detail mode
-void R_DetailDouble (void);
-
-
-// Initialize color translation tables,
-//	for player rendering etc.
-void R_InitTranslationTables (void);
-
-// [RH] Actually create a player's translation table.
-void R_BuildPlayerTranslation (int player);
-
-
-// If the view size is not full screen, draws a border around it.
-void R_DrawViewBorder (void);
-void R_DrawTopBorder (void);
-void R_DrawBorder (int x1, int y1, int x2, int y2);
+extern BYTE shadetables[/*NUMCOLORMAPS*16*256*/];
+extern FDynamicColormap ShadeFakeColormap[16];
+extern BYTE identitymap[256];
+extern BYTE *dc_translation;
 
 // [RH] Added for muliresolution support
+void R_InitShadeMaps();
 void R_InitFuzzTable (int fuzzoff);
 
 // [RH] Consolidate column drawer selection
@@ -255,16 +268,25 @@ enum ESPSResult
 	DoDraw0,	// draw this as if r_columnmethod is 0
 	DoDraw1,	// draw this as if r_columnmethod is 1
 };
-ESPSResult R_SetPatchStyle (int style, fixed_t alpha, int translation, DWORD color);
+ESPSResult R_SetPatchStyle (FRenderStyle style, fixed_t alpha, int translation, DWORD color);
 
 // Call this after finished drawing the current thing, in case its
 // style was STYLE_Shade
 void R_FinishSetPatchStyle ();
 
+// transmaskwallscan calls this to find out what column drawers to use
+bool R_GetTransMaskDrawers (fixed_t (**tmvline1)(), void (**tmvline4)());
+
 // Retrieve column data for wallscan. Should probably be removed
 // to just use the texture's GetColumn() method. It just exists
 // for double-layer skies.
 const BYTE *R_GetColumn (FTexture *tex, int col);
-void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, const byte *(*getcol)(FTexture *tex, int col)=R_GetColumn);
+void wallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, const BYTE *(*getcol)(FTexture *tex, int col)=R_GetColumn);
+
+// maskwallscan is exactly like wallscan but does not draw anything where the texture is color 0.
+void maskwallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, const BYTE *(*getcol)(FTexture *tex, int col)=R_GetColumn);
+
+// transmaskwallscan is like maskwallscan, but it can also blend to the background
+void transmaskwallscan (int x1, int x2, short *uwal, short *dwal, fixed_t *swal, fixed_t *lwal, fixed_t yrepeat, const BYTE *(*getcol)(FTexture *tex, int col)=R_GetColumn);
 
 #endif

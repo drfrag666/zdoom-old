@@ -2,7 +2,7 @@
 ** v_palette.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,10 +35,10 @@
 #define __V_PALETTE_H__
 
 #include "doomtype.h"
-#include "r_main.h"
+#include "c_cvars.h"
 
-#define MAKERGB(r,g,b)		(((r)<<16)|((g)<<8)|(b))
-#define MAKEARGB(a,r,g,b)	(((a)<<24)|((r)<<16)|((g)<<8)|(b))
+#define MAKERGB(r,g,b)		DWORD(((r)<<16)|((g)<<8)|(b))
+#define MAKEARGB(a,r,g,b)	DWORD(((a)<<24)|((r)<<16)|((g)<<8)|(b))
 
 #define APART(c)			(((c)>>24)&0xff)
 #define RPART(c)			(((c)>>16)&0xff)
@@ -54,37 +54,24 @@ struct FPalette
 
 	void MakeGoodRemap ();
 
-	//PalEntry	Colors[256];		// gamma corrected palette
 	PalEntry	BaseColors[256];	// non-gamma corrected palette
 	BYTE		Remap[256];			// remap original palette indices to in-game indices
+
+	BYTE		WhiteIndex;			// white in original palette index
+	BYTE		BlackIndex;			// black in original palette index
 
 	// Given an array of colors, fills in remap with values to remap the
 	// passed array of colors to this palette.
 	void MakeRemap (const DWORD *colors, BYTE *remap, const BYTE *useful, int numcolors) const;
 };
 
-struct FDynamicColormap
-{
-	void ChangeFade (PalEntry fadecolor);
-	void ChangeColor (PalEntry lightcolor, int desaturate);
-	void ChangeColorFade (PalEntry lightcolor, PalEntry fadecolor);
-	void BuildLights ();
-
-	BYTE *Maps;
-	PalEntry Color;
-	PalEntry Fade;
-	int Desaturate;
-	FDynamicColormap *Next;
-};
-
-extern BYTE *InvulnerabilityColormap;
 extern FPalette GPalette;
-extern "C" {
-extern FDynamicColormap NormalLight;
-}
-extern int Near255;		// A color near 255 in appearance, but not 255
 
-int BestColor (const DWORD *pal, int r, int g, int b, int first = 0, int num=256);
+// The color overlay to use for depleted items
+#define DIM_OVERLAY MAKEARGB(170,0,0,0)
+
+int BestColor (const uint32 *pal, int r, int g, int b, int first=1, int num=255);
+void DoBlending (const PalEntry *from, PalEntry *to, int count, int r, int g, int b, int a);
 
 void InitPalette ();
 
@@ -100,15 +87,28 @@ void V_SetBlend (int blendr, int blendg, int blendb, int blenda);
 // V_ForceBlend()
 //
 // Normally, V_SetBlend() does nothing if the new blend is the
-// same as the old. This function will performing the blending
+// same as the old. This function will perform the blending
 // even if the blend hasn't changed.
 void V_ForceBlend (int blendr, int blendg, int blendb, int blenda);
+
+
+EXTERN_CVAR (Int, paletteflash)
+enum PaletteFlashFlags
+{
+	PF_HEXENWEAPONS		= 1,
+	PF_POISON			= 2,
+	PF_ICE				= 4,
+	PF_HAZARD			= 8,
+};
+
+class player_t;
+
+void V_AddBlend (float r, float g, float b, float a, float v_blend[4]);
+void V_AddPlayerBlend (player_t *CPlayer, float blend[4], float maxinvalpha, int maxpainblend);
 
 
 // Colorspace conversion RGB <-> HSV
 void RGBtoHSV (float r, float g, float b, float *h, float *s, float *v);
 void HSVtoRGB (float *r, float *g, float *b, float h, float s, float v);
-
-FDynamicColormap *GetSpecialLights (PalEntry lightcolor, PalEntry fadecolor, int desaturate);
 
 #endif //__V_PALETTE_H__

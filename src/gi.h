@@ -2,7 +2,7 @@
 ** gi.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,41 +34,28 @@
 #ifndef __GI_H__
 #define __GI_H__
 
-#include "doomtype.h"
+#include "basictypes.h"
+#include "zstring.h"
 
+// Flags are not user configurable and only depend on the standard IWADs
 #define GI_MAPxx				0x00000001
-#define GI_PAGESARERAW			0x00000002
-#define GI_SHAREWARE			0x00000004
-#define GI_NOLOOPFINALEMUSIC	0x00000008
-#define GI_INFOINDEXED			0x00000010
-#define GI_MENUHACK				0x00000060
-#define GI_MENUHACK_RETAIL		0x00000020
-#define GI_MENUHACK_EXTENDED	0x00000040	// (Heretic)
-#define GI_MENUHACK_COMMERCIAL	0x00000060
-#define GI_ALWAYSFALLINGDAMAGE	0x00000080
-#define GI_TEASER2				0x00000100	// Alternate version of the Strife Teaser
+#define GI_SHAREWARE			0x00000002
+#define GI_MENUHACK_EXTENDED	0x00000004	// (Heretic)
+#define GI_TEASER2				0x00000008	// Alternate version of the Strife Teaser
+#define GI_COMPATSHORTTEX		0x00000010	// always force COMPAT_SHORTTEX for IWAD maps.
+#define GI_COMPATSTAIRS			0x00000020	// same for stairbuilding
+#define GI_COMPATPOLY1			0x00000040	// Hexen's MAP36 needs old polyobject drawing
+#define GI_COMPATPOLY2			0x00000080	// so does HEXDD's MAP47
+#define GI_NOTEXTCOLOR			0x00000100	// Chex Quest 3 would have everything green
 
-#ifndef EGAMETYPE
-#define EGAMETYPE
-enum EGameType
+#include "gametype.h"
+
+extern const char *GameNames[17];
+
+struct gameborder_t
 {
-	GAME_Any	 = 0,
-	GAME_Doom	 = 1,
-	GAME_Heretic = 2,
-	GAME_Hexen	 = 4,
-	GAME_Strife	 = 8,
-
-	GAME_Raven		= GAME_Heretic|GAME_Hexen,
-	GAME_DoomStrife	= GAME_Doom|GAME_Strife
-};
-#endif
-
-extern const char *GameNames[9];
-
-typedef struct
-{
-	byte offset;
-	byte size;
+	BYTE offset;
+	BYTE size;
 	char tl[8];
 	char t[8];
 	char tr[8];
@@ -77,44 +64,99 @@ typedef struct
 	char bl[8];
 	char b[8];
 	char br[8];
-} gameborder_t;
+};
 
-typedef struct
+struct FGIFont
+{
+	FName fontname;
+	FName color;
+};
+
+struct gameinfo_t
 {
 	int flags;
+	EGameType gametype;
+	FString ConfigName;
+
 	char titlePage[9];
-	char creditPage1[9];
-	char creditPage2[9];
-	char titleMusic[9];
+	bool drawreadthis;
+	bool noloopfinalemusic;
+	bool intermissioncounter;
+	bool nightmarefast;
+	bool swapmenu;
+	TArray<FName> creditPages;
+	TArray<FName> finalePages;
+	TArray<FName> infoPages;
+	TArray<FName> DefaultWeaponSlots[10];
+	TArray<FName> PlayerClasses;
+
+	FString titleMusic;
 	float titleTime;
 	float advisoryTime;
 	float pageTime;
-	char chatSound[16];
-	char finaleMusic[9];
+	FString chatSound;
+	FString finaleMusic;
 	char finaleFlat[9];
-	char finalePage1[9];
-	char finalePage2[9];
-	char finalePage3[9];
-	union
-	{
-		char infoPage[2][9];
-		struct
-		{
-			char basePage[9];
-			char numPages;
-		} indexed;
-	} info;
-	char **quitSounds;
-	int maxSwitch;
 	char borderFlat[9];
+	char SkyFlatName[9];
+	char ArmorIcon1[9];
+	char ArmorIcon2[9];
+	char PauseSign[9];
+	char Endoom[9];
+	fixed_t Armor2Percent;
+	FString quitSound;
 	gameborder_t *border;
 	int telefogheight;
-	EGameType gametype;
 	int defKickback;
-	char SkyFlatName[9];
-	fixed_t StepHeight;
-} gameinfo_t;
+	FString translator;
+	DWORD defaultbloodcolor;
+	DWORD defaultbloodparticlecolor;
+	FString backpacktype;
+	FString statusbar;
+	FString intermissionMusic;
+	FString CursorPic;
+	DWORD dimcolor;
+	float dimamount;
+	int definventorymaxamount;
+	int defaultrespawntime;
+	int defaultdropstyle;
+	int player5start;
+	DWORD pickupcolor;
+	TArray<FString> quitmessages;
+	FName mTitleColor;
+	FName mFontColor;
+	FName mFontColorValue;
+	FName mFontColorMore;
+	FName mFontColorHeader;
+	FName mFontColorHighlight;
+	FName mFontColorSelection;
+	char mBackButton[9];
+	fixed_t gibfactor;
+	int TextScreenX;
+	int TextScreenY;
+	FName DefaultEndSequence;
+	FString mMapArrow, mCheatMapArrow;
+	FGIFont mStatscreenMapNameFont;
+	FGIFont mStatscreenFinishedFont;
+	FGIFont mStatscreenEnteringFont;
+	bool norandomplayerclass;
+
+	const char *GetFinalePage(unsigned int num) const;
+};
+
 
 extern gameinfo_t gameinfo;
+
+inline const char *GameTypeName()
+{
+	return GameNames[gameinfo.gametype];
+}
+
+inline bool CheckGame(const char *string, bool chexisdoom)
+{
+	int test = gameinfo.gametype;
+	if (test == GAME_Chex && chexisdoom) test = GAME_Doom;
+	return !stricmp(string, GameNames[test]);
+}
 
 #endif //__GI_H__

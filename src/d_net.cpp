@@ -25,8 +25,7 @@
 #include <stddef.h>
 
 #include "version.h"
-#include "m_alloc.h"
-#include "m_menu.h"
+#include "menu/menu.h"
 #include "m_random.h"
 #include "i_system.h"
 #include "i_video.h"
@@ -36,6 +35,7 @@
 #include "doomstat.h"
 #include "c_console.h"
 #include "d_netinf.h"
+#include "d_net.h"
 #include "cmdlib.h"
 #include "s_sound.h"
 #include "m_cheat.h"
@@ -49,50 +49,34 @@
 #include "d_gui.h"
 #include "templates.h"
 #include "p_acs.h"
+#include "p_trace.h"
+#include "a_sharedglobal.h"
+#include "st_start.h"
+#include "teaminfo.h"
+#include "p_conversation.h"
+#include "g_level.h"
+#include "d_event.h"
+#include "m_argv.h"
+#include "p_lnspec.h"
+#include "v_video.h"
+#include "p_spec.h"
+#include "hardware.h"
+#include "intermission/intermission.h"
 
-int P_StartScript (AActor *who, line_t *where, int script, char *map, bool backSide,
-					int arg0, int arg1, int arg2, int always, bool wantResultCode, bool net);
+EXTERN_CVAR (Int, disableautosave)
+EXTERN_CVAR (Int, autosavecount)
 
 //#define SIMULATEERRORS		(RAND_MAX/3)
 #define SIMULATEERRORS			0
 
-#define NCMD_EXIT				0x80
-#define NCMD_RETRANSMIT 		0x40
-#define NCMD_SETUP				0x20
-#define NCMD_MULTI				0x10		// multiple players in this packet
-#define NCMD_QUITTERS			0x08		// one or more players just quit (packet server only)
-
-#define NCMD_XTICS				0x03		// packet contains >2 tics
-#define NCMD_2TICS				0x02		// packet contains 2 tics
-#define NCMD_1TICS				0x01		// packet contains 1 tic
-#define NCMD_0TICS				0x00		// packet contains 0 tics
-
-// [RH]
-// New generic packet structure:
-//
-// Header:
-//  One byte with above flags.
-//  One byte with starttic
-//  One byte with master's maketic (master -> slave only!)
-//  If NCMD_RETRANSMIT set, one byte with retransmitfrom
-//  If NCMD_XTICS set, one byte with number of tics (minus 3, so theoretically up to 258 tics in one packet)
-//  If NCMD_QUITTERS, one byte with number of players followed by one byte with each player's consolenum
-//  If NCMD_MULTI, one byte with number of players followed by one byte with each player's consolenum
-//     - The first player's consolenum is not included in this list, because it always matches the sender
-//
-// For each tic:
-//  Two bytes with consistancy check, followed by tic data
-//
-// Setup packets are different, and are described just before D_ArbitrateNetStart().
-
-extern byte		*demo_p;		// [RH] Special "ticcmds" get recorded in demos
+extern BYTE		*demo_p;		// [RH] Special "ticcmds" get recorded in demos
 extern char		savedescription[SAVESTRINGSIZE];
-extern string	savegamefile;
+extern FString	savegamefile;
 
 extern short consistancy[MAXPLAYERS][BACKUPTICS];
 
-doomcom_t*		doomcom;
-#define netbuffer (doomcom->data)
+doomcom_t		doomcom;
+#define netbuffer (doomcom.data)
 
 enum { NET_PeerToPeer, NET_PacketServer };
 BYTE NetMode = NET_PeerToPeer;
@@ -116,14 +100,16 @@ ticcmd_t		localcmds[LOCALCMDTICS];
 FDynamicBuffer	NetSpecs[MAXPLAYERS][BACKUPTICS];
 ticcmd_t		netcmds[MAXPLAYERS][BACKUPTICS];
 int 			nettics[MAXNETNODES];
-BOOL 			nodeingame[MAXNETNODES];				// set false as nodes leave game
+bool 			nodeingame[MAXNETNODES];				// set false as nodes leave game
 bool			nodejustleft[MAXNETNODES];				// set when a node just left
-BOOL	 		remoteresend[MAXNETNODES];				// set when local needs tics
+bool	 		remoteresend[MAXNETNODES];				// set when local needs tics
 int 			resendto[MAXNETNODES];					// set when remote needs tics
 int 			resendcount[MAXNETNODES];
 
 unsigned int	lastrecvtime[MAXPLAYERS];				// [RH] Used for pings
 unsigned int	currrecvtime[MAXPLAYERS];
+unsigned int	lastglobalrecvtime;						// Identify the last time a packet was recieved.
+bool			hadlate;
 
 int 			nodeforplayer[MAXPLAYERS];
 int				playerfornode[MAXNETNODES];
@@ -137,6 +123,7 @@ void G_BuildTiccmd (ticcmd_t *cmd);
 void D_DoAdvanceDemo (void);
 
 static void SendSetup (DWORD playersdetected[MAXNETNODES], BYTE gotsetup[MAXNETNODES], int len);
+static void RunScript(BYTE **stream, APlayerPawn *pawn, int snum, int argn, int always);
 
 int		reboundpacket;
 BYTE	reboundstore[MAX_MSGLEN];
@@ -149,20 +136,31 @@ int		mastertics;
 static int 	entertic;
 static int	oldentertics;
 
-extern	BOOL	 advancedemo;
+extern	bool	 advancedemo;
 
-CVAR (Bool, cl_capfps, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+CUSTOM_CVAR (Bool, cl_capfps, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+{
+	// Do not use the separate FPS limit timer if we are limiting FPS with this.
+	if (self)
+	{
+		I_SetFPSLimit(0);
+	}
+	else
+	{
+		I_SetFPSLimit(-1);
+	}
+}
 
 // [RH] Special "ticcmds" get stored in here
 static struct TicSpecial
 {
-	byte *streams[BACKUPTICS];
+	BYTE *streams[BACKUPTICS];
 	size_t used[BACKUPTICS];
-	byte *streamptr;
+	BYTE *streamptr;
 	size_t streamoffs;
 	int   specialsize;
 	int	  lastmaketic;
-	BOOL  okay;
+	bool  okay;
 
 	TicSpecial ()
 	{
@@ -176,7 +174,7 @@ static struct TicSpecial
 
 		for (i = 0; i < BACKUPTICS; i++)
 		{
-			streams[i] = (byte *)Malloc (256);
+			streams[i] = (BYTE *)M_Malloc (256);
 			used[i] = 0;
 		}
 		okay = true;
@@ -190,7 +188,7 @@ static struct TicSpecial
 		{
 			if (streams[i])
 			{
-				free (streams[i]);
+				M_Free (streams[i]);
 				streams[i] = NULL;
 				used[i] = 0;
 			}
@@ -208,7 +206,7 @@ static struct TicSpecial
 		DPrintf ("Expanding special size to %d\n", specialsize);
 
 		for (i = 0; i < BACKUPTICS; i++)
-			streams[i] = (byte *)Realloc (streams[i], specialsize);
+			streams[i] = (BYTE *)M_Realloc (streams[i], specialsize);
 
 		streamptr = streams[(maketic/ticdup)%BACKUPTICS] + streamoffs;
 	}
@@ -236,7 +234,7 @@ static struct TicSpecial
 		streamoffs = 0;
 	}
 
-	TicSpecial &operator << (byte it)
+	TicSpecial &operator << (BYTE it)
 	{
 		if (streamptr)
 		{
@@ -315,6 +313,8 @@ void Net_ClearBuffers ()
 	oldentertics = entertic;
 	gametic = 0;
 	maketic = 0;
+
+	lastglobalrecvtime = 0;
 }
 
 //
@@ -325,7 +325,7 @@ int NetbufferSize ()
 {
 	if (netbuffer[0] & (NCMD_EXIT | NCMD_SETUP))
 	{
-		return doomcom->datalength;
+		return doomcom.datalength;
 	}
 
 	int k = 2, count, numtics;
@@ -333,7 +333,7 @@ int NetbufferSize ()
 	if (netbuffer[0] & NCMD_RETRANSMIT)
 		k++;
 
-	if (NetMode == NET_PacketServer && doomcom->remotenode == nodeforplayer[Net_Arbitrator])
+	if (NetMode == NET_PacketServer && doomcom.remotenode == nodeforplayer[Net_Arbitrator])
 		k++;
 
 	numtics = netbuffer[0] & NCMD_XTICS;
@@ -358,12 +358,12 @@ int NetbufferSize ()
 	}
 
 	// Need at least 3 bytes per tic per player
-	if (doomcom->datalength < k + 3 * count * numtics)
+	if (doomcom.datalength < k + 3 * count * numtics)
 	{
 		return k + 3 * count * numtics;
 	}
 
-	byte *skipper = &netbuffer[k];
+	BYTE *skipper = &netbuffer[k];
 	if ((netbuffer[0] & NCMD_EXIT) == 0)
 	{
 		while (count-- > 0)
@@ -371,7 +371,7 @@ int NetbufferSize ()
 			SkipTicCmd (&skipper, numtics);
 		}
 	}
-	return skipper - netbuffer;
+	return int(skipper - netbuffer);
 }
 
 //
@@ -410,13 +410,13 @@ void HSendPacket (int node, int len)
 		{
 			fprintf (debugfile,"%i/%i send %i = SETUP [%3i]", gametic, maketic, node, len);
 			for (i = 0; i < len; i++)
-				fprintf (debugfile," %2x", ((byte *)netbuffer)[i]);
+				fprintf (debugfile," %2x", ((BYTE *)netbuffer)[i]);
 		}
 		else if (netbuffer[0] & NCMD_EXIT)
 		{
 			fprintf (debugfile,"%i/%i send %i = EXIT [%3i]", gametic, maketic, node, len);
 			for (i = 0; i < len; i++)
-				fprintf (debugfile," %2x", ((byte *)netbuffer)[i]);
+				fprintf (debugfile," %2x", ((BYTE *)netbuffer)[i]);
 		}
 		else
 		{
@@ -444,10 +444,10 @@ void HSendPacket (int node, int len)
 					numtics, realretrans, len);
 			
 			for (i = 0; i < len; i++)
-				fprintf (debugfile, "%c%2x", i==k?'|':' ', ((byte *)netbuffer)[i]);
+				fprintf (debugfile, "%c%2x", i==k?'|':' ', ((BYTE *)netbuffer)[i]);
 		}
 		fprintf (debugfile, " [[ ");
-		for (i = 0; i < doomcom->numnodes; ++i)
+		for (i = 0; i < doomcom.numnodes; ++i)
 		{
 			if (nodeingame[i])
 			{
@@ -483,9 +483,9 @@ void HSendPacket (int node, int len)
 	}
 #endif
 
-	doomcom->command = CMD_SEND;
-	doomcom->remotenode = node;
-	doomcom->datalength = len;
+	doomcom.command = CMD_SEND;
+	doomcom.remotenode = node;
+	doomcom.datalength = len;
 
 	I_NetCmd ();
 }
@@ -494,12 +494,12 @@ void HSendPacket (int node, int len)
 // HGetPacket
 // Returns false if no packet is waiting
 //
-BOOL HGetPacket (void)
+bool HGetPacket (void)
 {
 	if (reboundpacket)
 	{
 		memcpy (netbuffer, reboundstore, reboundpacket);
-		doomcom->remotenode = 0;
+		doomcom.remotenode = 0;
 		reboundpacket = 0;
 		return true;
 	}
@@ -510,10 +510,10 @@ BOOL HGetPacket (void)
 	if (demoplayback)
 		return false;
 				
-	doomcom->command = CMD_GET;
+	doomcom.command = CMD_GET;
 	I_NetCmd ();
 	
-	if (doomcom->remotenode == -1)
+	if (doomcom.remotenode == -1)
 		return false;
 		
 	if (debugfile)
@@ -522,23 +522,23 @@ BOOL HGetPacket (void)
 
 		if (netbuffer[0] & NCMD_SETUP)
 		{
-			fprintf (debugfile,"%i/%i  get %i = SETUP [%3i]", gametic, maketic, doomcom->remotenode, doomcom->datalength);
-			for (i = 0; i < doomcom->datalength; i++)
-				fprintf (debugfile, " %2x", ((byte *)netbuffer)[i]);
+			fprintf (debugfile,"%i/%i  get %i = SETUP [%3i]", gametic, maketic, doomcom.remotenode, doomcom.datalength);
+			for (i = 0; i < doomcom.datalength; i++)
+				fprintf (debugfile, " %2x", ((BYTE *)netbuffer)[i]);
 			fprintf (debugfile, "\n");
 		}
 		else if (netbuffer[0] & NCMD_EXIT)
 		{
-			fprintf (debugfile,"%i/%i  get %i = EXIT [%3i]", gametic, maketic, doomcom->remotenode, doomcom->datalength);
-			for (i = 0; i < doomcom->datalength; i++)
-				fprintf (debugfile, " %2x", ((byte *)netbuffer)[i]);
+			fprintf (debugfile,"%i/%i  get %i = EXIT [%3i]", gametic, maketic, doomcom.remotenode, doomcom.datalength);
+			for (i = 0; i < doomcom.datalength; i++)
+				fprintf (debugfile, " %2x", ((BYTE *)netbuffer)[i]);
 			fprintf (debugfile, "\n");
 		}
 		else		{
 			k = 2;
 
 			if (NetMode == NET_PacketServer &&
-				doomcom->remotenode == nodeforplayer[Net_Arbitrator])
+				doomcom.remotenode == nodeforplayer[Net_Arbitrator])
 			{
 				k++;
 			}
@@ -554,25 +554,25 @@ BOOL HGetPacket (void)
 
 			fprintf (debugfile,"%i/%i  get %i = (%i + %i, R %i) [%3i]",
 					gametic, maketic,
-					doomcom->remotenode,
+					doomcom.remotenode,
 					ExpandTics(netbuffer[1]),
-					numtics, realretrans, doomcom->datalength);
+					numtics, realretrans, doomcom.datalength);
 			
-			for (i = 0; i < doomcom->datalength; i++)
-				fprintf (debugfile, "%c%2x", i==k?'|':' ', ((byte *)netbuffer)[i]);
+			for (i = 0; i < doomcom.datalength; i++)
+				fprintf (debugfile, "%c%2x", i==k?'|':' ', ((BYTE *)netbuffer)[i]);
 			if (numtics)
 				fprintf (debugfile, " <<%4x>>\n",
-					consistancy[playerfornode[doomcom->remotenode]][nettics[doomcom->remotenode]%BACKUPTICS] & 0xFFFF);
+					consistancy[playerfornode[doomcom.remotenode]][nettics[doomcom.remotenode]%BACKUPTICS] & 0xFFFF);
 			else
 				fprintf (debugfile, "\n");
 		}
 	}
 
-	if (doomcom->datalength != NetbufferSize ())
+	if (doomcom.datalength != NetbufferSize ())
 	{
 		if (debugfile)
 			fprintf (debugfile,"---bad packet length %i (calculated %i)\n",
-				doomcom->datalength, NetbufferSize());
+				doomcom.datalength, NetbufferSize());
 		return false;
 	}
 
@@ -583,14 +583,14 @@ void PlayerIsGone (int netnode, int netconsole)
 {
 	int i;
 
-	for (i = netnode + 1; i < doomcom->numnodes; ++i)
+	for (i = netnode + 1; i < doomcom.numnodes; ++i)
 	{
 		if (nodeingame[i])
 			break;
 	}
-	if (i == doomcom->numnodes)
+	if (i == doomcom.numnodes)
 	{
-		doomcom->numnodes = netnode;
+		doomcom.numnodes = netnode;
 	}
 
 	nodeingame[netnode] = false;
@@ -600,28 +600,42 @@ void PlayerIsGone (int netnode, int netconsole)
 	if (deathmatch)
 	{
 		Printf ("%s left the game with %d frags\n",
-					players[netconsole].userinfo.netname,
-					players[netconsole].fragcount);
+			players[netconsole].userinfo.GetName(),
+			players[netconsole].fragcount);
 	}
 	else
 	{
-		Printf ("%s left the game\n", players[netconsole].userinfo.netname);
+		Printf ("%s left the game\n", players[netconsole].userinfo.GetName());
 	}
 
-	// [RH] Revert to your own view if spying through the player who left
-	if (players[consoleplayer].camera == players[netconsole].mo)
+	// [RH] Revert each player to their own view if spying through the player who left
+	for (int ii = 0; ii < MAXPLAYERS; ++ii)
 	{
-		players[consoleplayer].camera = players[consoleplayer].mo;
-		if (StatusBar != NULL)
+		if (playeringame[ii] && players[ii].camera == players[netconsole].mo)
 		{
-			StatusBar->AttachToPlayer (&players[consoleplayer]);
+			players[ii].camera = players[ii].mo;
+			if (ii == consoleplayer && StatusBar != NULL)
+			{
+				StatusBar->AttachToPlayer (&players[ii]);
+			}
 		}
 	}
 
 	// [RH] Make the player disappear
-	P_DisconnectEffect (players[netconsole].mo);
-	players[netconsole].mo->Destroy ();
-	players[netconsole].mo = NULL;
+	FBehavior::StaticStopMyScripts (players[netconsole].mo);
+	if (players[netconsole].mo != NULL)
+	{
+		P_DisconnectEffect (players[netconsole].mo);
+		players[netconsole].mo->player = NULL;
+		players[netconsole].mo->Destroy ();
+		if (!(players[netconsole].mo->ObjectFlags & OF_EuthanizeMe))
+		{ // We just destroyed a morphed player, so now the original player
+		  // has taken their place. Destroy that one too.
+			players[netconsole].mo->Destroy();
+		}
+		players[netconsole].mo = NULL;
+		players[netconsole].camera = NULL;
+	}
 	// [RH] Let the scripts know the player left
 	FBehavior::StaticStartTypedScripts (SCRIPT_Disconnect, NULL, true, netconsole);
 	if (netconsole == Net_Arbitrator)
@@ -635,7 +649,8 @@ void PlayerIsGone (int netnode, int netconsole)
 			if (playeringame[i] && !players[i].isbot)
 			{
 				Net_Arbitrator = i;
-				Printf ("%s is the new arbitrator\n", players[i].userinfo.netname);
+				players[i].settings_controller = true;
+				Printf ("%s is the new arbitrator\n", players[i].userinfo.GetName());
 				break;
 			}
 		}
@@ -657,7 +672,7 @@ void PlayerIsGone (int netnode, int netconsole)
 		G_CheckDemoStatus ();
 
 		//WriteByte (DEM_DROPPLAYER, &demo_p);
-		//WriteByte ((byte)netconsole, &demo_p);
+		//WriteByte ((BYTE)netconsole, &demo_p);
 	}
 }
 
@@ -685,18 +700,21 @@ void GetPackets (void)
 			{
 				// This player apparantly doesn't realise the game has started
 				netbuffer[0] = NCMD_SETUP+3;
-				HSendPacket (doomcom->remotenode, 1);
+				HSendPacket (doomcom.remotenode, 1);
 			}
 			continue;			// extra setup packet
 		}
+
+		lastglobalrecvtime = I_GetTime (false); //Update the last time a packet was recieved
 						
-		netnode = doomcom->remotenode;
+		netnode = doomcom.remotenode;
 		netconsole = playerfornode[netnode] & ~PL_DRONE;
 
-		// [RH] Get "ping" times
+		// [RH] Get "ping" times - totally useless, since it's bound to the frequency
+		// packets go out at.
 		lastrecvtime[netconsole] = currrecvtime[netconsole];
 		currrecvtime[netconsole] = I_MSTime ();
-		
+
 		// check for exiting the game
 		if (netbuffer[0] & NCMD_EXIT)
 		{
@@ -756,6 +774,7 @@ void GetPackets (void)
 		}
 
 		if (netbuffer[0] & NCMD_QUITTERS)
+
 		{
 			numplayers = netbuffer[k++];
 			for (int i = 0; i < numplayers; ++i)
@@ -822,7 +841,7 @@ void GetPackets (void)
 
 		// update command store from the packet
 		{
-			byte *start;
+			BYTE *start;
 			int i, tics;
 			remoteresend[netnode] = false;
 
@@ -902,8 +921,10 @@ void NetUpdate (void)
 	int 	newtics;
 	int 	i,j;
 	int 	realstart;
-	byte	*cmddata;
+	BYTE	*cmddata;
 	bool	resendOnly;
+
+	GC::CheckGC();
 
 	if (ticdup == 0)
 	{
@@ -1060,7 +1081,7 @@ void NetUpdate (void)
 			// and it also added the player being sent the packet to the count.
 			count -= 2;
 
-			for (j = 0; j < doomcom->numnodes; ++j)
+			for (j = 0; j < doomcom.numnodes; ++j)
 			{
 				if (nodejustleft[j])
 				{
@@ -1082,7 +1103,7 @@ void NetUpdate (void)
 		}
 	}
 
-	for (i = 0; i < doomcom->numnodes; i++)
+	for (i = 0; i < doomcom.numnodes; i++)
 	{
 		BYTE playerbytes[MAXPLAYERS];
 
@@ -1115,7 +1136,7 @@ void NetUpdate (void)
 			consoleplayer == Net_Arbitrator &&
 			i != 0)
 		{
-			for (j = 1; j < doomcom->numnodes; ++j)
+			for (j = 1; j < doomcom.numnodes; ++j)
 			{
 				if (nodeingame[j] && nettics[j] < lowtic && j != i)
 				{
@@ -1129,7 +1150,7 @@ void NetUpdate (void)
 		if (numtics > BACKUPTICS)
 			I_Error ("NetUpdate: Node %d missed too many tics", i);
 
-		resendto[i] = MAX (0, lowtic - doomcom->extratics);
+		resendto[i] = MAX (0, lowtic - doomcom.extratics);
 
 		if (numtics == 0 && resendOnly && !remoteresend[i] && nettics[i])
 		{
@@ -1156,7 +1177,7 @@ void NetUpdate (void)
 		{
 			netbuffer[0] |= NCMD_QUITTERS;
 			netbuffer[k++] = quitcount;
-			for (int l = 0; l < doomcom->numnodes; ++l)
+			for (int l = 0; l < doomcom.numnodes; ++l)
 			{
 				if (nodejustleft[l])
 				{
@@ -1240,7 +1261,7 @@ void NetUpdate (void)
 					}
 				}
 			}
-			HSendPacket (i, cmddata - netbuffer);
+			HSendPacket (i, int(cmddata - netbuffer));
 		}
 		else
 		{
@@ -1253,53 +1274,17 @@ void NetUpdate (void)
 }
 
 
-
-//
-// CheckAbort
-//
-BOOL CheckAbort (void)
-{
-	event_t *ev;
-	BOOL res = false;
-
-	PrintString (PRINT_HIGH, "");	// [RH] Give the console a chance to redraw itself
-	// This WaitForTic is to avoid flooding the network with packets on startup.
-	I_WaitForTic (I_GetTime (false) + TICRATE/4);
-	I_StartTic ();
-	for ( ; eventtail != eventhead 
-		  ; eventtail = (++eventtail)&(MAXEVENTS-1) ) 
-	{ 
-		ev = &events[eventtail]; 
-		if (ev->type == EV_KeyDown && ev->data1 == KEY_ESCAPE)
-		{
-			res = true;
-			break;
-		}
-		if (ev->type == EV_GUI_Event &&
-			(ev->subtype == EV_GUI_KeyDown || ev->subtype == EV_GUI_KeyRepeat) &&
-			ev->data1 == GK_ESCAPE)
-		{
-			res = true;
-			break;
-		}
-	}
-	eventhead = eventtail = 0;
-	return res;
-}
-
-
 //
 // D_ArbitrateNetStart
 //
 // User info packets look like this:
 //
-//  0 One byte set to NCMD_SETUP or NCMD_SETUP+1
-//    If NCMD_SETUP+1, omit byte 7
+//  0 One byte set to NCMD_SETUP or NCMD_SETUP+1; if NCMD_SETUP+1, omit byte 9
 //  1 One byte for the player's number
-//  2 One byte for the game version
-//3-7 A bit mask for each player the sender knows about
-//    (the high bit of byte 7 indicates the game info was received)
-//  8 A stream of bytes with the user info
+//2-4 Three bytes for the game version (255,high byte,low byte)
+//5-8 A bit mask for each player the sender knows about
+//  9 The high bit is set if the sender got the game info
+// 10 A stream of bytes with the user info
 //
 //    The guests always send NCMD_SETUP packets, and the host always
 //    sends NCMD_SETUP+1 packets.
@@ -1323,34 +1308,185 @@ BOOL CheckAbort (void)
 // Negotiation is done when all the guests have reported to the host that
 // they know about the other nodes.
 
+struct ArbitrateData
+{
+	DWORD playersdetected[MAXNETNODES];
+	BYTE  gotsetup[MAXNETNODES];
+};
+
+bool DoArbitrate (void *userdata)
+{
+	ArbitrateData *data = (ArbitrateData *)userdata;
+	char *s;
+	BYTE *stream;
+	int version;
+	int node;
+	int i, j;
+
+	while (HGetPacket ())
+	{
+		if (netbuffer[0] == NCMD_EXIT)
+		{
+			I_FatalError ("The game was aborted.");
+		}
+
+		if (doomcom.remotenode == 0)
+		{
+			continue;
+		}
+
+		if (netbuffer[0] == NCMD_SETUP || netbuffer[0] == NCMD_SETUP+1)		// got user info
+		{
+			node = (netbuffer[0] == NCMD_SETUP) ? doomcom.remotenode : nodeforplayer[netbuffer[1]];
+
+			data->playersdetected[node] =
+				(netbuffer[5] << 24) | (netbuffer[6] << 16) | (netbuffer[7] << 8) | netbuffer[8];
+
+			if (netbuffer[0] == NCMD_SETUP)
+			{ // Sent to host
+				data->gotsetup[node] = netbuffer[9] & 0x80;
+				stream = &netbuffer[10];
+			}
+			else
+			{ // Sent from host
+				stream = &netbuffer[9];
+			}
+
+			D_ReadUserInfoStrings (netbuffer[1], &stream, false);
+			if (!nodeingame[node])
+			{
+				version = (netbuffer[2] << 16) | (netbuffer[3] << 8) | netbuffer[4];
+				if (version != (0xFF0000 | NETGAMEVERSION))
+				{
+					I_Error ("Different " GAMENAME " versions cannot play a net game");
+				}
+
+				playeringame[netbuffer[1]] = true;
+				nodeingame[node] = true;
+
+				data->playersdetected[0] |= 1 << netbuffer[1];
+
+				StartScreen->NetMessage ("Found %s (node %d, player %d)",
+						players[netbuffer[1]].userinfo.GetName(),
+						node, netbuffer[1]+1);
+			}
+		}
+		else if (netbuffer[0] == NCMD_SETUP+2)	// got game info
+		{
+			data->gotsetup[0] = 0x80;
+
+			ticdup = doomcom.ticdup = netbuffer[1];
+			doomcom.extratics = netbuffer[2];
+			NetMode = netbuffer[3];
+
+			stream = &netbuffer[4];
+			s = ReadString (&stream);
+			startmap = FString(s, 8);
+			delete[] s;
+			rngseed = ReadLong (&stream);
+			C_ReadCVars (&stream);
+		}
+		else if (netbuffer[0] == NCMD_SETUP+3)
+		{
+			return true;
+		}
+	}
+
+	// If everybody already knows everything, it's time to go
+	if (consoleplayer == Net_Arbitrator)
+	{
+		for (i = 0; i < doomcom.numnodes; ++i)
+			if (data->playersdetected[i] != DWORD(1 << doomcom.numnodes) - 1 || !data->gotsetup[i])
+				break;
+
+		if (i == doomcom.numnodes)
+			return true;
+	}
+
+	netbuffer[2] = 255;
+	netbuffer[3] = (NETGAMEVERSION >> 8) & 255;
+	netbuffer[4] = NETGAMEVERSION & 255;
+	netbuffer[5] = data->playersdetected[0] >> 24;
+	netbuffer[6] = data->playersdetected[0] >> 16;
+	netbuffer[7] = data->playersdetected[0] >> 8;
+	netbuffer[8] = data->playersdetected[0];
+
+	if (consoleplayer != Net_Arbitrator)
+	{ // Send user info for the local node
+		netbuffer[0] = NCMD_SETUP;
+		netbuffer[1] = consoleplayer;
+		netbuffer[9] = data->gotsetup[0];
+		stream = &netbuffer[10];
+		D_WriteUserInfoStrings (consoleplayer, &stream, true);
+		SendSetup (data->playersdetected, data->gotsetup, int(stream - netbuffer));
+	}
+	else
+	{ // Send user info for all nodes
+		netbuffer[0] = NCMD_SETUP+1;
+		for (i = 1; i < doomcom.numnodes; ++i)
+		{
+			for (j = 0; j < doomcom.numnodes; ++j)
+			{
+				// Send info about player j to player i?
+				if ((data->playersdetected[0] & (1<<j)) && !(data->playersdetected[i] & (1<<j)))
+				{
+					netbuffer[1] = j;
+					stream = &netbuffer[9];
+					D_WriteUserInfoStrings (j, &stream, true);
+					HSendPacket (i, int(stream - netbuffer));
+				}
+			}
+		}
+	}
+
+	// If we're the host, send the game info, too
+	if (consoleplayer == Net_Arbitrator)
+	{
+		netbuffer[0] = NCMD_SETUP+2;
+		netbuffer[1] = (BYTE)doomcom.ticdup;
+		netbuffer[2] = (BYTE)doomcom.extratics;
+		netbuffer[3] = NetMode;
+		stream = &netbuffer[4];
+		WriteString (startmap, &stream);
+		WriteLong (rngseed, &stream);
+		C_WriteCVars (&stream, CVAR_SERVERINFO, true);
+
+		SendSetup (data->playersdetected, data->gotsetup, int(stream - netbuffer));
+	}
+	return false;
+}
+
 void D_ArbitrateNetStart (void)
 {
-	int 		i, j;
-	DWORD	 	playersdetected[MAXNETNODES];
-	BYTE		gotsetup[MAXNETNODES];
-	char		*s;
-	byte		*stream;
-	int			node;
-	bool		allset = false;
+	ArbitrateData data;
+	int i;
 
 	// Return right away if we're just playing with ourselves.
-	if (doomcom->numnodes == 1)
+	if (doomcom.numnodes == 1)
 		return;
 
 	autostart = true;
 
-	memset (playersdetected, 0, sizeof(playersdetected));
-	memset (gotsetup, 0, sizeof(gotsetup));
+	memset (data.playersdetected, 0, sizeof(data.playersdetected));
+	memset (data.gotsetup, 0, sizeof(data.gotsetup));
 
-	// Everyone know about themself
-	playersdetected[0] = 1 << consoleplayer;
+	// The arbitrator knows about himself, but the other players must
+	// be told about themselves, in case the host had to adjust their
+	// userinfo (e.g. assign them to a different team).
+	if (consoleplayer == Net_Arbitrator)
+	{
+		data.playersdetected[0] = 1 << consoleplayer;
+	}
 
-	// Assign nodes to players
+	// Assign nodes to players. The local player is always node 0.
+	// If the local player is not the host, then the host is node 1.
+	// Any remaining players are assigned node numbers in the order
+	// they were detected.
 	playerfornode[0] = consoleplayer;
 	nodeforplayer[consoleplayer] = 0;
 	if (consoleplayer == Net_Arbitrator)
 	{
-		for (i = 1; i < doomcom->numnodes; ++i)
+		for (i = 1; i < doomcom.numnodes; ++i)
 		{
 			playerfornode[i] = i;
 			nodeforplayer[i] = i;
@@ -1360,7 +1496,7 @@ void D_ArbitrateNetStart (void)
 	{
 		playerfornode[1] = 0;
 		nodeforplayer[0] = 1;
-		for (i = 1; i < doomcom->numnodes; ++i)
+		for (i = 1; i < doomcom.numnodes; ++i)
 		{
 			if (i < consoleplayer)
 			{
@@ -1377,159 +1513,29 @@ void D_ArbitrateNetStart (void)
 
 	if (consoleplayer == Net_Arbitrator)
 	{
-		gotsetup[0] = 0x80;
+		data.gotsetup[0] = 0x80;
 	}
 
-	while (!allset)
+	StartScreen->NetInit ("Exchanging game information", 1);
+	if (!StartScreen->NetLoop (DoArbitrate, &data))
 	{
-		if (CheckAbort ())
-			I_FatalError ("Network game synchronization aborted.");
-
-		I_WaitVBL (1);
-
-		while (HGetPacket ())
-		{
-			if (netbuffer[0] == NCMD_EXIT)
-			{
-				I_FatalError ("The game was aborted\n");
-			}
-
-			if (doomcom->remotenode == 0)
-			{
-				continue;
-			}
-
-			if (netbuffer[0] == NCMD_SETUP || netbuffer[0] == NCMD_SETUP+1)		// got user info
-			{
-				node = (netbuffer[0] == NCMD_SETUP) ? doomcom->remotenode
-					: nodeforplayer[netbuffer[1]];
-
-				playersdetected[node] =
-					(netbuffer[3] << 24) | (netbuffer[4] << 16) | (netbuffer[5] << 8) | netbuffer[6];
-
-				if (netbuffer[0] == NCMD_SETUP)
-				{ // Sent to host
-					gotsetup[node] = netbuffer[7] & 0x80;
-					stream = &netbuffer[8];
-				}
-				else
-				{ // Sent from host
-					stream = &netbuffer[7];
-				}
-
-				if (!nodeingame[node])
-				{
-					if (netbuffer[2] != GAMEVERSION)
-						I_Error ("Different DOOM versions cannot play a net game!");
-
-					playeringame[netbuffer[1]] = true;
-					nodeingame[node] = true;
-					playersdetected[0] |= 1 << netbuffer[1];
-
-					D_ReadUserInfoStrings (netbuffer[1], &stream, false);
-
-					Printf ("Found %s (node %d, player %d)\n",
-							players[netbuffer[1]].userinfo.netname,
-							node, netbuffer[1]+1);
-				}
-			}
-			else if (netbuffer[0] == NCMD_SETUP+2)	// got game info
-			{
-				gotsetup[0] = 0x80;
-
-				ticdup = doomcom->ticdup = netbuffer[1];
-				doomcom->extratics = netbuffer[2];
-				NetMode = netbuffer[3];
-
-				stream = &netbuffer[4];
-				s = ReadString (&stream);
-				strncpy (startmap, s, 8);
-				delete[] s;
-				rngseed = ReadLong (&stream);
-				C_ReadCVars (&stream);
-			}
-			else if (netbuffer[0] == NCMD_SETUP+3)
-			{
-				allset = true;
-			}
-		}
-
-		// If everybody already knows everything, it's time to go
-		if (consoleplayer == Net_Arbitrator)
-		{
-			for (i = 0; i < doomcom->numnodes; ++i)
-				if (playersdetected[i] != DWORD(1 << doomcom->numnodes) - 1 || !gotsetup[i])
-					break;
-
-			if (i == doomcom->numnodes)
-				break;
-		}
-
-		netbuffer[2] = GAMEVERSION;
-		netbuffer[3] = playersdetected[0] >> 24;
-		netbuffer[4] = playersdetected[0] >> 16;
-		netbuffer[5] = playersdetected[0] >> 8;
-		netbuffer[6] = playersdetected[0];
-
-		if (!allset && consoleplayer != Net_Arbitrator)
-		{ // Send user info for the local node
-			netbuffer[0] = NCMD_SETUP;
-			netbuffer[1] = consoleplayer;
-			netbuffer[7] = gotsetup[0];
-			stream = &netbuffer[8];
-			D_WriteUserInfoStrings (consoleplayer, &stream, true);
-			SendSetup (playersdetected, gotsetup, stream - netbuffer);
-		}
-		else
-		{ // Send user info for all nodes
-			netbuffer[0] = NCMD_SETUP+1;
-			netbuffer[2] = GAMEVERSION;
-			for (i = 1; i < doomcom->numnodes; ++i)
-			{
-				for (j = 0; j < doomcom->numnodes; ++j)
-				{
-					// Send info about player j to player i?
-					if (i != j && (playersdetected[0] & (1<<j)) &&
-						!(playersdetected[i] & (1<<j)))
-					{
-						netbuffer[1] = j;
-						stream = &netbuffer[7];
-						D_WriteUserInfoStrings (j, &stream, true);
-						HSendPacket (i, stream - netbuffer);
-					}
-				}
-			}
-		}
-
-		// If we're the host, send the game info, too
-		if (consoleplayer == Net_Arbitrator)
-		{
-			netbuffer[0] = NCMD_SETUP+2;
-			netbuffer[1] = doomcom->ticdup;
-			netbuffer[2] = doomcom->extratics;
-			netbuffer[3] = NetMode;
-			stream = &netbuffer[4];
-			WriteString (startmap, &stream);
-			WriteLong (rngseed, &stream);
-			C_WriteCVars (&stream, CVAR_SERVERINFO, true);
-
-			SendSetup (playersdetected, gotsetup, stream - netbuffer);
-		}
+		exit (0);
 	}
 
 	if (consoleplayer == Net_Arbitrator)
 	{
 		netbuffer[0] = NCMD_SETUP+3;
-		SendSetup (playersdetected, gotsetup, 1);
+		SendSetup (data.playersdetected, data.gotsetup, 1);
 	}
 
 	if (debugfile)
 	{
-		for (i = 0; i < doomcom->numnodes; ++i)
+		for (i = 0; i < doomcom.numnodes; ++i)
 		{
 			fprintf (debugfile, "player %d is on node %d\n", i, nodeforplayer[i]);
 		}
 	}
+	StartScreen->NetDone();
 }
 
 static void SendSetup (DWORD playersdetected[MAXNETNODES], BYTE gotsetup[MAXNETNODES], int len)
@@ -1538,7 +1544,7 @@ static void SendSetup (DWORD playersdetected[MAXNETNODES], BYTE gotsetup[MAXNETN
 	{
 		if (playersdetected[1] & (1 << consoleplayer))
 		{
-			HSendPacket (1, 8);
+			HSendPacket (1, 10);
 		}
 		else
 		{
@@ -1547,7 +1553,7 @@ static void SendSetup (DWORD playersdetected[MAXNETNODES], BYTE gotsetup[MAXNETN
 	}
 	else
 	{
-		for (int i = 1; i < doomcom->numnodes; ++i)
+		for (int i = 1; i < doomcom.numnodes; ++i)
 		{
 			if (!gotsetup[i] || netbuffer[0] == NCMD_SETUP+3)
 			{
@@ -1561,7 +1567,6 @@ static void SendSetup (DWORD playersdetected[MAXNETNODES], BYTE gotsetup[MAXNETN
 // D_CheckNetGame
 // Works out player numbers among the net participants
 //
-extern int viewangleoffset;
 
 void D_CheckNetGame (void)
 {
@@ -1577,27 +1582,38 @@ void D_CheckNetGame (void)
 	}
 
 	// I_InitNetwork sets doomcom and netgame
-	I_InitNetwork ();
-	if (doomcom->id != DOOMCOM_ID)
+	if (I_InitNetwork ())
+	{
+		NetMode = NET_PacketServer;
+	}
+	if (doomcom.id != DOOMCOM_ID)
+	{
 		I_FatalError ("Doomcom buffer invalid!");
-	
-	consoleplayer = doomcom->consoleplayer;
+	}
+	players[0].settings_controller = true;
 
-	v = Args.CheckValue ("-netmode");
+	consoleplayer = doomcom.consoleplayer;
+
+	v = Args->CheckValue ("-netmode");
 	if (v != NULL)
 	{
 		NetMode = atoi (v) != 0 ? NET_PacketServer : NET_PeerToPeer;
+	}
+	if (doomcom.numnodes > 1)
+	{
+		Printf ("Selected " TEXTCOLOR_BLUE "%s" TEXTCOLOR_NORMAL " networking mode. (%s)\n", NetMode == NET_PeerToPeer ? "peer to peer" : "packet server",
+			v != NULL ? "forced" : "auto");
 	}
 
 	// [RH] Setup user info
 	D_SetupUserInfo ();
 
-	if (Args.CheckParm ("-debugfile"))
+	if (Args->CheckParm ("-debugfile"))
 	{
-		char	filename[20];
-		sprintf (filename,"debug%i.txt",consoleplayer);
-		Printf ("debug output to: %s\n",filename);
-		debugfile = fopen (filename,"w");
+		char filename[20];
+		mysnprintf (filename, countof(filename), "debug%i.txt", consoleplayer);
+		Printf ("debug output to: %s\n", filename);
+		debugfile = fopen (filename, "w");
 	}
 
 	if (netgame)
@@ -1607,15 +1623,15 @@ void D_CheckNetGame (void)
 	}
 
 	// read values out of doomcom
-	ticdup = doomcom->ticdup;
+	ticdup = doomcom.ticdup;
 
-	for (i = 0; i < doomcom->numplayers; i++)
+	for (i = 0; i < doomcom.numplayers; i++)
 		playeringame[i] = true;
-	for (i = 0; i < doomcom->numnodes; i++)
+	for (i = 0; i < doomcom.numnodes; i++)
 		nodeingame[i] = true;
 
 	Printf ("player %i of %i (%i nodes)\n",
-			consoleplayer+1, doomcom->numplayers, doomcom->numnodes);
+			consoleplayer+1, doomcom.numplayers, doomcom.numnodes);
 }
 
 
@@ -1624,7 +1640,7 @@ void D_CheckNetGame (void)
 // Called before quitting to leave a net game
 // without hanging the other players
 //
-void STACK_ARGS D_QuitNetGame (void)
+void D_QuitNetGame (void)
 {
 	int i, j, k;
 
@@ -1647,7 +1663,7 @@ void STACK_ARGS D_QuitNetGame (void)
 			if (playeringame[i] && i != consoleplayer)
 				WriteLong (resendto[nodeforplayer[i]], &foo);
 		}
-		k = foo - netbuffer;
+		k = int(foo - netbuffer);
 	}
 
 	for (i = 0; i < 4; i++)
@@ -1658,7 +1674,7 @@ void STACK_ARGS D_QuitNetGame (void)
 		}
 		else
 		{
-			for (j = 1; j < doomcom->numnodes; j++)
+			for (j = 1; j < doomcom.numnodes; j++)
 				if (nodeingame[j])
 					HSendPacket (j, k);
 		}
@@ -1704,7 +1720,7 @@ void TryRunTics (void)
 
 	lowtic = INT_MAX;
 	numplaying = 0;
-	for (i = 0; i < doomcom->numnodes; i++)
+	for (i = 0; i < doomcom.numnodes; i++)
 	{
 		if (nodeingame[i])
 		{
@@ -1801,7 +1817,7 @@ void TryRunTics (void)
 		NetUpdate ();
 		lowtic = INT_MAX;
 
-		for (i = 0; i < doomcom->numnodes; i++)
+		for (i = 0; i < doomcom.numnodes; i++)
 			if (nodeingame[i] && nettics[i] < lowtic)
 				lowtic = nettics[i];
 
@@ -1809,6 +1825,33 @@ void TryRunTics (void)
 
 		if (lowtic < gametic)
 			I_Error ("TryRunTics: lowtic < gametic");
+
+		// [Ed850] Check to see the last time a packet was recieved.
+		// If it's longer then 3 seconds, a node has likely stalled. Check which one and re-request its last packet.
+		if(I_GetTime(false) - lastglobalrecvtime >= TICRATE*3)
+		{
+			int latenode = 0; // Node 0 is the local player, and should always be the highest
+			lastglobalrecvtime = I_GetTime(false); //Bump the count
+
+			if(NetMode == NET_PeerToPeer || consoleplayer == Net_Arbitrator)
+			{
+				for (i = 0; i < doomcom.numnodes; i++)
+					if (nodeingame[i] && nettics[i] < nettics[latenode])
+						latenode = i;
+			}
+			else if (nodeingame[nodeforplayer[Net_Arbitrator]] && 
+				nettics[nodeforplayer[Net_Arbitrator]] < nettics[0])
+			{	// Likely a packet server game. Only check the packet host.
+				latenode = Net_Arbitrator;
+			}
+
+			if (debugfile)
+				fprintf (debugfile, "lost tics from %i (%i to %i)\n",
+						 latenode, nettics[latenode], gametic);
+
+			if(latenode != 0) // Send resend request to late node (if not yourself... somehow). Also mark the node as waiting to display it in the hud.
+				remoteresend[latenode] = players[playerfornode[latenode]].waiting = hadlate = true;
+		}
 
 		// don't stay in here forever -- give the menu a chance to work
 		if (I_GetTime (false) - entertic >= TICRATE/3)
@@ -1819,27 +1862,36 @@ void TryRunTics (void)
 		}
 	}
 
-	// run the count tics
-	while (counts--)
+	if (hadlate)
 	{
-		if (gametic > lowtic)
-		{
-			I_Error ("gametic>lowtic");
-		}
-		if (advancedemo)
-		{
-			D_DoAdvanceDemo ();
-		}
-		if (debugfile) fprintf (debugfile, "run tic %d\n", gametic);
-		DObject::BeginFrame ();
-		C_Ticker ();
-		M_Ticker ();
-		I_GetTime (true);
-		G_Ticker ();
-		DObject::EndFrame ();
-		gametic++;
+		hadlate = false;
+		for (i = 0; i < MAXPLAYERS; i++)
+			players[i].waiting = false;
+	}
 
-		NetUpdate ();	// check for new console commands
+	// run the count tics
+	if (counts > 0)
+	{
+		while (counts--)
+		{
+			if (gametic > lowtic)
+			{
+				I_Error ("gametic>lowtic");
+			}
+			if (advancedemo)
+			{
+				D_DoAdvanceDemo ();
+			}
+			if (debugfile) fprintf (debugfile, "run tic %d\n", gametic);
+			C_Ticker ();
+			M_Ticker ();
+			I_GetTime (true);
+			G_Ticker ();
+			gametic++;
+
+			NetUpdate ();	// check for new console commands
+		}
+		S_UpdateSounds (players[consoleplayer].camera);	// move positional sounds
 	}
 }
 
@@ -1848,7 +1900,7 @@ void Net_NewMakeTic (void)
 	specials.NewMakeTic ();
 }
 
-void Net_WriteByte (byte it)
+void Net_WriteByte (BYTE it)
 {
 	specials << it;
 }
@@ -1873,7 +1925,7 @@ void Net_WriteString (const char *it)
 	specials << it;
 }
 
-void Net_WriteBytes (const byte *block, int len)
+void Net_WriteBytes (const BYTE *block, int len)
 {
 	while (len--)
 		specials << *block++;
@@ -1901,12 +1953,12 @@ FDynamicBuffer::~FDynamicBuffer ()
 	m_Len = m_BufferLen = 0;
 }
 
-void FDynamicBuffer::SetData (const byte *data, int len)
+void FDynamicBuffer::SetData (const BYTE *data, int len)
 {
 	if (len > m_BufferLen)
 	{
 		m_BufferLen = (len + 255) & ~255;
-		m_Data = (byte *)Realloc (m_Data, m_BufferLen);
+		m_Data = (BYTE *)M_Realloc (m_Data, m_BufferLen);
 	}
 	if (data)
 	{
@@ -1919,7 +1971,7 @@ void FDynamicBuffer::SetData (const byte *data, int len)
 	}
 }
 
-byte *FDynamicBuffer::GetData (int *len)
+BYTE *FDynamicBuffer::GetData (int *len)
 {
 	if (len)
 		*len = m_Len;
@@ -1927,12 +1979,28 @@ byte *FDynamicBuffer::GetData (int *len)
 }
 
 
+static int KillAll(const PClass *cls)
+{
+	AActor *actor;
+	int killcount = 0;
+	TThinkerIterator<AActor> iterator(cls);
+	while ( (actor = iterator.Next ()) )
+	{
+		if (actor->IsA(cls))
+		{
+			if (!(actor->flags2 & MF2_DORMANT) && (actor->flags3 & MF3_ISMONSTER))
+					killcount += actor->Massacre ();
+		}
+	}
+	return killcount;
+
+}
 // [RH] Execute a special "ticcmd". The type byte should
 //		have already been read, and the stream is positioned
 //		at the beginning of the command's actual data.
-void Net_DoCommand (int type, byte **stream, int player)
+void Net_DoCommand (int type, BYTE **stream, int player)
 {
-	byte pos = 0;
+	BYTE pos = 0;
 	char *s = NULL;
 	int i;
 
@@ -1940,33 +2008,34 @@ void Net_DoCommand (int type, byte **stream, int player)
 	{
 	case DEM_SAY:
 		{
-			const char *name = players[player].userinfo.netname;
-			byte who = ReadByte (stream);
+			const char *name = players[player].userinfo.GetName();
+			BYTE who = ReadByte (stream);
 
 			s = ReadString (stream);
-			if (((who & 1) == 0) || players[player].userinfo.team == TEAM_None)
+			CleanseString (s);
+			if (((who & 1) == 0) || players[player].userinfo.GetTeam() == TEAM_NONE)
 			{ // Said to everyone
 				if (who & 2)
 				{
-					Printf (PRINT_CHAT, TEXTCOLOR_BOLD "* %s%s\n", name, s);
+					Printf (PRINT_CHAT, TEXTCOLOR_BOLD "* %s" TEXTCOLOR_BOLD "%s" TEXTCOLOR_BOLD "\n", name, s);
 				}
 				else
 				{
-					Printf (PRINT_CHAT, "%s: %s\n", name, s);
+					Printf (PRINT_CHAT, "%s" TEXTCOLOR_CHAT ": %s" TEXTCOLOR_CHAT "\n", name, s);
 				}
-				S_Sound (CHAN_VOICE, gameinfo.chatSound, 1, ATTN_NONE);
+				S_Sound (CHAN_VOICE | CHAN_UI, gameinfo.chatSound, 1, ATTN_NONE);
 			}
-			else if (players[player].userinfo.team == players[consoleplayer].userinfo.team)
+			else if (players[player].userinfo.GetTeam() == players[consoleplayer].userinfo.GetTeam())
 			{ // Said only to members of the player's team
 				if (who & 2)
 				{
-					Printf (PRINT_TEAMCHAT, TEXTCOLOR_BOLD "* (%s)%s\n", name, s);
+					Printf (PRINT_TEAMCHAT, TEXTCOLOR_BOLD "* (%s" TEXTCOLOR_BOLD ")%s" TEXTCOLOR_BOLD "\n", name, s);
 				}
 				else
 				{
-					Printf (PRINT_TEAMCHAT, "(%s): %s\n", name, s);
+					Printf (PRINT_TEAMCHAT, "(%s" TEXTCOLOR_TEAMCHAT "): %s" TEXTCOLOR_TEAMCHAT "\n", name, s);
 				}
-				S_Sound (CHAN_VOICE, gameinfo.chatSound, 1, ATTN_NONE);
+				S_Sound (CHAN_VOICE | CHAN_UI, gameinfo.chatSound, 1, ATTN_NONE);
 			}
 		}
 		break;
@@ -1978,12 +2047,12 @@ void Net_DoCommand (int type, byte **stream, int player)
 
 	case DEM_PRINT:
 		s = ReadString (stream);
-		Printf (s);
+		Printf ("%s", s);
 		break;
 
 	case DEM_CENTERPRINT:
 		s = ReadString (stream);
-		C_MidPrint (s);
+		C_MidPrint (SmallFont, s);
 		break;
 
 	case DEM_UINFCHANGED:
@@ -2000,7 +2069,12 @@ void Net_DoCommand (int type, byte **stream, int player)
 
 	case DEM_GIVECHEAT:
 		s = ReadString (stream);
-		cht_Give (&players[player], s, ReadByte (stream));
+		cht_Give (&players[player], s, ReadWord (stream));
+		break;
+
+	case DEM_TAKECHEAT:
+		s = ReadString (stream);
+		cht_Take (&players[player], s, ReadWord (stream));
 		break;
 
 	case DEM_WARPCHEAT:
@@ -2022,11 +2096,10 @@ void Net_DoCommand (int type, byte **stream, int player)
 	case DEM_CHANGEMAP:
 		// Change to another map without disconnecting other players
 		s = ReadString (stream);
-		strncpy (level.nextmap, s, 8);
 		// Using LEVEL_NOINTERMISSION tends to throw the game out of sync.
 		// That was a long time ago. Maybe it works now?
 		level.flags |= LEVEL_CHANGEMAPCHEAT;
-		G_ExitLevel (pos, false);
+		G_ChangeLevel(s, pos, 0);
 		break;
 
 	case DEM_SUICIDE:
@@ -2035,7 +2108,7 @@ void Net_DoCommand (int type, byte **stream, int player)
 
 	case DEM_ADDBOT:
 		{
-			byte num = ReadByte (stream);
+			BYTE num = ReadByte (stream);
 			bglobal.DoAddBot (num, s = ReadString (stream));
 		}
 		break;
@@ -2046,10 +2119,7 @@ void Net_DoCommand (int type, byte **stream, int player)
 		break;
 
 	case DEM_CENTERVIEW:
-		if (players[player].mo != NULL)
-		{
-			players[player].mo->pitch = 0;
-		}
+		players[player].centering = true;
 		break;
 
 	case DEM_INVUSEALL:
@@ -2060,7 +2130,7 @@ void Net_DoCommand (int type, byte **stream, int player)
 			while (item != NULL)
 			{
 				AInventory *next = item->Inventory;
-				if (item->ItemFlags & IF_INVBAR)
+				if (item->ItemFlags & IF_INVBAR && !(item->IsKindOf(RUNTIME_CLASS(APuzzleItem))))
 				{
 					players[player].mo->UseInventory (item);
 				}
@@ -2098,11 +2168,28 @@ void Net_DoCommand (int type, byte **stream, int player)
 
 	case DEM_SUMMON:
 	case DEM_SUMMONFRIEND:
+	case DEM_SUMMONFOE:
+	case DEM_SUMMONMBF:
+	case DEM_SUMMON2:
+	case DEM_SUMMONFRIEND2:
+	case DEM_SUMMONFOE2:
 		{
-			const TypeInfo *typeinfo;
+			const PClass *typeinfo;
+			int angle = 0;
+			SWORD tid = 0;
+			BYTE special = 0;
+			int args[5];
 
 			s = ReadString (stream);
-			typeinfo = TypeInfo::FindType (s);
+			if (type >= DEM_SUMMON2 && type <= DEM_SUMMONFOE2)
+			{
+				angle = ReadWord(stream);
+				tid = ReadWord(stream);
+				special = ReadByte(stream);
+				for(i = 0; i < 5; i++) args[i] = ReadLong(stream);
+			}
+
+			typeinfo = PClass::FindClass (s);
 			if (typeinfo != NULL && typeinfo->ActorInfo != NULL)
 			{
 				AActor *source = players[player].mo;
@@ -2118,14 +2205,68 @@ void Net_DoCommand (int type, byte **stream, int player)
 						AActor *spawned = Spawn (typeinfo,
 							source->x + FixedMul (def->radius * 2 + source->radius, finecosine[source->angle>>ANGLETOFINESHIFT]),
 							source->y + FixedMul (def->radius * 2 + source->radius, finesine[source->angle>>ANGLETOFINESHIFT]),
-							source->z + 8 * FRACUNIT);
-						if (spawned != NULL && type == DEM_SUMMONFRIEND)
+							source->z + 8 * FRACUNIT, ALLOW_REPLACE);
+						if (spawned != NULL)
 						{
-							spawned->FriendPlayer = player + 1;
-							spawned->flags |= MF_FRIENDLY;
-							spawned->LastHeard = players[player].mo;
+							if (type == DEM_SUMMONFRIEND || type == DEM_SUMMONFRIEND2 || type == DEM_SUMMONMBF)
+							{
+								if (spawned->CountsAsKill()) 
+								{
+									level.total_monsters--;
+								}
+								spawned->FriendPlayer = player + 1;
+								spawned->flags |= MF_FRIENDLY;
+								spawned->LastHeard = players[player].mo;
+								spawned->health = spawned->SpawnHealth();
+								if (type == DEM_SUMMONMBF)
+									spawned->flags3 |= MF3_NOBLOCKMONST;
+							}
+							else if (type == DEM_SUMMONFOE || type == DEM_SUMMONFOE2)
+							{
+								spawned->FriendPlayer = 0;
+								spawned->flags &= ~MF_FRIENDLY;
+								spawned->health = spawned->SpawnHealth();
+							}
+						}
+						if (type >= DEM_SUMMON2 && type <= DEM_SUMMONFOE2)
+						{
+							spawned->angle = source->angle - (ANGLE_1 * angle);
+							spawned->tid = tid;
+							spawned->special = special;
+							for(i = 0; i < 5; i++) {
+								spawned->args[i] = args[i];
+							}
+							if(tid) spawned->AddToHash();
 						}
 					}
+				}
+			}
+		}
+		break;
+
+	case DEM_SPRAY:
+		{
+			FTraceResults trace;
+
+			angle_t ang = players[player].mo->angle  >> ANGLETOFINESHIFT;
+			angle_t pitch = (angle_t)(players[player].mo->pitch) >> ANGLETOFINESHIFT;
+			fixed_t vx = FixedMul (finecosine[pitch], finecosine[ang]);
+			fixed_t vy = FixedMul (finecosine[pitch], finesine[ang]);
+			fixed_t vz = -finesine[pitch];
+
+			s = ReadString (stream);
+
+			if (Trace (players[player].mo->x, players[player].mo->y,
+				players[player].mo->z + players[player].mo->height - (players[player].mo->height>>2),
+				players[player].mo->Sector,
+				vx, vy, vz, 172*FRACUNIT, 0, ML_BLOCKEVERYTHING, players[player].mo,
+				trace, TRACE_NoSky))
+			{
+				if (trace.HitType == TRACE_HitWall)
+				{
+					DImpactDecal::StaticCreate (s,
+						trace.X, trace.Y, trace.Z,
+						trace.Line->sidedef[trace.Side], NULL);
 				}
 			}
 		}
@@ -2137,21 +2278,23 @@ void Net_DoCommand (int type, byte **stream, int player)
 			if (paused)
 			{
 				paused = 0;
-				S_ResumeSound ();
+				S_ResumeSound (false);
 			}
 			else
 			{
 				paused = player + 1;
-				S_PauseSound ();
+				S_PauseSound (false, false);
 			}
-			BorderNeedRefresh = screen->GetPageCount ();
+			V_SetBorderNeedRefresh();
 		}
 		break;
 
 	case DEM_SAVEGAME:
 		if (gamestate == GS_LEVEL)
 		{
-			savegamefile = ReadString (stream);
+			s = ReadString (stream);
+			savegamefile = s;
+			delete[] s;
 			s = ReadString (stream);
 			memset (savedescription, 0, sizeof(savedescription));
 			strncpy (savedescription, s, sizeof(savedescription));
@@ -2159,8 +2302,8 @@ void Net_DoCommand (int type, byte **stream, int player)
 			{
 				// Paths sent over the network will be valid for the system that sent
 				// the save command. For other systems, the path needs to be changed.
-				char *fileonly = savegamefile.GetChars();
-				char *slash = strrchr (savegamefile.GetChars(), '\\');
+				const char *fileonly = savegamefile.GetChars();
+				const char *slash = strrchr (fileonly, '\\');
 				if (slash != NULL)
 				{
 					fileonly = slash + 1;
@@ -2177,6 +2320,25 @@ void Net_DoCommand (int type, byte **stream, int player)
 			}
 		}
 		gameaction = ga_savegame;
+		break;
+
+	case DEM_CHECKAUTOSAVE:
+		// Do not autosave in multiplayer games or when dead.
+		// For demo playback, DEM_DOAUTOSAVE already exists in the demo if the
+		// autosave happened. And if it doesn't, we must not generate it.
+		if (multiplayer ||
+			demoplayback ||
+			players[consoleplayer].playerstate != PST_LIVE ||
+			disableautosave >= 2 ||
+			autosavecount == 0)
+		{
+			break;
+		}
+		Net_WriteByte (DEM_DOAUTOSAVE);
+		break;
+
+	case DEM_DOAUTOSAVE:
+		gameaction = ga_autosave;
 		break;
 
 	case DEM_FOV:
@@ -2205,18 +2367,168 @@ void Net_DoCommand (int type, byte **stream, int player)
 		break;
 
 	case DEM_RUNSCRIPT:
+	case DEM_RUNSCRIPT2:
 		{
 			int snum = ReadWord (stream);
 			int argn = ReadByte (stream);
-			int arg[3] = { 0, 0, 0 };
-			
+
+			RunScript(stream, players[player].mo, snum, argn, (type == DEM_RUNSCRIPT2) ? ACS_ALWAYS : 0);
+		}
+		break;
+
+	case DEM_RUNNAMEDSCRIPT:
+		{
+			char *sname = ReadString(stream);
+			int argn = ReadByte(stream);
+
+			RunScript(stream, players[player].mo, -FName(sname), argn & 127, (argn & 128) ? ACS_ALWAYS : 0);
+		}
+		break;
+
+	case DEM_RUNSPECIAL:
+		{
+			int snum = ReadByte(stream);
+			int argn = ReadByte(stream);
+			int arg[5] = { 0, 0, 0, 0, 0 };
+
 			for (i = 0; i < argn; ++i)
 			{
-				arg[i] = ReadLong (stream);
+				int argval = ReadLong(stream);
+				if ((unsigned)i < countof(arg))
+				{
+					arg[i] = argval;
+				}
 			}
-			P_StartScript (players[player].mo, NULL, snum, level.mapname, false,
-				arg[0], arg[1], arg[2], false, false, true);
+			if (!CheckCheatmode(player == consoleplayer))
+			{
+				P_ExecuteSpecial(snum, NULL, players[player].mo, false, arg[0], arg[1], arg[2], arg[3], arg[4]);
+			}
 		}
+		break;
+
+	case DEM_CROUCH:
+		if (gamestate == GS_LEVEL && players[player].mo != NULL && 
+			players[player].health > 0 && !(players[player].oldbuttons & BT_JUMP) &&
+			!P_IsPlayerTotallyFrozen(&players[player]))
+		{
+			players[player].crouching = players[player].crouchdir < 0 ? 1 : -1;
+		}
+		break;
+
+	case DEM_MORPHEX:
+		{
+			s = ReadString (stream);
+			const char *msg = cht_Morph (players + player, PClass::FindClass (s), false);
+			if (player == consoleplayer)
+			{
+				Printf ("%s\n", *msg != '\0' ? msg : "Morph failed.");
+			}
+		}
+		break;
+
+	case DEM_ADDCONTROLLER:
+		{
+			BYTE playernum = ReadByte (stream);
+			players[playernum].settings_controller = true;
+
+			if (consoleplayer == playernum || consoleplayer == Net_Arbitrator)
+				Printf ("%s has been added to the controller list.\n", players[playernum].userinfo.GetName());
+		}
+		break;
+
+	case DEM_DELCONTROLLER:
+		{
+			BYTE playernum = ReadByte (stream);
+			players[playernum].settings_controller = false;
+
+			if (consoleplayer == playernum || consoleplayer == Net_Arbitrator)
+				Printf ("%s has been removed from the controller list.\n", players[playernum].userinfo.GetName());
+		}
+		break;
+
+	case DEM_KILLCLASSCHEAT:
+		{
+			char *classname = ReadString (stream);
+			int killcount = 0;
+			const PClass *cls = PClass::FindClass(classname);
+
+			if (cls != NULL && cls->ActorInfo != NULL)
+			{
+				killcount = KillAll(cls);
+				const PClass *cls_rep = cls->GetReplacement();
+				if (cls != cls_rep)
+				{
+					killcount += KillAll(cls_rep);
+				}
+				Printf ("Killed %d monsters of type %s.\n",killcount, classname);
+			}
+			else
+			{
+				Printf ("%s is not an actor class.\n", classname);
+			}
+
+		}
+		break;
+
+	case DEM_CONVREPLY:
+	case DEM_CONVCLOSE:
+	case DEM_CONVNULL:
+		P_ConversationCommand (type, player, stream);
+		break;
+
+	case DEM_SETSLOT:
+	case DEM_SETSLOTPNUM:
+		{
+			int pnum;
+			if (type == DEM_SETSLOTPNUM)
+			{
+				pnum = ReadByte(stream);
+			}
+			else
+			{
+				pnum = player;
+			}
+			unsigned int slot = ReadByte(stream);
+			int count = ReadByte(stream);
+			if (slot < NUM_WEAPON_SLOTS)
+			{
+				players[pnum].weapons.Slots[slot].Clear();
+			}
+			for(i = 0; i < count; ++i)
+			{
+				const PClass *wpn = Net_ReadWeapon(stream);
+				players[pnum].weapons.AddSlot(slot, wpn, pnum == consoleplayer);
+			}
+		}
+		break;
+
+	case DEM_ADDSLOT:
+		{
+			int slot = ReadByte(stream);
+			const PClass *wpn = Net_ReadWeapon(stream);
+			players[player].weapons.AddSlot(slot, wpn, player == consoleplayer);
+		}
+		break;
+
+	case DEM_ADDSLOTDEFAULT:
+		{
+			int slot = ReadByte(stream);
+			const PClass *wpn = Net_ReadWeapon(stream);
+			players[player].weapons.AddSlotDefault(slot, wpn, player == consoleplayer);
+		}
+		break;
+
+	case DEM_SETPITCHLIMIT:
+		players[player].MinPitch = ReadByte(stream) * -ANGLE_1;		// up
+		players[player].MaxPitch = ReadByte(stream) *  ANGLE_1;		// down
+		break;
+
+	case DEM_ADVANCEINTER:
+		F_AdvanceIntermission();
+		break;
+
+	case DEM_REVERTCAMERA:
+		players[player].camera = players[player].mo;
 		break;
 
 	default:
@@ -2228,7 +2540,24 @@ void Net_DoCommand (int type, byte **stream, int player)
 		delete[] s;
 }
 
-void Net_SkipCommand (int type, byte **stream)
+// Used by DEM_RUNSCRIPT, DEM_RUNSCRIPT2, and DEM_RUNNAMEDSCRIPT
+static void RunScript(BYTE **stream, APlayerPawn *pawn, int snum, int argn, int always)
+{
+	int arg[4] = { 0, 0, 0, 0 };
+	int i;
+	
+	for (i = 0; i < argn; ++i)
+	{
+		int argval = ReadLong(stream);
+		if ((unsigned)i < countof(arg))
+		{
+			arg[i] = argval;
+		}
+	}
+	P_StartScript(pawn, NULL, snum, level.mapname, arg, MIN<int>(countof(arg), argn), ACS_NET | always);
+}
+
+void Net_SkipCommand (int type, BYTE **stream)
 {
 	BYTE t;
 	size_t skip;
@@ -2241,7 +2570,14 @@ void Net_SkipCommand (int type, byte **stream)
 			break;
 
 		case DEM_GIVECHEAT:
-			skip = strlen ((char *)(*stream)) + 2;
+		case DEM_TAKECHEAT:
+			skip = strlen ((char *)(*stream)) + 3;
+			break;
+
+		case DEM_SUMMON2:
+		case DEM_SUMMONFRIEND2:
+		case DEM_SUMMONFOE2:
+			skip = strlen ((char *)(*stream)) + 26;
 			break;
 
 		case DEM_MUSICCHANGE:
@@ -2250,6 +2586,12 @@ void Net_SkipCommand (int type, byte **stream)
 		case DEM_UINFCHANGED:
 		case DEM_CHANGEMAP:
 		case DEM_SUMMON:
+		case DEM_SUMMONFRIEND:
+		case DEM_SUMMONFOE:
+		case DEM_SUMMONMBF:
+		case DEM_SPRAY:
+		case DEM_MORPHEX:
+		case DEM_KILLCLASSCHEAT:
 			skip = strlen ((char *)(*stream)) + 1;
 			break;
 
@@ -2263,6 +2605,8 @@ void Net_SkipCommand (int type, byte **stream)
 		case DEM_DROPPLAYER:
 		case DEM_FOV:
 		case DEM_MYFOV:
+		case DEM_ADDCONTROLLER:
+		case DEM_DELCONTROLLER:
 			skip = 1;
 			break;
 
@@ -2297,7 +2641,41 @@ void Net_SkipCommand (int type, byte **stream)
 			break;
 
 		case DEM_RUNSCRIPT:
+		case DEM_RUNSCRIPT2:
 			skip = 3 + *(*stream + 2) * 4;
+			break;
+
+		case DEM_RUNNAMEDSCRIPT:
+			skip = strlen((char *)(*stream)) + 2;
+			skip += ((*(*stream + skip - 1)) & 127) * 4;
+			break;
+
+		case DEM_RUNSPECIAL:
+			skip = 2 + *(*stream + 1) * 4;
+			break;
+
+		case DEM_CONVREPLY:
+			skip = 3;
+			break;
+
+		case DEM_SETSLOT:
+		case DEM_SETSLOTPNUM:
+			{
+				skip = 2 + (type == DEM_SETSLOTPNUM);
+				for(int numweapons = (*stream)[skip-1]; numweapons > 0; numweapons--)
+				{
+					skip += 1 + ((*stream)[skip] >> 7);
+				}
+			}
+			break;
+
+		case DEM_ADDSLOT:
+		case DEM_ADDSLOTDEFAULT:
+			skip = 2 + ((*stream)[1] >> 7);
+			break;
+
+		case DEM_SETPITCHLIMIT:
+			skip = 2;
 			break;
 
 		default:
@@ -2315,5 +2693,134 @@ CCMD (pings)
 	for (i = 0; i < MAXPLAYERS; i++)
 		if (playeringame[i])
 			Printf ("% 4d %s\n", currrecvtime[i] - lastrecvtime[i],
-					players[i].userinfo.netname);
+					players[i].userinfo.GetName());
+}
+
+//==========================================================================
+//
+// Network_Controller
+//
+// Implement players who have the ability to change settings in a network
+// game.
+//
+//==========================================================================
+
+static void Network_Controller (int playernum, bool add)
+{
+	if (consoleplayer != Net_Arbitrator)
+	{
+		Printf ("This command is only accessible to the net arbitrator.\n");
+		return;
+	}
+
+	if (players[playernum].settings_controller && add)
+	{
+		Printf ("%s is already on the setting controller list.\n", players[playernum].userinfo.GetName());
+		return;
+	}
+
+	if (!players[playernum].settings_controller && !add)
+	{
+		Printf ("%s is not on the setting controller list.\n", players[playernum].userinfo.GetName());
+		return;
+	}
+
+	if (!playeringame[playernum])
+	{
+		Printf ("Player (%d) not found!\n", playernum);
+		return;
+	}
+
+	if (players[playernum].isbot)
+	{
+		Printf ("Bots cannot be added to the controller list.\n");
+		return;
+	}
+
+	if (playernum == Net_Arbitrator)
+	{
+		Printf ("The net arbitrator cannot have their status changed on this list.\n");
+		return;
+	}
+
+	if (add)
+		Net_WriteByte (DEM_ADDCONTROLLER);
+	else
+		Net_WriteByte (DEM_DELCONTROLLER);
+
+	Net_WriteByte (playernum);
+}
+
+//==========================================================================
+//
+// CCMD net_addcontroller
+//
+//==========================================================================
+
+CCMD (net_addcontroller)
+{
+	if (!netgame)
+	{
+		Printf ("This command can only be used when playing a net game.\n");
+		return;
+	}
+
+	if (argv.argc () < 2)
+	{
+		Printf ("Usage: net_addcontroller <player>\n");
+		return;
+	}
+
+	Network_Controller (atoi (argv[1]), true);
+}
+
+//==========================================================================
+//
+// CCMD net_removecontroller
+//
+//==========================================================================
+
+CCMD (net_removecontroller)
+{
+	if (!netgame)
+	{
+		Printf ("This command can only be used when playing a net game.\n");
+		return;
+	}
+
+	if (argv.argc () < 2)
+	{
+		Printf ("Usage: net_removecontroller <player>\n");
+		return;
+	}
+
+	Network_Controller (atoi (argv[1]), false);
+}
+
+//==========================================================================
+//
+// CCMD net_listcontrollers
+//
+//==========================================================================
+
+CCMD (net_listcontrollers)
+{
+	if (!netgame)
+	{
+		Printf ("This command can only be used when playing a net game.\n");
+		return;
+	}
+
+	Printf ("The following players can change the game settings:\n");
+
+	for (int i = 0; i < MAXPLAYERS; i++)
+	{
+		if (!playeringame[i])
+			continue;
+
+		if (players[i].settings_controller)
+		{
+			Printf ("- %s\n", players[i].userinfo.GetName());
+		}
+	}
 }

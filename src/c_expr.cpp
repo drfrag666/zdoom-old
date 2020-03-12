@@ -3,7 +3,7 @@
 ** Console commands dealing with mathematical expressions
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -179,7 +179,7 @@ static FProduction *ParseExpression (FCommandLine &argv, int &parsept)
 	}
 	else
 	{
-		for (size_t i = 0; i < sizeof(Producers)/sizeof(Producers[0]); ++i)
+		for (size_t i = 0; i < countof(Producers); ++i)
 		{
 			if (strcmp (Producers[i].Token, token) == 0)
 			{
@@ -233,8 +233,8 @@ missing:
 	Printf ("Missing argument to %s\n", token);
 
 done:
-	if (prod2 != NULL) free (prod2);
-	if (prod1 != NULL) free (prod1);
+	if (prod2 != NULL) M_Free (prod2);
+	if (prod1 != NULL) M_Free (prod1);
 	return prod3;
 }
 
@@ -306,7 +306,7 @@ static const char *IsNum (const char *str)
 
 static FStringProd *NewStringProd (const char *str)
 {
-	FStringProd *prod = (FStringProd *)Malloc (sizeof(FStringProd)+strlen(str));
+	FStringProd *prod = (FStringProd *)M_Malloc (sizeof(FStringProd)+strlen(str));
 	prod->Type = PROD_String;
 	strcpy (prod->Value, str);
 	return prod;
@@ -320,7 +320,7 @@ static FStringProd *NewStringProd (const char *str)
 
 static FStringProd *NewStringProd (size_t len)
 {
-	FStringProd *prod = (FStringProd *)Malloc (sizeof(FStringProd)+len);
+	FStringProd *prod = (FStringProd *)M_Malloc (sizeof(FStringProd)+len);
 	prod->Type = PROD_String;
 	prod->Value[0] = 0;
 	return prod;
@@ -334,7 +334,7 @@ static FStringProd *NewStringProd (size_t len)
 
 static FDoubleProd *NewDoubleProd (double val)
 {
-	FDoubleProd *prod = (FDoubleProd *)Malloc (sizeof(FDoubleProd));
+	FDoubleProd *prod = (FDoubleProd *)M_Malloc (sizeof(FDoubleProd));
 	prod->Type = PROD_Double;
 	prod->Value = val;
 	return prod;
@@ -351,9 +351,9 @@ static FStringProd *DoubleToString (FProduction *prod)
 	char buf[128];
 	FStringProd *newprod;
 
-	sprintf (buf, "%g", static_cast<FDoubleProd *>(prod)->Value);
+	mysnprintf (buf, countof(buf), "%g", static_cast<FDoubleProd *>(prod)->Value);
 	newprod = NewStringProd (buf);
-	free (prod);
+	M_Free (prod);
 	return newprod;
 }
 
@@ -368,7 +368,7 @@ static FDoubleProd *StringToDouble (FProduction *prod)
 	FDoubleProd *newprod;
 	
 	newprod = NewDoubleProd (atof (static_cast<FStringProd *>(prod)->Value));
-	free (prod);
+	M_Free (prod);
 	return newprod;
 }
 
@@ -656,7 +656,7 @@ FProduction *ProdNeqStr (FStringProd *prod1, FStringProd *prod2)
 
 FProduction *ProdXorDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 {
-	return NewDoubleProd ((double)((__int64)prod1->Value ^ (__int64)prod2->Value));
+	return NewDoubleProd ((double)((SQWORD)prod1->Value ^ (SQWORD)prod2->Value));
 }
 
 //==========================================================================
@@ -667,7 +667,7 @@ FProduction *ProdXorDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 
 FProduction *ProdAndDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 {
-	return NewDoubleProd ((double)((__int64)prod1->Value & (__int64)prod2->Value));
+	return NewDoubleProd ((double)((SQWORD)prod1->Value & (SQWORD)prod2->Value));
 }
 
 //==========================================================================
@@ -678,7 +678,7 @@ FProduction *ProdAndDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 
 FProduction *ProdOrDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 {
-	return NewDoubleProd ((double)((__int64)prod1->Value | (__int64)prod2->Value));
+	return NewDoubleProd ((double)((SQWORD)prod1->Value | (SQWORD)prod2->Value));
 }
 
 //==========================================================================
@@ -689,7 +689,7 @@ FProduction *ProdOrDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 
 FProduction *ProdLAndDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 {
-	return NewDoubleProd ((double)((__int64)prod1->Value && (__int64)prod2->Value));
+	return NewDoubleProd ((double)((SQWORD)prod1->Value && (SQWORD)prod2->Value));
 }
 
 //==========================================================================
@@ -700,7 +700,7 @@ FProduction *ProdLAndDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 
 FProduction *ProdLOrDbl (FDoubleProd *prod1, FDoubleProd *prod2)
 {
-	return NewDoubleProd ((double)((__int64)prod1->Value || (__int64)prod2->Value));
+	return NewDoubleProd ((double)((SQWORD)prod1->Value || (SQWORD)prod2->Value));
 }
 
 
@@ -746,7 +746,7 @@ CCMD (test)
 	}
 	if (prod != NULL)
 	{
-		free (prod);
+		M_Free (prod);
 	}
 }
 
@@ -802,7 +802,7 @@ CCMD (eval)
 					Printf ("%s\n", static_cast<FStringProd *>(prod)->Value);
 				}
 			}
-			free (prod);
+			M_Free (prod);
 			return;
 		}
 	}

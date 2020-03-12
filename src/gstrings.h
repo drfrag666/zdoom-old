@@ -2,7 +2,7 @@
 ** gstrings.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -42,8 +42,10 @@
 
 extern FStringTable GStrings;
 
-// QuitDOOM messages
-#define NUM_QUITMESSAGES   15
+// QuitGame messages
+#define NUM_QUITDOOMMESSAGES   14
+#define NUM_QUITSTRIFEMESSAGES 8
+#define NUM_QUITCHEXMESSAGES   7
 
 extern const char *endmsg[];
 

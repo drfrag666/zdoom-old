@@ -3,7 +3,7 @@
 ** Functions for controlling CD playback
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -39,6 +39,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 
+#define USE_WINDOWS_DWORD
 #include "doomtype.h"
 #include "c_cvars.h"
 #include "c_dispatch.h"
@@ -181,7 +182,7 @@ bool FCDThread::Init ()
 		return false;
 
 	CD_Window = CreateWindow (
-		(LPCTSTR)CD_WindowAtom,
+		(LPCTSTR)(INT_PTR)(int)CD_WindowAtom,
 		"ZDoom CD Player",
 		0,
 		0, 0, 10, 10,
@@ -192,12 +193,16 @@ bool FCDThread::Init ()
 
 	if (CD_Window == NULL)
 	{
-		UnregisterClass ((LPCTSTR)CD_WindowAtom, g_hInst);
+		UnregisterClass ((LPCTSTR)(INT_PTR)(int)CD_WindowAtom, g_hInst);
 		CD_WindowAtom = 0;
 		return false;
 	}
 
-	SetWindowLongPtr (CD_Window, GWL_USERDATA, (LONG)(LONG_PTR)this);
+#ifdef _WIN64
+	SetWindowLongPtr (CD_Window, GWLP_USERDATA, (LONG_PTR)this);
+#else
+	SetWindowLong (CD_Window, GWL_USERDATA, (LONG)(LONG_PTR)this);
+#endif
 	SetThreadPriority (ThreadHandle, THREAD_PRIORITY_LOWEST);
 	return true;
 }
@@ -217,7 +222,7 @@ void FCDThread::Deinit ()
 	}
 	if (CD_WindowAtom)
 	{
-		UnregisterClass ((LPCTSTR)CD_WindowAtom, g_hInst);
+		UnregisterClass ((LPCTSTR)(INT_PTR)(int)CD_WindowAtom, g_hInst);
 		CD_WindowAtom = 0;
 	}
 	if (DeviceID)
@@ -434,7 +439,7 @@ DWORD FCDThread::Dispatch (DWORD method, DWORD parm1, DWORD parm2, DWORD parm3)
 //
 //==========================================================================
 
-static void STACK_ARGS KillThread ()
+static void KillThread ()
 {
 	if (CDThread != NULL)
 	{
@@ -468,7 +473,7 @@ bool CD_Init ()
 
 bool CD_Init (int device)
 {
-	if (!cd_enabled || Args.CheckParm ("-nocdaudio"))
+	if (!cd_enabled || Args->CheckParm ("-nocdaudio"))
 		return false;
 
 	if (CDThread == NULL)
@@ -777,7 +782,7 @@ LRESULT CALLBACK FCDThread::CD_WndProc (HWND hWnd, UINT message,
 	case MM_MCINOTIFY:
 		if (wParam == MCI_NOTIFY_SUCCESSFUL)
 		{
-			FCDThread *self = (FCDThread *)(LONG_PTR)GetWindowLongPtr (hWnd, GWL_USERDATA);
+			FCDThread *self = (FCDThread *)(LONG_PTR)GetWindowLongPtr (hWnd, GWLP_USERDATA);
 			// Using SendMessage could deadlock, so don't do that.
 			self->Dispatch (self->Looping ? CDM_Replay : CDM_Stop);
 		}

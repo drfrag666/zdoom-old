@@ -2,7 +2,7 @@
 ** i_movie.cpp
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,11 +32,18 @@
 */
 
 /* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
- * If you do not have dshow.h, either download the latest DirectX SDK from
- * <http://msdn.microsoft.com/library/default.asp?url=/nhp/Default.asp?contentid=28000410>
+ * If you do not have dshow.h, either download the latest DirectX SDK
  * or #define I_DO_NOT_LIKE_BIG_DOWNLOADS
  * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  */
+
+#ifndef I_DO_NOT_LIKE_BIG_DOWNLOADS
+#define I_DO_NOT_LIKE_BIG_DOWNLOADS
+#endif
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define USE_WINDOWS_DWORD
 
 #include "c_cvars.h"
 
@@ -59,11 +66,7 @@ int I_PlayMovie (const char *movie)
 
 #else
 
-#define WIN32_LEAN_AND_MEAN
-
-#include <windows.h>
 #include <dshow.h>
-
 #include "i_movie.h"
 #include "i_sound.h"
 #include "v_video.h"
@@ -110,7 +113,8 @@ LRESULT CALLBACK MovieWndProc (HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
 	{
 	case WM_GRAPHNOTIFY:
 		{
-			long code, parm1, parm2;
+			long code;
+			LONG_PTR parm1, parm2;
 
 			while (event->GetEvent (&code, &parm1, &parm2, 0) == S_OK)
 			{
@@ -219,6 +223,7 @@ LRESULT CALLBACK MovieWndProc (HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
 
 int I_PlayMovie (const char *name)
 {
+	HRESULT hr;
 	int returnval = MOVIE_Failed;
 	size_t namelen = strlen (name) + 1;
 	wchar_t *uniname = new wchar_t[namelen];
@@ -242,7 +247,7 @@ int I_PlayMovie (const char *name)
 			uniname[i] = L'\\';
 	}
 
-	if (FAILED(CoCreateInstance (CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
+	if (FAILED(hr = CoCreateInstance (CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
 		IID_IGraphBuilder, (void **)&graph)))
 	{
 		goto bomb1;
@@ -254,7 +259,7 @@ int I_PlayMovie (const char *name)
 	audio = NULL;
 	video = NULL;
 
-	if (FAILED(graph->RenderFile (uniname, NULL)))
+	if (FAILED(hr = graph->RenderFile (uniname, NULL)))
 	{
 		goto bomb2;
 	}
@@ -270,10 +275,7 @@ int I_PlayMovie (const char *name)
 		goto bomb3;
 	}
 
-	if (GSnd != NULL)
-	{
-		GSnd->MovieDisableSound ();
-	}
+	GSnd->MovieDisableSound ();
 	returnSound = true;
 
 	CheckIfVideo ();
@@ -296,7 +298,7 @@ int I_PlayMovie (const char *name)
 			static_cast<Win32Video *> (Video)->BlankForGDI ();
 			static_cast<Win32Video *> (Video)->GoFullscreen (false);
 			static_cast<BaseWinFB *> (screen)->ReleaseResources ();
-			if (FAILED (drainhr) || FAILED(vidwin->put_FullScreenMode (OATRUE)))
+			if (FAILED (drainhr) || FAILED(hr = vidwin->put_FullScreenMode (OATRUE)))
 			{
 				SizeWindowForVideo ();
 				FullVideo = false;
@@ -315,7 +317,7 @@ int I_PlayMovie (const char *name)
 		}
 	}
 
-	if (FAILED (event->SetNotifyWindow ((OAHWND)Window, WM_GRAPHNOTIFY, 0)))
+	if (FAILED (hr = event->SetNotifyWindow ((OAHWND)Window, WM_GRAPHNOTIFY, 0)))
 	{
 		goto bomb3;
 	}
@@ -323,9 +325,9 @@ int I_PlayMovie (const char *name)
 	SetPriorityClass (GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
 
 	I_CheckNativeMouse (true);
-	SetWindowLongPtr (Window, GWL_WNDPROC, (LONG_PTR)MovieWndProc);
+	SetWindowLongPtr (Window, GWLP_WNDPROC, (LONG_PTR)MovieWndProc);
 
-	if (FAILED (control->Run ()))
+	if (FAILED (hr = control->Run ()))
 	{
 		goto bomb4;
 	}
@@ -344,7 +346,7 @@ int I_PlayMovie (const char *name)
 								   MOVIE_Played;
 
 bomb4:
-	SetWindowLongPtr (Window, GWL_WNDPROC, (LONG_PTR)WndProc);
+	SetWindowLongPtr (Window, GWLP_WNDPROC, (LONG_PTR)WndProc);
 	SetPriorityClass (GetCurrentProcess(), INGAME_PRIORITY_CLASS);
 
 bomb3:
@@ -385,10 +387,7 @@ bomb2:
 
 	if (returnSound)
 	{
-		if (GSnd != NULL)
-		{
-			GSnd->MovieResumeSound ();
-		}
+		GSnd->MovieResumeSound ();
 		C_FlushDisplay ();
 	}
 	if (runningFull)

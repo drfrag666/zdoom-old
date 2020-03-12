@@ -2,7 +2,7 @@
 ** hardware.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2001 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,35 @@
 #include "i_video.h"
 #include "v_video.h"
 
+// Semaphores
+#ifdef __APPLE__
+#include <mach/mach_init.h>
+#include <mach/semaphore.h>
+#include <mach/task.h>
+typedef semaphore_t Semaphore;
+#define SEMAPHORE_WAIT(sem) \
+	while(semaphore_wait(sem) != KERN_SUCCESS){}
+#define SEMAPHORE_SIGNAL(sem) \
+	semaphore_signal(sem);
+#define SEMAPHORE_INIT(sem, shared, value) \
+	semaphore_create(mach_task_self(), &sem, shared, value);
+#else
+#include <semaphore.h>
+typedef sem_t Semaphore;
+#define SEMAPHORE_WAIT(sem) \
+	do { \
+		while(sem_wait(&sem) != 0); \
+		int semValue; \
+		sem_getvalue(&sem, &semValue); \
+		if(semValue < 1) \
+			break; \
+	} while(true);
+#define SEMAPHORE_SIGNAL(sem) \
+	sem_post(&sem);
+#define SEMAPHORE_INIT(sem, shared, value) \
+	sem_init(&sem, shared, value);
+#endif
+
 class IVideo
 {
  public:
@@ -47,47 +76,21 @@ class IVideo
 
 	virtual DFrameBuffer *CreateFrameBuffer (int width, int height, bool fs, DFrameBuffer *old) = 0;
 
-	virtual bool FullscreenChanged (bool fs) = 0;
-	virtual void StartModeIterator (int bits) = 0;
+	virtual void StartModeIterator (int bits, bool fs) = 0;
 	virtual bool NextMode (int *width, int *height, bool *letterbox) = 0;
+
+	virtual bool SetResolution (int width, int height, int bits);
+
+	virtual void DumpAdapters();
 };
 
-class IInputDevice
-{
- public:
-	virtual ~IInputDevice () {}
-	virtual void ProcessInput (bool parm) = 0;
-};
+void I_InitGraphics ();
+void I_ShutdownGraphics ();
+void I_CreateRenderer();
 
-class IKeyboard : public IInputDevice
-{
- public:
-	virtual void ProcessInput (bool consoleOpen) = 0;
-	virtual void SetKeypadRemapping (bool remap) = 0;
-};
+extern Semaphore FPSLimitSemaphore;
+void I_SetFPSLimit(int limit);
 
-class IMouse : public IInputDevice
-{
- public:
-	virtual void SetGrabbed (bool grabbed) = 0;
-	virtual void ProcessInput (bool active) = 0;
-};
-
-class IJoystick : public IInputDevice
-{
- public:
-	enum EJoyProp
-	{
-		JOYPROP_SpeedMultiplier,
-		JOYPROP_XSensitivity,
-		JOYPROP_YSensitivity,
-		JOYPROP_XThreshold,
-		JOYPROP_YThreshold
-	};
-	virtual void SetProperty (EJoyProp prop, float val) = 0;
-};
-
-void I_InitHardware ();
-void STACK_ARGS I_ShutdownHardware ();
+extern IVideo *Video;
 
 #endif	// __HARDWARE_H__

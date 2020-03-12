@@ -3,7 +3,7 @@
 ** Contains error classes that can be thrown around
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -66,6 +66,10 @@ public:
 
 private:
 	char m_Message[MAX_ERRORTEXT];
+};
+
+class CNoRunExit : public CDoomError
+{
 };
 
 class CRecoverableError : public CDoomError

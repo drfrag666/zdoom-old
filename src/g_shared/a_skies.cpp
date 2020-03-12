@@ -3,7 +3,7 @@
 ** Skybox-related actors
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,40 +35,109 @@
 #include "actor.h"
 #include "a_sharedglobal.h"
 #include "p_local.h"
+#include "p_lnspec.h"
+#include "farchive.h"
 
 // arg0 = Visibility*4 for this skybox
 
-IMPLEMENT_STATELESS_ACTOR (ASkyViewpoint, Any, 9080, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR|MF_NOGRAVITY)
-END_DEFAULTS
+IMPLEMENT_POINTY_CLASS (ASkyViewpoint)
+	DECLARE_POINTER(Mate)
+END_POINTERS
 
 // If this actor has no TID, make it the default sky box
 void ASkyViewpoint::BeginPlay ()
 {
 	Super::BeginPlay ();
 
-	if (tid == 0)
+	if (tid == 0 && level.DefaultSkybox == NULL)
 	{
-		int i;
-
-		for (i = 0; i <numsectors; i++)
-		{
-			if (sectors[i].FloorSkyBox == NULL)
-			{
-				sectors[i].FloorSkyBox = this;
-			}
-			if (sectors[i].CeilingSkyBox == NULL)
-			{
-				sectors[i].CeilingSkyBox = this;
-			}
-		}
+		level.DefaultSkybox = this;
 	}
 }
 
 void ASkyViewpoint::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
-	arc << bInSkybox << bAlways << Mate << PlaneAlpha;
+	arc << bInSkybox << bAlways << Mate;
+}
+
+void ASkyViewpoint::Destroy ()
+{
+	// remove all sector references to ourselves.
+	for (int i = 0; i <numsectors; i++)
+	{
+		if (sectors[i].FloorSkyBox == this)
+		{
+			sectors[i].FloorSkyBox = NULL;
+		}
+		if (sectors[i].CeilingSkyBox == this)
+		{
+			sectors[i].CeilingSkyBox = NULL;
+		}
+	}
+	if (level.DefaultSkybox == this)
+	{
+		level.DefaultSkybox = NULL;
+	}
+	Super::Destroy();
+}
+
+// For an RR compatible linedef based definition. This searches the viewpoint's sector
+// for a skybox line special, gets its tag and transfers the skybox to all tagged sectors.
+class ASkyCamCompat : public ASkyViewpoint
+{
+	DECLARE_CLASS (ASkyCamCompat, ASkyViewpoint)
+public:
+	void BeginPlay ();
+};
+
+IMPLEMENT_CLASS (ASkyCamCompat)
+
+extern FTextureID skyflatnum;
+
+void ASkyCamCompat::BeginPlay ()
+{
+	if (Sector == NULL)
+	{
+		Printf("Sector not initialized for SkyCamCompat\n");
+		Sector = P_PointInSector(x, y);
+	}
+	if (Sector)
+	{
+		line_t * refline = NULL;
+		for (short i = 0; i < Sector->linecount; i++)
+		{
+			refline = Sector->lines[i];
+			if (refline->special == Sector_SetPortal && refline->args[1] == 2)
+			{
+				// We found the setup linedef for this skybox, so let's use it for our init.
+				int skybox_id = refline->args[0];
+
+				// Then, change the alpha
+				alpha = refline->args[4];
+
+				// Finally, skyboxify all tagged sectors
+				// This involves changing their texture to the sky flat, because while
+				// EE works with any texture for its skybox portals, ZDoom doesn't.
+				for (int secnum =-1; (secnum = P_FindSectorFromTag (skybox_id, secnum)) != -1; )
+				{
+					// plane: 0=floor, 1=ceiling, 2=both
+					if (refline->args[2] == 1 || refline->args[2] == 2)
+					{
+						sectors[secnum].CeilingSkyBox = this;
+						sectors[secnum].SetTexture(sector_t::ceiling, skyflatnum, false);
+					}
+					if (refline->args[2] == 0 || refline->args[2] == 2)
+					{
+						sectors[secnum].FloorSkyBox = this;
+						sectors[secnum].SetTexture(sector_t::floor, skyflatnum, false);
+					}
+				}
+			}
+		}
+	}
+	// Do not call the SkyViewpoint's super method because it would trash our setup
+	AActor::BeginPlay();
 }
 
 //---------------------------------------------------------------------------
@@ -83,14 +152,12 @@ void ASkyViewpoint::Serialize (FArchive &arc)
 
 class ASkyPicker : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASkyPicker, AActor)
+	DECLARE_CLASS (ASkyPicker, AActor)
 public:
 	void PostBeginPlay ();
 };
 
-IMPLEMENT_STATELESS_ACTOR (ASkyPicker, Any, 9081, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR|MF_NOGRAVITY)
-END_DEFAULTS
+IMPLEMENT_CLASS (ASkyPicker)
 
 void ASkyPicker::PostBeginPlay ()
 {
@@ -109,7 +176,7 @@ void ASkyPicker::PostBeginPlay ()
 
 	if (box == NULL && args[0] != 0)
 	{
-		Printf ("Can't find SkyViewpoint %d for sector %d\n",
+		Printf ("Can't find SkyViewpoint %d for sector %td\n",
 			args[0], Sector - sectors);
 	}
 	else
@@ -131,14 +198,7 @@ void ASkyPicker::PostBeginPlay ()
 
 // arg0 = opacity of plane; 0 = invisible, 255 = fully opaque
 
-class AStackPoint : public ASkyViewpoint
-{
-	DECLARE_STATELESS_ACTOR (AStackPoint, ASkyViewpoint)
-public:
-	void BeginPlay ();
-};
-
-IMPLEMENT_ABSTRACT_ACTOR (AStackPoint)
+IMPLEMENT_CLASS (AStackPoint)
 
 void AStackPoint::BeginPlay ()
 {
@@ -149,75 +209,41 @@ void AStackPoint::BeginPlay ()
 }
 
 //---------------------------------------------------------------------------
-// Upper stacks go in the top sector. Lower stacks go in the bottom sector.
-
-class AUpperStackLookOnly : public AStackPoint
-{
-	DECLARE_STATELESS_ACTOR (AUpperStackLookOnly, AStackPoint)
-public:
-	void PostBeginPlay ();
-};
-
-class ALowerStackLookOnly : public AStackPoint
-{
-	DECLARE_STATELESS_ACTOR (ALowerStackLookOnly, AStackPoint)
-public:
-	void PostBeginPlay ();
-};
-
-IMPLEMENT_STATELESS_ACTOR (AUpperStackLookOnly, Any, 9077, 0)
-END_DEFAULTS
-
-IMPLEMENT_STATELESS_ACTOR (ALowerStackLookOnly, Any, 9078, 0)
-END_DEFAULTS
-
-void AUpperStackLookOnly::PostBeginPlay ()
-{
-	Super::PostBeginPlay ();
-	TActorIterator<ALowerStackLookOnly> it (tid);
-	Sector->FloorSkyBox = it.Next();
-	if (Sector->FloorSkyBox != NULL)
-	{
-		Sector->FloorSkyBox->Mate = this;
-		Sector->FloorSkyBox->PlaneAlpha = Scale (args[0], OPAQUE, 255);
-	}
-}
-
-void ALowerStackLookOnly::PostBeginPlay ()
-{
-	Super::PostBeginPlay ();
-	TActorIterator<AUpperStackLookOnly> it (tid);
-	Sector->CeilingSkyBox = it.Next();
-	if (Sector->CeilingSkyBox != NULL)
-	{
-		Sector->CeilingSkyBox->Mate = this;
-		Sector->CeilingSkyBox->PlaneAlpha = Scale (args[0], OPAQUE, 255);
-	}
-}
-
-//---------------------------------------------------------------------------
 
 class ASectorSilencer : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASectorSilencer, AActor)
+	DECLARE_CLASS (ASectorSilencer, AActor)
 public:
 	void BeginPlay ();
 	void Destroy ();
 };
 
-IMPLEMENT_STATELESS_ACTOR (ASectorSilencer, Any, 9082, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
-	PROP_RenderStyle (STYLE_None)
-END_DEFAULTS
+IMPLEMENT_CLASS (ASectorSilencer)
 
 void ASectorSilencer::BeginPlay ()
 {
 	Super::BeginPlay ();
-	Sector->MoreFlags |= SECF_SILENT;
+	Sector->Flags |= SECF_SILENT;
 }
 
 void ASectorSilencer::Destroy ()
 {
-	Sector->MoreFlags &= ~SECF_SILENT;
+	Sector->Flags &= ~SECF_SILENT;
 	Super::Destroy ();
 }
+
+class ASectorFlagSetter : public AActor
+{
+	DECLARE_CLASS (ASectorFlagSetter, AActor)
+public:
+	void BeginPlay ();
+};
+
+IMPLEMENT_CLASS (ASectorFlagSetter)
+
+void ASectorFlagSetter::BeginPlay ()
+{
+	Super::BeginPlay ();
+	Sector->Flags |= args[0];
+}
+

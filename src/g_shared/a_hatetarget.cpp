@@ -3,7 +3,7 @@
 ** Something for monsters to hate and shoot at
 **
 **---------------------------------------------------------------------------
-** Copyright 2003-2005 Randy Heit
+** Copyright 2003-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,30 +34,19 @@
 
 #include "actor.h"
 #include "info.h"
+#include "m_fixed.h"
 
 // Hate Target --------------------------------------------------------------
 
 class AHateTarget : public AActor
 {
-	DECLARE_ACTOR (AHateTarget, AActor)
+	DECLARE_CLASS (AHateTarget, AActor)
 public:
 	void BeginPlay ();
-	angle_t AngleIncrements (void);
-	int TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, int damagetype);
+	int TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, FName damagetype);
 };
 
-FState AHateTarget::States[] =
-{
-	S_NORMAL (TNT1, 'A',   -1, NULL							, NULL)
-};
-
-IMPLEMENT_ACTOR (AHateTarget, Any, 9076, 0)
-	PROP_RadiusFixed (20)
-	PROP_HeightFixed (56)
-	PROP_Flags (MF_SHOOTABLE|MF_NOSECTOR|MF_NOGRAVITY|MF_NOBLOOD)
-	PROP_SpawnState (0)
-	PROP_MassLong (INT_MAX)
-END_DEFAULTS
+IMPLEMENT_CLASS (AHateTarget)
 
 void AHateTarget::BeginPlay ()
 {
@@ -75,7 +64,7 @@ void AHateTarget::BeginPlay ()
 	}
 }
 
-int AHateTarget::TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, int damagetype)
+int AHateTarget::TakeSpecialDamage (AActor *inflictor, AActor *source, int damage, FName damagetype)
 {
 	if (special2 != 0)
 	{
@@ -87,7 +76,3 @@ int AHateTarget::TakeSpecialDamage (AActor *inflictor, AActor *source, int damag
 	}
 }
 
-angle_t AHateTarget::AngleIncrements (void)
-{
-	return ANGLE_1;
-}

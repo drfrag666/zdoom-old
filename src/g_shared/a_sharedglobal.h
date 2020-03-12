@@ -1,81 +1,70 @@
 #ifndef __A_SHAREDGLOBAL_H__
 #define __A_SHAREDGLOBAL_H__
 
-#include "dobject.h"
 #include "info.h"
 #include "actor.h"
 
-class FDecal;
-struct vertex_s;
-struct side_s;
+class FDecalTemplate;
+struct vertex_t;
+struct side_t;
+struct F3DFloor;
 
-extern void P_SpawnDirt (AActor *actor, fixed_t radius);
+void P_SpawnDirt (AActor *actor, fixed_t radius);
+class DBaseDecal *ShootDecal(const FDecalTemplate *tpl, AActor *basisactor, sector_t *sec, fixed_t x, fixed_t y, fixed_t z, angle_t angle, fixed_t tracedist, bool permanent);
 
-class AUnknown : public AActor
+class DBaseDecal : public DThinker
 {
-	DECLARE_ACTOR (AUnknown, AActor)
-};
-
-class APatrolPoint : public AActor
-{
-	DECLARE_STATELESS_ACTOR (APatrolPoint, AActor)
-};
-
-class APatrolSpecial : public AActor
-{
-	DECLARE_STATELESS_ACTOR (APatrolSpecial, AActor)
-};
-
-class ABlood : public AActor
-{
-	DECLARE_ACTOR (ABlood, AActor)
+	DECLARE_CLASS (DBaseDecal, DThinker)
+	HAS_OBJECT_POINTERS
 public:
-	void SetDamage (int damage);
-};
+	DBaseDecal ();
+	DBaseDecal (fixed_t z);
+	DBaseDecal (int statnum, fixed_t z);
+	DBaseDecal (const AActor *actor);
+	DBaseDecal (const DBaseDecal *basis);
 
-class AMapSpot : public AActor
-{
-	DECLARE_STATELESS_ACTOR (AMapSpot, AActor)
-};
-
-class AMapSpotGravity : public AMapSpot
-{
-	DECLARE_STATELESS_ACTOR (AMapSpotGravity, AMapSpot)
-};
-
-class ARealGibs : public AActor
-{
-	DECLARE_ACTOR (ARealGibs, AActor)
-};
-
-struct side_s;
-
-class ADecal : public AActor
-{
-	DECLARE_STATELESS_ACTOR (ADecal, AActor)
-public:
-	void BeginPlay ();
+	void Serialize (FArchive &arc);
 	void Destroy ();
-	int StickToWall (side_s *wall);
-	void Relocate (fixed_t x, fixed_t y, fixed_t z);
-	fixed_t GetRealZ (const side_s *wall) const;
+	FTextureID StickToWall (side_t *wall, fixed_t x, fixed_t y, F3DFloor * ffloor);
+	fixed_t GetRealZ (const side_t *wall) const;
+	void SetShade (DWORD rgb);
+	void SetShade (int r, int g, int b);
+	void Spread (const FDecalTemplate *tpl, side_t *wall, fixed_t x, fixed_t y, fixed_t z, F3DFloor * ffloor);
+	void GetXY (side_t *side, fixed_t &x, fixed_t &y) const;
 
-	static void SerializeChain (FArchive &arc, ADecal **firstptr);
-	static void MoveChain (ADecal *first, fixed_t x, fixed_t y);
-	static void FixForSide (side_s *side);
+	static void SerializeChain (FArchive &arc, DBaseDecal **firstptr);
+
+	DBaseDecal *WallNext, **WallPrev;
+
+	fixed_t LeftDistance;
+	fixed_t Z;
+	fixed_t ScaleX, ScaleY;
+	fixed_t Alpha;
+	DWORD AlphaColor;
+	int Translation;
+	FTextureID PicNum;
+	DWORD RenderFlags;
+	FRenderStyle RenderStyle;
+	sector_t * Sector;	// required for 3D floors
 
 protected:
-	void CalcFracPos (side_s *wall);
-	void DoTrace ();
+	virtual DBaseDecal *CloneSelf (const FDecalTemplate *tpl, fixed_t x, fixed_t y, fixed_t z, side_t *wall, F3DFloor * ffloor) const;
+	void CalcFracPos (side_t *wall, fixed_t x, fixed_t y);
 	void Remove ();
+
+	static void SpreadLeft (fixed_t r, vertex_t *v1, side_t *feelwall, F3DFloor *ffloor);
+	static void SpreadRight (fixed_t r, side_t *feelwall, fixed_t wallsize, F3DFloor *ffloor);
 };
 
-class AImpactDecal : public ADecal
+class DImpactDecal : public DBaseDecal
 {
-	DECLARE_STATELESS_ACTOR (AImpactDecal, ADecal)
+	DECLARE_CLASS (DImpactDecal, DBaseDecal)
 public:
-	static AImpactDecal *StaticCreate (const char *name, fixed_t x, fixed_t y, fixed_t z, side_s *wall, PalEntry color=0);
-	static AImpactDecal *StaticCreate (const FDecal *decal, fixed_t x, fixed_t y, fixed_t z, side_s *wall, PalEntry color=0);
+	DImpactDecal (fixed_t z);
+	DImpactDecal (side_t *wall, const FDecalTemplate *templ);
+
+	static DImpactDecal *StaticCreate (const char *name, fixed_t x, fixed_t y, fixed_t z, side_t *wall, F3DFloor * ffloor, PalEntry color=0);
+	static DImpactDecal *StaticCreate (const FDecalTemplate *tpl, fixed_t x, fixed_t y, fixed_t z, side_t *wall, F3DFloor * ffloor, PalEntry color=0);
 
 	void BeginPlay ();
 	void Destroy ();
@@ -84,81 +73,38 @@ public:
 	static void SerializeTime (FArchive &arc);
 
 protected:
-	AImpactDecal *CloneSelf (const FDecal *decal, fixed_t x, fixed_t y, fixed_t z, side_s *wall) const;
-	static void SpreadLeft (fixed_t r, vertex_s *v1, side_s *feelwall);
-	static void SpreadRight (fixed_t r, side_s *feelwall, fixed_t wallsize);
-};
+	DBaseDecal *CloneSelf (const FDecalTemplate *tpl, fixed_t x, fixed_t y, fixed_t z, side_t *wall, F3DFloor * ffloor) const;
+	static void CheckMax ();
 
-class AWaterSplashBase : public AActor
-{
-	DECLARE_ACTOR (AWaterSplashBase, AActor)
-};
-
-class AWaterSplash : public AActor
-{
-	DECLARE_ACTOR (AWaterSplash, AActor)
-};
-
-class ALavaSplash : public AActor
-{
-	DECLARE_ACTOR (ALavaSplash, AActor)
-};
-
-class ALavaSmoke : public AActor
-{
-	DECLARE_ACTOR (ALavaSmoke, AActor)
-};
-
-class ASludgeSplash : public AActor
-{
-	DECLARE_ACTOR (ASludgeSplash, AActor)
-};
-
-class ASludgeChunk : public AActor
-{
-	DECLARE_ACTOR (ASludgeChunk, AActor)
-};
-
-class AAmbientSound : public AActor
-{
-	DECLARE_STATELESS_ACTOR (AAmbientSound, AActor)
-public:
-	void Serialize (FArchive &arc);
-
-	void BeginPlay ();
-	void Tick ();
-	void Activate (AActor *activator);
-	void Deactivate (AActor *activator);
-
-protected:
-	bool bActive;
 private:
-	void SetTicker (struct AmbientSound *ambient);
-	int NextCheck;
+	DImpactDecal();
 };
 
 class ATeleportFog : public AActor
 {
-	DECLARE_ACTOR (ATeleportFog, AActor)
+	DECLARE_CLASS (ATeleportFog, AActor)
 public:
 	void PostBeginPlay ();
 };
 
-class ATeleportDest : public AActor
-{
-	DECLARE_STATELESS_ACTOR (ATeleportDest, AActor)
-};
-
 class ASkyViewpoint : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASkyViewpoint, AActor)
+	DECLARE_CLASS (ASkyViewpoint, AActor)
+	HAS_OBJECT_POINTERS
 public:
 	void Serialize (FArchive &arc);
 	void BeginPlay ();
+	void Destroy ();
 	bool bInSkybox;
 	bool bAlways;
-	ASkyViewpoint *Mate;
-	fixed_t PlaneAlpha;
+	TObjPtr<ASkyViewpoint> Mate;
+};
+
+class AStackPoint : public ASkyViewpoint
+{
+	DECLARE_CLASS (AStackPoint, ASkyViewpoint)
+public:
+	void BeginPlay ();
 };
 
 class DFlashFader : public DThinker
@@ -169,7 +115,7 @@ public:
 	DFlashFader (float r1, float g1, float b1, float a1,
 				 float r2, float g2, float b2, float a2,
 				 float time, AActor *who);
-	~DFlashFader ();
+	void Destroy ();
 	void Serialize (FArchive &arc);
 	void Tick ();
 	AActor *WhoFor() { return ForWho; }
@@ -179,10 +125,77 @@ protected:
 	float Blends[2][4];
 	int TotalTics;
 	int StartTic;
-	AActor *ForWho;
+	TObjPtr<AActor> ForWho;
 
 	void SetBlend (float time);
 	DFlashFader ();
 };
+
+class DEarthquake : public DThinker
+{
+	DECLARE_CLASS (DEarthquake, DThinker)
+	HAS_OBJECT_POINTERS
+public:
+	DEarthquake (AActor *center, int intensity, int duration, int damrad, int tremrad, FSoundID quakesfx);
+
+	void Serialize (FArchive &arc);
+	void Tick ();
+
+	TObjPtr<AActor> m_Spot;
+	fixed_t m_TremorRadius, m_DamageRadius;
+	int m_Intensity;
+	int m_Countdown;
+	FSoundID m_QuakeSFX;
+
+	static int StaticGetQuakeIntensity (AActor *viewer);
+
+private:
+	DEarthquake ();
+};
+
+class AMorphProjectile : public AActor
+{
+	DECLARE_CLASS (AMorphProjectile, AActor)
+public:
+	int DoSpecialDamage (AActor *target, int damage, FName damagetype);
+	void Serialize (FArchive &arc);
+
+	FNameNoInit	PlayerClass, MonsterClass, MorphFlash, UnMorphFlash;
+	int Duration, MorphStyle;
+};
+
+class AMorphedMonster : public AActor
+{
+	DECLARE_CLASS (AMorphedMonster, AActor)
+	HAS_OBJECT_POINTERS
+public:
+	void Tick ();
+	void Serialize (FArchive &arc);
+	void Die (AActor *source, AActor *inflictor, int dmgflags);
+	void Destroy ();
+
+	TObjPtr<AActor> UnmorphedMe;
+	int UnmorphTime, MorphStyle;
+	const PClass *MorphExitFlash;
+	DWORD FlagsSave;
+};
+
+class AMapMarker : public AActor
+{
+	DECLARE_CLASS(AMapMarker, AActor)
+public:
+	void BeginPlay ();
+	void Activate (AActor *activator);
+	void Deactivate (AActor *activator);
+};
+
+class AFastProjectile : public AActor
+{
+	DECLARE_CLASS(AFastProjectile, AActor)
+public:
+	void Tick ();
+	virtual void Effect();
+};
+
 
 #endif //__A_SHAREDGLOBAL_H__

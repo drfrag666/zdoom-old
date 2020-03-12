@@ -2,7 +2,7 @@
 ** tempfiles.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -49,7 +49,7 @@ public:
 	FTempFileName (const char *prefix=NULL);
 	~FTempFileName ();
 
-	operator const char * const () { return Name; }
+	operator const char * () { return Name; }
 	const char * GetName () const { return Name; }
 
 private:

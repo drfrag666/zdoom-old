@@ -2,7 +2,7 @@
 ** c_console.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -34,23 +34,26 @@
 #ifndef __C_CONSOLE__
 #define __C_CONSOLE__
 
-#include <stdio.h>
 #include <stdarg.h>
+#include "basictypes.h"
 
-#include "doomtype.h"
-#include "doomdef.h"
-#include "d_event.h"
-#include "cmdlib.h"
+struct event_t;
 
 #define C_BLINKRATE			(TICRATE/2)
 
-typedef enum cstate_t {
+typedef enum cstate_t 
+{
 	c_up=0, c_down=1, c_falling=2, c_rising=3
-} constate_e;
+} 
+constate_e;
+
 extern constate_e ConsoleState;
+extern int ConBottom;
 
 // Initialize the console
-void C_InitConsole (int width, int height, BOOL ingame);
+void C_InitConsole (int width, int height, bool ingame);
+void C_DeinitConsole ();
+void C_InitConback();
 
 // Adjust the console for a new screen mode
 void C_NewModeAdjust (void);
@@ -61,22 +64,24 @@ void AddToConsole (int printlevel, const char *string);
 int PrintString (int printlevel, const char *string);
 int VPrintf (int printlevel, const char *format, va_list parms) GCCFORMAT(2);
 
-void C_DrawConsole (void);
+void C_DrawConsole (bool hw2d);
 void C_ToggleConsole (void);
 void C_FullConsole (void);
 void C_HideConsole (void);
 void C_AdjustBottom (void);
 void C_FlushDisplay (void);
 
-void C_InitTicker (const char *label, unsigned int max);
+void C_InitTicker (const char *label, unsigned int max, bool showpercent=true);
 void C_SetTicker (unsigned int at, bool forceUpdate=false);
 
-void C_MidPrint (const char *message);
-void C_MidPrintBold (const char *message);
+class FFont;
+void C_MidPrint (FFont *font, const char *message);
+void C_MidPrintBold (FFont *font, const char *message);
 
-BOOL C_Responder (event_t *ev);
+bool C_Responder (event_t *ev);
 
 void C_AddTabCommand (const char *name);
 void C_RemoveTabCommand (const char *name);
+void C_ClearTabCommands();		// Removes all tab commands
 
 #endif

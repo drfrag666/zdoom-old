@@ -2,7 +2,7 @@
 ** dobject.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,14 +35,14 @@
 #define __DOBJECT_H__
 
 #include <stdlib.h>
-#include "tarray.h"
 #include "doomtype.h"
+
+struct PClass;
 
 class FArchive;
 
 class   DObject;
 class           DArgs;
-class           DBoundingBox;
 class           DCanvas;
 class           DConsoleCommand;
 class                   DConsoleAlias;
@@ -90,11 +90,11 @@ enum EMetaType
 class FMetaData
 {
 private:
-	FMetaData (EMetaType type, DWORD id) : Type(type), ID(id) {}
+	FMetaData (EMetaType type, uint32 id) : Type(type), ID(id) {}
 
 	FMetaData *Next;
 	EMetaType Type;
-	DWORD ID;
+	uint32 ID;
 	union
 	{
 		int Int;
@@ -113,79 +113,46 @@ public:
 	~FMetaTable();
 	FMetaTable &operator = (const FMetaTable &other);
 
-	void SetMetaInt (DWORD id, int parm);
-	void SetMetaFixed (DWORD id, fixed_t parm);
-	void SetMetaString (DWORD id, const char *parm);	// The string is copied
+	void SetMetaInt (uint32 id, int parm);
+	void SetMetaFixed (uint32 id, fixed_t parm);
+	void SetMetaString (uint32 id, const char *parm);	// The string is copied
 
-	int GetMetaInt (DWORD id) const;
-	fixed_t GetMetaFixed (DWORD id) const;
-	const char *GetMetaString (DWORD id) const;
+	int GetMetaInt (uint32 id, int def=0) const;
+	fixed_t GetMetaFixed (uint32 id, fixed_t def=0) const;
+	const char *GetMetaString (uint32 id) const;
 
-	FMetaData *FindMeta (EMetaType type, DWORD id) const;
+	FMetaData *FindMeta (EMetaType type, uint32 id) const;
 
 private:
 	FMetaData *Meta;
-	FMetaData *FindMetaDef (EMetaType type, DWORD id);
+	FMetaData *FindMetaDef (EMetaType type, uint32 id);
 	void FreeMeta ();
 	void CopyMeta (const FMetaTable *other);
 };
 
-struct TypeInfo
+#define RUNTIME_TYPE(object)	(object->GetClass())	// Passed an object, returns the type of that object
+#define RUNTIME_CLASS(cls)		(&cls::_StaticType)		// Passed a class name, returns a PClass representing that class
+#define NATIVE_TYPE(object)		(object->StaticType())	// Passed an object, returns the type of the C++ class representing the object
+
+struct ClassReg
 {
-	static void StaticInit ();
-
+	PClass *MyClass;
 	const char *Name;
-	TypeInfo *ParentType;
+	PClass *ParentType;
 	unsigned int SizeOf;
-	const size_t *Pointers;	// object pointers defined by this class *only*
+	const size_t *Pointers;
 	void (*ConstructNative)(void *);
-	FActorInfo *ActorInfo;
-	unsigned int HashNext;
-	unsigned short TypeIndex;
-	FMetaTable Meta;
-	const size_t *FlatPointers;	// object pointers defined by this class and all its superclasses; not initialized by default
 
-	void RegisterType ();
-	DObject *CreateNew () const;
-	TypeInfo *CreateDerivedClass (char *name, unsigned int size);
-	void BuildFlatPointers ();
-
-	// Returns true if this type is an ancestor of (or same as) the passed type.
-	bool IsAncestorOf (const TypeInfo *ti) const
-	{
-		while (ti)
-		{
-			if (this == ti)
-				return true;
-			ti = ti->ParentType;
-		}
-		return false;
-	}
-	inline bool IsDescendantOf (const TypeInfo *ti) const
-	{
-		return ti->IsAncestorOf (this);
-	}
-
-	static const TypeInfo *FindType (const char *name);
-	static const TypeInfo *IFindType (const char *name);
-
-	static unsigned short m_NumTypes, m_MaxTypes;
-	static TypeInfo **m_Types;
-	static TArray<TypeInfo *> m_RuntimeActors;
-
-	enum { HASH_SIZE = 256 };
-	static unsigned int TypeHash[HASH_SIZE];
+	void RegisterClass() const;
 };
-
-#define RUNTIME_TYPE(object)    (object->GetClass())    // Passed an object, returns the type of that object
-#define RUNTIME_CLASS(cls)              (&cls::_StaticType)             // Passed a class name, returns a TypeInfo representing that class
 
 enum EInPlace { EC_InPlace };
 
 #define DECLARE_ABSTRACT_CLASS(cls,parent) \
 public: \
-	static TypeInfo _StaticType; \
-	virtual TypeInfo *StaticType() const { return RUNTIME_CLASS(cls); } \
+	static PClass _StaticType; \
+	virtual PClass *StaticType() const { return &_StaticType; } \
+	static ClassReg RegistrationInfo, *RegistrationInfoPtr; \
 private: \
 	typedef parent Super; \
 	typedef cls ThisClass;
@@ -200,78 +167,299 @@ private: \
 // Taking the address of a field in an object at address 1 instead of
 // address 0 keeps GCC from complaining about possible misuse of offsetof.
 #define DECLARE_POINTER(field)	(size_t)&((ThisClass*)1)->field - 1,
-#define END_POINTERS			~0 };
+#define END_POINTERS			~(size_t)0 };
 
-#if !defined(_MSC_VER) && !defined(__GNUC__)
-#       define _IMP_TYPEINFO(cls,ptr,create) \
-	TypeInfo cls::_StaticType (ptr, #cls, RUNTIME_CLASS(cls::Super), sizeof(cls), create);
+#if defined(_MSC_VER)
+#	pragma data_seg(".creg$u")
+#	pragma data_seg()
+#	define _DECLARE_TI(cls) __declspec(allocate(".creg$u")) ClassReg *cls::RegistrationInfoPtr = &cls::RegistrationInfo;
 #else
-
-#       if defined(_MSC_VER)
-#               pragma data_seg(".creg$u")
-#               pragma data_seg()
-#               define _DECLARE_TI(cls) __declspec(allocate(".creg$u")) TypeInfo *_##cls##AddType = &cls::_StaticType;
-#       else
-#               define _DECLARE_TI(cls) TypeInfo *_##cls##AddType __attribute__((section("creg"))) = &cls::_StaticType;
-#       endif
-
-#       define _IMP_TYPEINFO(cls,ptrs,create) \
-	TypeInfo cls::_StaticType = { \
-#cls, \
-	RUNTIME_CLASS(cls::Super), \
-	sizeof(cls), \
-	ptrs, \
-	create, }; \
-	_DECLARE_TI(cls)
-
+#	define _DECLARE_TI(cls) ClassReg *cls::RegistrationInfoPtr __attribute__((section(SECTION_CREG))) = &cls::RegistrationInfo;
 #endif
+
+#define _IMP_PCLASS(cls,ptrs,create) \
+	PClass cls::_StaticType; \
+	ClassReg cls::RegistrationInfo = {\
+		RUNTIME_CLASS(cls), \
+		#cls, \
+		RUNTIME_CLASS(cls::Super), \
+		sizeof(cls), \
+		ptrs, \
+		create }; \
+	_DECLARE_TI(cls)
 
 #define _IMP_CREATE_OBJ(cls) \
 	void cls::InPlaceConstructor(void *mem) { new((EInPlace *)mem) cls; }
 
 #define IMPLEMENT_POINTY_CLASS(cls) \
 	_IMP_CREATE_OBJ(cls) \
-	_IMP_TYPEINFO(cls,cls::PointerOffsets,cls::InPlaceConstructor) \
+	_IMP_PCLASS(cls,cls::PointerOffsets,cls::InPlaceConstructor) \
 	const size_t cls::PointerOffsets[] = {
 
 #define IMPLEMENT_CLASS(cls) \
 	_IMP_CREATE_OBJ(cls) \
-	_IMP_TYPEINFO(cls,NULL,cls::InPlaceConstructor) 
+	_IMP_PCLASS(cls,NULL,cls::InPlaceConstructor) 
 
 #define IMPLEMENT_ABSTRACT_CLASS(cls) \
-	_IMP_TYPEINFO(cls,NULL,NULL)
+	_IMP_PCLASS(cls,NULL,NULL)
 
 enum EObjectFlags
 {
-	OF_MassDestruction	= 0x00000001,   // Object is queued for deletion
-	OF_Cleanup			= 0x00000002,   // Object is being deconstructed as a result of a queued deletion
-	OF_JustSpawned		= 0x00000004,   // Thinker was spawned this tic
-	OF_SerialSuccess	= 0x10000000    // For debugging Serialize() calls
+	// GC flags
+	OF_White0			= 1 << 0,		// Object is white (type 0)
+	OF_White1			= 1 << 1,		// Object is white (type 1)
+	OF_Black			= 1 << 2,		// Object is black
+	OF_Fixed			= 1 << 3,		// Object is fixed (should not be collected)
+	OF_Rooted			= 1 << 4,		// Object is soft-rooted
+	OF_EuthanizeMe		= 1 << 5,		// Object wants to die
+	OF_Cleanup			= 1 << 6,		// Object is now being deleted by the collector
+	OF_YesReallyDelete	= 1 << 7,		// Object is being deleted outside the collector, and this is okay, so don't print a warning
+
+	OF_WhiteBits		= OF_White0 | OF_White1,
+	OF_MarkBits			= OF_WhiteBits | OF_Black,
+
+	// Other flags
+	OF_JustSpawned		= 1 << 8,		// Thinker was spawned this tic
+	OF_SerialSuccess	= 1 << 9,		// For debugging Serialize() calls
+	OF_Sentinel			= 1 << 10,		// Object is serving as the sentinel in a ring list
 };
+
+template<class T> class TObjPtr;
+
+namespace GC
+{
+	enum EGCState
+	{
+		GCS_Pause,
+		GCS_Propagate,
+		GCS_Sweep,
+		GCS_Finalize
+	};
+
+	// Number of bytes currently allocated through M_Malloc/M_Realloc.
+	extern size_t AllocBytes;
+
+	// Amount of memory to allocate before triggering a collection.
+	extern size_t Threshold;
+
+	// List of gray objects.
+	extern DObject *Gray;
+
+	// List of every object.
+	extern DObject *Root;
+
+	// Current white value for potentially-live objects.
+	extern uint32 CurrentWhite;
+
+	// Current collector state.
+	extern EGCState State;
+
+	// Position of GC sweep in the list of objects.
+	extern DObject **SweepPos;
+
+	// Size of GC pause.
+	extern int Pause;
+
+	// Size of GC steps.
+	extern int StepMul;
+
+	// Current white value for known-dead objects.
+	static inline uint32 OtherWhite()
+	{
+		return CurrentWhite ^ OF_WhiteBits;
+	}
+
+	// Frees all objects, whether they're dead or not.
+	void FreeAll();
+
+	// Does one collection step.
+	void Step();
+
+	// Does a complete collection.
+	void FullGC();
+
+	// Handles the grunt work for a write barrier.
+	void Barrier(DObject *pointing, DObject *pointed);
+
+	// Handles a write barrier.
+	static inline void WriteBarrier(DObject *pointing, DObject *pointed);
+
+	// Handles a write barrier for a pointer that isn't inside an object.
+	static inline void WriteBarrier(DObject *pointed);
+
+	// Handles a read barrier.
+	template<class T> inline T *ReadBarrier(T *&obj)
+	{
+		if (obj == NULL || !(obj->ObjectFlags & OF_EuthanizeMe))
+		{
+			return obj;
+		}
+		return obj = NULL;
+	}
+
+	// Check if it's time to collect, and do a collection step if it is.
+	static inline void CheckGC()
+	{
+		if (AllocBytes >= Threshold)
+			Step();
+	}
+
+	// Forces a collection to start now.
+	static inline void StartCollection()
+	{
+		Threshold = AllocBytes;
+	}
+
+	// Marks a white object gray. If the object wants to die, the pointer
+	// is NULLed instead.
+	void Mark(DObject **obj);
+
+	// For cleanup
+	void DelSoftRootHead();
+
+	// Soft-roots an object.
+	void AddSoftRoot(DObject *obj);
+
+	// Unroots an object.
+	void DelSoftRoot(DObject *obj);
+
+	template<class T> void Mark(T *&obj)
+	{
+		union
+		{
+			T *t;
+			DObject *o;
+		};
+		o = obj;
+		Mark(&o);
+		obj = t;
+	}
+	template<class T> void Mark(TObjPtr<T> &obj);
+}
+
+// A template class to help with handling read barriers. It does not
+// handle write barriers, because those can be handled more efficiently
+// with knowledge of the object that holds the pointer.
+template<class T>
+class TObjPtr
+{
+	union
+	{
+		T *p;
+		DObject *o;
+	};
+public:
+	TObjPtr() throw()
+	{
+	}
+	TObjPtr(T *q) throw()
+		: p(q)
+	{
+	}
+	TObjPtr(const TObjPtr<T> &q) throw()
+		: p(q.p)
+	{
+	}
+	T *operator=(T *q) throw()
+	{
+		return p = q;
+		// The caller must now perform a write barrier.
+	}
+	operator T*() throw()
+	{
+		return GC::ReadBarrier(p);
+	}
+	T &operator*()
+	{
+		T *q = GC::ReadBarrier(p);
+		assert(q != NULL);
+		return *q;
+	}
+	T **operator&() throw()
+	{
+		// Does not perform a read barrier. The only real use for this is with
+		// the DECLARE_POINTER macro, where a read barrier would be a very bad
+		// thing.
+		return &p;
+	}
+	T *operator->() throw()
+	{
+		return GC::ReadBarrier(p);
+	}
+	bool operator<(T *u) throw()
+	{
+		return GC::ReadBarrier(p) < u;
+	}
+	bool operator<=(T *u) throw()
+	{
+		return GC::ReadBarrier(p) <= u;
+	}
+	bool operator>(T *u) throw()
+	{
+		return GC::ReadBarrier(p) > u;
+	}
+	bool operator>=(T *u) throw()
+	{
+		return GC::ReadBarrier(p) >= u;
+	}
+	bool operator!=(T *u) throw()
+	{
+		return GC::ReadBarrier(p) != u;
+	}
+	bool operator==(T *u) throw()
+	{
+		return GC::ReadBarrier(p) == u;
+	}
+
+	template<class U> friend inline FArchive &operator<<(FArchive &arc, TObjPtr<U> &o);
+	template<class U> friend inline void GC::Mark(TObjPtr<U> &obj);
+	friend class DObject;
+};
+
+template<class T> inline FArchive &operator<<(FArchive &arc, TObjPtr<T> &o)
+{
+	return arc << o.p;
+}
+
+// Use barrier_cast instead of static_cast when you need to cast
+// the contents of a TObjPtr to a related type.
+template<class T,class U> inline T barrier_cast(TObjPtr<U> &o)
+{
+	return static_cast<T>(static_cast<U *>(o));
+}
+
+template<class T> inline void GC::Mark(TObjPtr<T> &obj)
+{
+	GC::Mark(&obj.o);
+}
 
 class DObject
 {
-public: \
-	static TypeInfo _StaticType; \
-	virtual TypeInfo *StaticType() const { return &_StaticType; } \
-private: \
+public:
+	static PClass _StaticType;
+	virtual PClass *StaticType() const { return &_StaticType; }
+	static ClassReg RegistrationInfo, *RegistrationInfoPtr;
+	static void InPlaceConstructor (void *mem);
+private:
 	typedef DObject ThisClass;
+
+	// Per-instance variables. There are four.
+private:
+	PClass *Class;				// This object's type
+public:
+	DObject *ObjNext;			// Keep track of all allocated objects
+	DObject *GCNext;			// Next object in this collection list
+	uint32 ObjectFlags;			// Flags for this object
 
 public:
 	DObject ();
-	DObject (TypeInfo *inClass);
+	DObject (PClass *inClass);
 	virtual ~DObject ();
 
-	inline bool IsKindOf (const TypeInfo *base) const
-	{
-		return base->IsAncestorOf (GetClass ());
-	}
+	inline bool IsKindOf (const PClass *base) const;
+	inline bool IsA (const PClass *type) const;
 
-	inline bool IsA (const TypeInfo *type) const
-	{
-		return (type == GetClass());
-	}
-
+	void SerializeUserVars(FArchive &arc);
 	virtual void Serialize (FArchive &arc);
 
 	// For catching Serialize functions in derived classes
@@ -280,19 +468,13 @@ public:
 
 	virtual void Destroy ();
 
-	static void BeginFrame ();
-	static void EndFrame ();
-
 	// If you need to replace one object with another and want to
 	// change any pointers from the old object to the new object,
 	// use this method.
-	static void PointerSubstitution (DObject *old, DObject *notOld);
-
-	DWORD ObjectFlags;
-
-	static void STACK_ARGS StaticShutdown ();
-
-	TypeInfo *GetClass() const
+	virtual size_t PointerSubstitution (DObject *old, DObject *notOld);
+	static size_t StaticPointerSubstitution (DObject *old, DObject *notOld);
+	
+	PClass *GetClass() const
 	{
 		if (Class == NULL)
 		{
@@ -303,48 +485,115 @@ public:
 		return Class;
 	}
 
-	void SetClass (TypeInfo *inClass)
+	void SetClass (PClass *inClass)
 	{
 		Class = inClass;
 	}
 
 	void *operator new(size_t len)
 	{
-		return Malloc(len);
+		return M_Malloc(len);
 	}
 
 	void operator delete (void *mem)
 	{
-		free (mem);
+		M_Free(mem);
 	}
 
+	// GC fiddling
+
+	// An object is white if either white bit is set.
+	bool IsWhite() const
+	{
+		return !!(ObjectFlags & OF_WhiteBits);
+	}
+
+	bool IsBlack() const
+	{
+		return !!(ObjectFlags & OF_Black);
+	}
+
+	// An object is gray if it isn't white or black.
+	bool IsGray() const
+	{
+		return !(ObjectFlags & OF_MarkBits);
+	}
+
+	// An object is dead if it's the other white.
+	bool IsDead() const
+	{
+		return !!(ObjectFlags & GC::OtherWhite() & OF_WhiteBits);
+	}
+
+	void ChangeWhite()
+	{
+		ObjectFlags ^= OF_WhiteBits;
+	}
+
+	void MakeWhite()
+	{
+		ObjectFlags = (ObjectFlags & ~OF_MarkBits) | (GC::CurrentWhite & OF_WhiteBits);
+	}
+
+	void White2Gray()
+	{
+		ObjectFlags &= ~OF_WhiteBits;
+	}
+
+	void Black2Gray()
+	{
+		ObjectFlags &= ~OF_Black;
+	}
+
+	void Gray2Black()
+	{
+		ObjectFlags |= OF_Black;
+	}
+
+	// Marks all objects pointed to by this one. Returns the (approximate)
+	// amount of memory used by this object.
+	virtual size_t PropagateMark();
+
 protected:
-	// This form of placement new and delete is for use *only* by TypeInfo's
+	// This form of placement new and delete is for use *only* by PClass's
 	// CreateNew() method. Do not use them for some other purpose.
-	void *operator new(size_t len, EInPlace *mem)
+	void *operator new(size_t, EInPlace *mem)
 	{
 		return (void *)mem;
 	}
 
-	void operator delete (void *mem, EInPlace *foo)
+	void operator delete (void *mem, EInPlace *)
 	{
-		free (mem);
+		M_Free (mem);
 	}
-
-private:
-	TypeInfo *Class;
-
-	static TArray<DObject *> Objects;
-	static TArray<size_t> FreeIndices;
-	static TArray<DObject *> ToDestroy;
-
-	static void DestroyScan (DObject *obj);
-	static void DestroyScan ();
-
-	void RemoveFromArray ();
-
-	static bool Inactive;
-	unsigned int Index;
 };
+
+static inline void GC::WriteBarrier(DObject *pointing, DObject *pointed)
+{
+	if (pointed != NULL && pointed->IsWhite() && pointing->IsBlack())
+	{
+		Barrier(pointing, pointed);
+	}
+}
+
+static inline void GC::WriteBarrier(DObject *pointed)
+{
+	if (pointed != NULL && State == GCS_Propagate && pointed->IsWhite())
+	{
+		Barrier(NULL, pointed);
+	}
+}
+
+#include "dobjtype.h"
+
+inline bool DObject::IsKindOf (const PClass *base) const
+{
+	return base->IsAncestorOf (GetClass ());
+}
+
+inline bool DObject::IsA (const PClass *type) const
+{
+	return (type == GetClass());
+}
 
 #endif //__DOBJECT_H__

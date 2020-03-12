@@ -28,30 +28,25 @@
 
 // Needed for FRACUNIT.
 #include "m_fixed.h"
-#include "r_data.h"
 #include "c_cvars.h"
 #include "g_level.h"
 #include "r_sky.h"
-#include "r_main.h"
+#include "r_utility.h"
 #include "v_text.h"
 #include "gi.h"
-
-extern int *texturewidthmask;
 
 //
 // sky mapping
 //
-int 		skyflatnum;
-int 		sky1texture,	sky2texture;
+FTextureID	skyflatnum;
+FTextureID	sky1texture,	sky2texture;
 fixed_t		skytexturemid;
 fixed_t		skyscale;
-int			skystretch;
-fixed_t		skyheight;					
 fixed_t		skyiscale;
+bool		skystretch;
 
-int			sky1shift,		sky2shift;
-fixed_t		sky1pos=0,		sky1speed=0;
-fixed_t		sky2pos=0,		sky2speed=0;
+fixed_t		sky1cyl,		sky2cyl;
+double		sky1pos,		sky2pos;
 
 // [RH] Stretch sky texture if not taller than 128 pixels?
 CUSTOM_CVAR (Bool, r_stretchsky, true, CVAR_ARCHIVE)
@@ -59,8 +54,7 @@ CUSTOM_CVAR (Bool, r_stretchsky, true, CVAR_ARCHIVE)
 	R_InitSkyMap ();
 }
 
-extern "C" int detailxshift, detailyshift;
-extern fixed_t freelookviewheight;
+fixed_t			freelookviewheight;
 
 //==========================================================================
 //
@@ -72,52 +66,89 @@ extern fixed_t freelookviewheight;
 
 void R_InitSkyMap ()
 {
-	fixed_t fskyheight;
+	int skyheight;
 	FTexture *skytex1, *skytex2;
 
-	skytex1 = TexMan[sky1texture];
-	skytex2 = TexMan[sky2texture];
+	skytex1 = TexMan(sky1texture, true);
+	skytex2 = TexMan(sky2texture, true);
 
 	if (skytex1 == NULL)
 		return;
 
-	if (skytex1->GetHeight() != skytex2->GetHeight())
+	if ((level.flags & LEVEL_DOUBLESKY) && skytex1->GetHeight() != skytex2->GetHeight())
 	{
 		Printf (TEXTCOLOR_BOLD "Both sky textures must be the same height." TEXTCOLOR_NORMAL "\n");
 		sky2texture = sky1texture;
 	}
 
-	fskyheight = skytex1->GetHeight() << FRACBITS;
-	if (DivScale3 (fskyheight, skytex1->ScaleY ? skytex1->ScaleY : 8) <= (128 << FRACBITS))
+	// There are various combinations for sky rendering depending on how tall the sky is:
+	//        h <  128: Unstretched and tiled, centered on horizon
+	// 128 <= h <  200: Can possibly be stretched. When unstretched, the baseline is
+	//                  28 rows below the horizon so that the top of the texture
+	//                  aligns with the top of the screen when looking straight ahead.
+	//                  When stretched, it is scaled to 228 pixels with the baseline
+	//                  in the same location as an unstretched 128-tall sky, so the top
+	//					of the texture aligns with the top of the screen when looking
+	//                  fully up.
+	//        h == 200: Unstretched, baseline is on horizon, and top is at the top of
+	//                  the screen when looking fully up.
+	//        h >  200: Unstretched, but the baseline is shifted down so that the top
+	//                  of the texture is at the top of the screen when looking fully up.
+	skyheight = skytex1->GetScaledHeight();
+	skystretch = false;
+	skytexturemid = 0;
+	if (skyheight >= 128 && skyheight < 200)
 	{
-		skytexturemid = r_Yaspect/2*FRACUNIT;
 		skystretch = (r_stretchsky
-					  && !(dmflags & DF_NO_FREELOOK)
+					  && skyheight >= 128
+					  && level.IsFreelookAllowed()
 					  && !(level.flags & LEVEL_FORCENOSKYSTRETCH)) ? 1 : 0;
+		skytexturemid = -28*FRACUNIT;
 	}
-	else
+	else if (skyheight > 200)
 	{
-		skytexturemid = MulScale3 (199<<FRACBITS, skytex1->ScaleY ? skytex1->ScaleY : 8);
-		skystretch = 0;
+		skytexturemid = FixedMul((200 - skyheight) << FRACBITS, skytex1->yScale);
 	}
-	skyheight = fskyheight << skystretch;
 
-	if (viewwidth && viewheight)
+	if (viewwidth != 0 && viewheight != 0)
 	{
-		skyiscale = (r_Yaspect*FRACUNIT) / (((freelookviewheight<<detailxshift) * viewwidth) / (viewwidth<<detailxshift));
-		skyscale = ((((freelookviewheight<<detailxshift) * viewwidth) / (viewwidth<<detailxshift)) << FRACBITS) /
+		skyiscale = (r_Yaspect*FRACUNIT) / ((freelookviewheight * viewwidth) / viewwidth);
+		skyscale = (((freelookviewheight * viewwidth) / viewwidth) << FRACBITS) /
 					(r_Yaspect);
 
 		skyiscale = Scale (skyiscale, FieldOfView, 2048);
 		skyscale = Scale (skyscale, 2048, FieldOfView);
 	}
 
-	// The (standard Doom) sky map is 256*128*4 maps.
-	sky1shift = 22+skystretch-16;
-	sky2shift = 22+skystretch-16;
-	if (skytex1->WidthBits >= 9)
-		sky1shift -= skystretch;
-	if (skytex2->WidthBits >= 9)
-		sky2shift -= skystretch;
+	if (skystretch)
+	{
+		skyscale = Scale(skyscale, SKYSTRETCH_HEIGHT, skyheight);
+		skyiscale = Scale(skyiscale, skyheight, SKYSTRETCH_HEIGHT);
+		skytexturemid = Scale(skytexturemid, skyheight, SKYSTRETCH_HEIGHT);
+	}
+
+	// The standard Doom sky texture is 256 pixels wide, repeated 4 times over 360 degrees,
+	// giving a total sky width of 1024 pixels. So if the sky texture is no wider than 1024,
+	// we map it to a cylinder with circumfrence 1024. For larger ones, we use the width of
+	// the texture as the cylinder's circumfrence.
+	sky1cyl = MAX(skytex1->GetWidth(), skytex1->xScale >> (16 - 10));
+	sky2cyl = MAX(skytex2->GetWidth(), skytex2->xScale >> (16 - 10));
+}
+
+
+//==========================================================================
+//
+// R_UpdateSky
+//
+// Performs sky scrolling
+//
+//==========================================================================
+
+void R_UpdateSky (DWORD mstime)
+{
+	// Scroll the sky
+	double ms = (double)mstime * FRACUNIT;
+	sky1pos = ms * level.skyspeed1;
+	sky2pos = ms * level.skyspeed2;
 }
 

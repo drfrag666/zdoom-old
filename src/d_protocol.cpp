@@ -3,7 +3,7 @@
 ** Basic network packet creation routines and simple IFF parsing
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -32,17 +32,16 @@
 **
 */
 
-#include "m_alloc.h"
 #include "i_system.h"
-#include "d_protocol.h"
 #include "d_ticcmd.h"
 #include "d_net.h"
 #include "doomdef.h"
 #include "doomstat.h"
 #include "cmdlib.h"
+#include "farchive.h"
 
 
-char *ReadString (byte **stream)
+char *ReadString (BYTE **stream)
 {
 	char *string = *((char **)stream);
 
@@ -50,34 +49,46 @@ char *ReadString (byte **stream)
 	return copystring (string);
 }
 
-int ReadByte (byte **stream)
+const char *ReadStringConst(BYTE **stream)
 {
-	byte v = **stream;
+	const char *string = *((const char **)stream);
+	*stream += strlen (string) + 1;
+	return string;
+}
+
+int ReadByte (BYTE **stream)
+{
+	BYTE v = **stream;
 	*stream += 1;
 	return v;
 }
 
-int ReadWord (byte **stream)
+int ReadWord (BYTE **stream)
 {
 	short v = (((*stream)[0]) << 8) | (((*stream)[1]));
 	*stream += 2;
 	return v;
 }
 
-int ReadLong (byte **stream)
+int ReadLong (BYTE **stream)
 {
 	int v = (((*stream)[0]) << 24) | (((*stream)[1]) << 16) | (((*stream)[2]) << 8) | (((*stream)[3]));
 	*stream += 4;
 	return v;
 }
 
-float ReadFloat (byte **stream)
+float ReadFloat (BYTE **stream)
 {
-	int fakeint = ReadLong (stream);
-	return *((float *)&fakeint);
+	union
+	{
+		int i;
+		float f;
+	} fakeint;
+	fakeint.i = ReadLong (stream);
+	return fakeint.f;
 }
 
-void WriteString (const char *string, byte **stream)
+void WriteString (const char *string, BYTE **stream)
 {
 	char *p = *((char **)stream);
 
@@ -86,24 +97,24 @@ void WriteString (const char *string, byte **stream)
 	}
 
 	*p++ = 0;
-	*stream = (byte *)p;
+	*stream = (BYTE *)p;
 }
 
 
-void WriteByte (byte v, byte **stream)
+void WriteByte (BYTE v, BYTE **stream)
 {
 	**stream = v;
 	*stream += 1;
 }
 
-void WriteWord (short v, byte **stream)
+void WriteWord (short v, BYTE **stream)
 {
 	(*stream)[0] = v >> 8;
 	(*stream)[1] = v & 255;
 	*stream += 2;
 }
 
-void WriteLong (int v, byte **stream)
+void WriteLong (int v, BYTE **stream)
 {
 	(*stream)[0] = v >> 24;
 	(*stream)[1] = (v >> 16) & 255;
@@ -112,28 +123,63 @@ void WriteLong (int v, byte **stream)
 	*stream += 4;
 }
 
-void WriteFloat (float v, byte **stream)
+void WriteFloat (float v, BYTE **stream)
 {
-	WriteLong (*((int *)&v), stream);
+	union
+	{
+		int i;
+		float f;
+	} fakeint;
+	fakeint.f = v;
+	WriteLong (fakeint.i, stream);
 }
 
 // Returns the number of bytes read
-int UnpackUserCmd (usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
+int UnpackUserCmd (usercmd_t *ucmd, const usercmd_t *basis, BYTE **stream)
 {
-	byte *start = *stream;
-	byte flags;
+	BYTE *start = *stream;
+	BYTE flags;
 
 	if (basis != NULL)
-		memcpy (ucmd, basis, sizeof(usercmd_t));
+	{
+		if (basis != ucmd)
+		{
+			memcpy (ucmd, basis, sizeof(usercmd_t));
+		}
+	}
 	else
+	{
 		memset (ucmd, 0, sizeof(usercmd_t));
+	}
 
 	flags = ReadByte (stream);
 
 	if (flags)
 	{
+		// We can support up to 29 buttons, using from 0 to 4 bytes to store them.
 		if (flags & UCMDF_BUTTONS)
-			ucmd->buttons = ReadByte (stream);
+		{
+			DWORD buttons = ucmd->buttons;
+			BYTE in = ReadByte(stream);
+
+			buttons = (buttons & ~0x7F) | (in & 0x7F);
+			if (in & 0x80)
+			{
+				in = ReadByte(stream);
+				buttons = (buttons & ~(0x7F << 7)) | ((in & 0x7F) << 7);
+				if (in & 0x80)
+				{
+					in = ReadByte(stream);
+					buttons = (buttons & ~(0x7F << 14)) | ((in & 0x7F) << 14);
+					if (in & 0x80)
+					{
+						in = ReadByte(stream);
+						buttons = (buttons & ~(0xFF << 21)) | (in << 21);
+					}
+				}
+			}
+			ucmd->buttons = buttons;
+		}
 		if (flags & UCMDF_PITCH)
 			ucmd->pitch = ReadWord (stream);
 		if (flags & UCMDF_YAW)
@@ -148,16 +194,17 @@ int UnpackUserCmd (usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
 			ucmd->roll = ReadWord (stream);
 	}
 
-	return *stream - start;
+	return int(*stream - start);
 }
 
 // Returns the number of bytes written
-int PackUserCmd (const usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
+int PackUserCmd (const usercmd_t *ucmd, const usercmd_t *basis, BYTE **stream)
 {
-	byte flags = 0;
-	byte *temp = *stream;
-	byte *start = *stream;
+	BYTE flags = 0;
+	BYTE *temp = *stream;
+	BYTE *start = *stream;
 	usercmd_t blank;
+	DWORD buttons_changed;
 
 	if (basis == NULL)
 	{
@@ -167,10 +214,41 @@ int PackUserCmd (const usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
 
 	WriteByte (0, stream);			// Make room for the packing bits
 
-	if (ucmd->buttons != basis->buttons)
+	buttons_changed = ucmd->buttons ^ basis->buttons;
+	if (buttons_changed != 0)
 	{
+		BYTE bytes[4] = {  BYTE(ucmd->buttons        & 0x7F),
+						  BYTE((ucmd->buttons >> 7)  & 0x7F),
+						  BYTE((ucmd->buttons >> 14) & 0x7F),
+						  BYTE((ucmd->buttons >> 21) & 0xFF) };
+
 		flags |= UCMDF_BUTTONS;
-		WriteByte (ucmd->buttons, stream);
+
+		if (buttons_changed & 0xFFFFFF80)
+		{
+			bytes[0] |= 0x80;
+			if (buttons_changed & 0xFFFFC000)
+			{
+				bytes[1] |= 0x80;
+				if (buttons_changed & 0xFFE00000)
+				{
+					bytes[2] |= 0x80;
+				}
+			}
+		}
+		WriteByte (bytes[0], stream);
+		if (bytes[0] & 0x80)
+		{
+			WriteByte (bytes[1], stream);
+			if (bytes[1] & 0x80)
+			{
+				WriteByte (bytes[2], stream);
+				if (bytes[2] & 0x80)
+				{
+					WriteByte (bytes[3], stream);
+				}
+			}
+		}
 	}
 	if (ucmd->pitch != basis->pitch)
 	{
@@ -206,13 +284,18 @@ int PackUserCmd (const usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
 	// Write the packing bits
 	WriteByte (flags, &temp);
 
-	return *stream - start;
+	return int(*stream - start);
+}
+
+FArchive &operator<< (FArchive &arc, ticcmd_t &cmd)
+{
+	return arc << cmd.consistancy << cmd.ucmd;
 }
 
 FArchive &operator<< (FArchive &arc, usercmd_t &cmd)
 {
-	byte bytes[256];
-	byte *stream = bytes;
+	BYTE bytes[256];
+	BYTE *stream = bytes;
 	if (arc.IsStoring ())
 	{
 		BYTE len = PackUserCmd (&cmd, NULL, &stream);
@@ -229,7 +312,7 @@ FArchive &operator<< (FArchive &arc, usercmd_t &cmd)
 	return arc;
 }
 
-int WriteUserCmdMessage (usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
+int WriteUserCmdMessage (usercmd_t *ucmd, const usercmd_t *basis, BYTE **stream)
 {
 	if (basis == NULL)
 	{
@@ -263,10 +346,10 @@ int WriteUserCmdMessage (usercmd_t *ucmd, const usercmd_t *basis, byte **stream)
 }
 
 
-int SkipTicCmd (byte **stream, int count)
+int SkipTicCmd (BYTE **stream, int count)
 {
 	int i, skip;
-	byte *flow = *stream;
+	BYTE *flow = *stream;
 
 	for (i = count; i > 0; i--)
 	{
@@ -275,19 +358,31 @@ int SkipTicCmd (byte **stream, int count)
 		flow += 2;		// Skip consistancy marker
 		while (moreticdata)
 		{
-			byte type = *flow++;
+			BYTE type = *flow++;
 
 			if (type == DEM_USERCMD)
 			{
 				moreticdata = false;
 				skip = 1;
-				if (*flow & UCMDF_BUTTONS)		skip += 1;
 				if (*flow & UCMDF_PITCH)		skip += 2;
 				if (*flow & UCMDF_YAW)			skip += 2;
 				if (*flow & UCMDF_FORWARDMOVE)	skip += 2;
 				if (*flow & UCMDF_SIDEMOVE)		skip += 2;
 				if (*flow & UCMDF_UPMOVE)		skip += 2;
 				if (*flow & UCMDF_ROLL)			skip += 2;
+				if (*flow & UCMDF_BUTTONS)
+				{
+					if (*++flow & 0x80)
+					{
+						if (*++flow & 0x80)
+						{
+							if (*++flow & 0x80)
+							{
+								++flow;
+							}
+						}
+					}
+				}
 				flow += skip;
 			}
 			else if (type == DEM_EMPTYUSERCMD)
@@ -301,7 +396,7 @@ int SkipTicCmd (byte **stream, int count)
 		}
 	}
 
-	skip = flow - *stream;
+	skip = int(flow - *stream);
 	*stream = flow;
 
 	return skip;
@@ -309,10 +404,10 @@ int SkipTicCmd (byte **stream, int count)
 
 #include <assert.h>
 extern short consistancy[MAXPLAYERS][BACKUPTICS];
-void ReadTicCmd (byte **stream, int player, int tic)
+void ReadTicCmd (BYTE **stream, int player, int tic)
 {
 	int type;
-	byte *start;
+	BYTE *start;
 	ticcmd_t *tcmd;
 
 	int ticmod = tic % BACKUPTICS;
@@ -325,7 +420,7 @@ void ReadTicCmd (byte **stream, int player, int tic)
 	while ((type = ReadByte (stream)) != DEM_USERCMD && type != DEM_EMPTYUSERCMD)
 		Net_SkipCommand (type, stream);
 
-	NetSpecs[player][ticmod].SetData (start, *stream - start - 1);
+	NetSpecs[player][ticmod].SetData (start, int(*stream - start - 1));
 
 	if (type == DEM_USERCMD)
 	{
@@ -350,7 +445,7 @@ void ReadTicCmd (byte **stream, int player, int tic)
 
 void RunNetSpecs (int player, int buf)
 {
-	byte *stream;
+	BYTE *stream;
 	int len;
 
 	if (gametic % ticdup == 0)
@@ -358,7 +453,7 @@ void RunNetSpecs (int player, int buf)
 		stream = NetSpecs[player][buf].GetData (&len);
 		if (stream)
 		{
-			byte *end = stream + len;
+			BYTE *end = stream + len;
 			while (stream < end)
 			{
 				int type = ReadByte (&stream);
@@ -370,11 +465,11 @@ void RunNetSpecs (int player, int buf)
 	}
 }
 
-byte *lenspot;
+BYTE *lenspot;
 
 // Write the header of an IFF chunk and leave space
 // for the length field.
-void StartChunk (int id, byte **stream)
+void StartChunk (int id, BYTE **stream)
 {
 	WriteLong (id, stream);
 	lenspot = *stream;
@@ -383,14 +478,14 @@ void StartChunk (int id, byte **stream)
 
 // Write the length field for the chunk and insert
 // pad byte if the chunk is odd-sized.
-void FinishChunk (byte **stream)
+void FinishChunk (BYTE **stream)
 {
 	int len;
 	
 	if (!lenspot)
 		return;
 
-	len = *stream - lenspot - 4;
+	len = int(*stream - lenspot - 4);
 	WriteLong (len, &lenspot);
 	if (len & 1)
 		WriteByte (0, stream);
@@ -400,7 +495,7 @@ void FinishChunk (byte **stream)
 
 // Skip past an unknown chunk. *stream should be
 // pointing to the chunk's length field.
-void SkipChunk (byte **stream)
+void SkipChunk (BYTE **stream)
 {
 	int len;
 

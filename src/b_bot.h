@@ -8,7 +8,6 @@
 #define __B_BOT_H__
 
 #include "c_cvars.h"
-#include "m_argv.h"
 #include "tables.h"
 #include "info.h"
 #include "doomdef.h"
@@ -49,6 +48,8 @@
 #define MSPAWN_DELAY 20//Tics between each spawn.
 #define MMAXSELECT   100 //Maximum number of monsters that can be selected at a time.
 
+struct FCheckPosition;
+
 struct botskill_t
 {
 	int aiming;
@@ -73,18 +74,18 @@ struct botinfo_t
 };
 
 //Used to keep all the globally needed variables in nice order.
-class DCajunMaster : public DObject
+class FCajunMaster
 {
-	DECLARE_CLASS (DCajunMaster, DObject)
-	HAS_OBJECT_POINTERS
 public:
+	~FCajunMaster();
+
 	void ClearPlayer (int playernum, bool keepTeam);
 
 	//(B_Game.c)
 	void Main (int buf);
 	void Init ();
 	void End();
-	void CleanBotstuff (player_s *p);
+	void CleanBotstuff (player_t *p);
 	bool SpawnBot (const char *name, int color = NOCOLOR);
 	bool LoadBots ();
 	void ForgetBots ();
@@ -99,7 +100,7 @@ public:
 
 	//(B_move.c)
 	void Roam (AActor *actor, ticcmd_t *cmd);
-	BOOL Move (AActor *actor, ticcmd_t *cmd);
+	bool Move (AActor *actor, ticcmd_t *cmd);
 	bool TryWalk (AActor *actor, ticcmd_t *cmd);
 	void NewChaseDir (AActor *actor, ticcmd_t *cmd);
 	bool CleanAhead (AActor *thing, fixed_t x, fixed_t y, ticcmd_t *cmd);
@@ -107,14 +108,17 @@ public:
 	void Pitch (AActor *actor, AActor *target);
 	bool IsDangerous (sector_t *sec);
 
-	DArgs *getspawned; //Array of bots (their names) which should be spawned when starting a game.
-	bool botingame[MAXPLAYERS]; 
-	bool freeze;    //Game in freeze mode.
+	TArray<FString> getspawned; //Array of bots (their names) which should be spawned when starting a game.
+	bool botingame[MAXPLAYERS];
+	BYTE freeze:1;			//Game in freeze mode.
+	BYTE changefreeze:1;	//Game wants to change freeze mode.
 	int botnum;
 	botinfo_t *botinfo;
 	int spawn_tries;
 	int wanted_botnum;
-	AActor *firstthing;
+	TObjPtr<AActor> firstthing;
+	TObjPtr<AActor>	body1;
+	TObjPtr<AActor> body2;
 
 	bool	 m_Thinking;
 
@@ -127,7 +131,7 @@ private:
 	void SetBodyAt (fixed_t x, fixed_t y, fixed_t z, int hostnum);
 	fixed_t FakeFire (AActor *source, AActor *dest, ticcmd_t *cmd);
 	angle_t FireRox (AActor *bot, AActor *enemy, ticcmd_t *cmd);
-	bool SafeCheckPosition (AActor *actor, fixed_t x, fixed_t y);
+	bool SafeCheckPosition (AActor *actor, fixed_t x, fixed_t y, FCheckPosition &tm);
 
 	//(B_Think.c)
 	void Think (AActor *actor, ticcmd_t *cmd);
@@ -138,14 +142,12 @@ protected:
 	bool	 ctf;
 	int		 loaded_bots;
 	int		 t_join;
-	AActor	*body1;
-	AActor	*body2;
 	bool	 observer; //Consoleplayer is observer.
 };
 
 
 //Externs
-extern DCajunMaster bglobal;
+extern FCajunMaster bglobal;
 
 EXTERN_CVAR (Float, bot_flag_return_time)
 EXTERN_CVAR (Int, bot_next_color)

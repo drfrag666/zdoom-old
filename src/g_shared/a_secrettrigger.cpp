@@ -3,7 +3,7 @@
 ** A thing that counts toward the secret count when activated
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -38,20 +38,21 @@
 #include "info.h"
 #include "s_sound.h"
 #include "d_player.h"
+#include "doomstat.h"
+#include "v_font.h"
+#include "p_spec.h"
 
 EXTERN_CVAR(String, secretmessage)
 
 class ASecretTrigger : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASecretTrigger, AActor)
+	DECLARE_CLASS (ASecretTrigger, AActor)
 public:
 	void PostBeginPlay ();
 	void Activate (AActor *activator);
 };
 
-IMPLEMENT_STATELESS_ACTOR (ASecretTrigger, Any, 9046, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOSECTOR|MF_NOGRAVITY)
-END_DEFAULTS
+IMPLEMENT_CLASS (ASecretTrigger)
 
 void ASecretTrigger::PostBeginPlay ()
 {
@@ -61,19 +62,7 @@ void ASecretTrigger::PostBeginPlay ()
 
 void ASecretTrigger::Activate (AActor *activator)
 {
-	if (activator->CheckLocalView (consoleplayer))
-	{
-		if (args[0] <= 1)
-		{
-			C_MidPrint (secretmessage);
-		}
-		if (args[0] == 0 || args[0] == 2)
-		{
-			S_Sound (activator, CHAN_AUTO, "misc/secret", 1, ATTN_NORM);
-		}
-	}
-	level.found_secrets++;
-	if (activator->player) activator->player->secretcount++;
+	P_GiveSecret(activator, args[0] <= 1, (args[0] == 0 || args[0] == 2));
 	Destroy ();
 }
 

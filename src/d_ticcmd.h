@@ -23,7 +23,6 @@
 #ifndef __D_TICCMD_H__
 #define __D_TICCMD_H__
 
-#include "doomtype.h"
 #include "d_protocol.h"
 
 // The data sampled per tick (single player)
@@ -33,18 +32,10 @@
 struct ticcmd_t
 {
 	usercmd_t	ucmd;
-/*
-	char		forwardmove;	// *2048 for move
-	char		sidemove;		// *2048 for move
-	short		angleturn;		// <<16 for angle delta
-*/
 	SWORD		consistancy;	// checks for net game
 };
 
 
-inline FArchive &operator<< (FArchive &arc, ticcmd_t &cmd)
-{
-	return arc << cmd.consistancy << cmd.ucmd;
-}
+FArchive &operator<< (FArchive &arc, ticcmd_t &cmd);
 
 #endif	// __D_TICCMD_H__

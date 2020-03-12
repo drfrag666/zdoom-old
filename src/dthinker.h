@@ -2,7 +2,7 @@
 ** dthinker.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -36,30 +36,40 @@
 
 #include <stdlib.h>
 #include "dobject.h"
-#include "lists.h"
+#include "statnums.h"
 
 class AActor;
-class player_s;
+class player_t;
 struct pspdef_s;
-
-typedef void (*actionf_p)( AActor* );
+struct FState;
 
 class FThinkerIterator;
 
 enum { MAX_STATNUM = 127 };
 
-// Doubly linked list of thinkers
-class DThinker : public DObject, protected Node
+// Doubly linked ring list of thinkers
+struct FThinkerList
+{
+	FThinkerList() : Sentinel(0) {}
+	void AddTail(DThinker *thinker);
+	DThinker *GetHead() const;
+	DThinker *GetTail() const;
+	bool IsEmpty() const;
+
+	DThinker *Sentinel;
+};
+
+class DThinker : public DObject
 {
 	DECLARE_CLASS (DThinker, DObject)
-
 public:
-	DThinker (int statnum = MAX_STATNUM) throw();
+	DThinker (int statnum = STAT_DEFAULT) throw();
 	void Destroy ();
 	virtual ~DThinker ();
 	virtual void Tick ();
 	virtual void PostBeginPlay ();	// Called just before the first tick
-
+	size_t PropagateMark();
+	
 	void ChangeStatNum (int statnum);
 
 	static void RunThinkers ();
@@ -67,33 +77,43 @@ public:
 	static void DestroyAllThinkers ();
 	static void DestroyMostThinkers ();
 	static void SerializeAll (FArchive &arc, bool keepPlayers);
+	static void MarkRoots();
+
+	static DThinker *FirstThinker (int statnum);
 
 private:
-	static void DestroyThinkersInList (Node *first);
-	static void DestroyMostThinkersInList (List &list, int stat);
-	static int TickThinkers (List *list, List *dest);	// Returns: # of thinkers ticked
+	enum no_link_type { NO_LINK };
+	DThinker(no_link_type) throw();
+	static void DestroyThinkersInList (FThinkerList &list);
+	static void DestroyMostThinkersInList (FThinkerList &list, int stat);
+	static int TickThinkers (FThinkerList *list, FThinkerList *dest);	// Returns: # of thinkers ticked
+	static void SaveList(FArchive &arc, DThinker *node);
+	void Remove();
 
-
-	static List Thinkers[MAX_STATNUM+1];		// Current thinkers
-	static List FreshThinkers[MAX_STATNUM+1];	// Newly created thinkers
+	static FThinkerList Thinkers[MAX_STATNUM+2];		// Current thinkers
+	static FThinkerList FreshThinkers[MAX_STATNUM+1];	// Newly created thinkers
 	static bool bSerialOverride;
 
+	friend struct FThinkerList;
 	friend class FThinkerIterator;
 	friend class DObject;
+
+	DThinker *NextThinker, *PrevThinker;
 };
 
 class FThinkerIterator
 {
+protected:
+	const PClass *m_ParentType;
 private:
-	const TypeInfo *m_ParentType;
-	Node *m_CurrThinker;
+	DThinker *m_CurrThinker;
 	BYTE m_Stat;
 	bool m_SearchStats;
 	bool m_SearchingFresh;
 
 public:
-	FThinkerIterator (const TypeInfo *type, int statnum=MAX_STATNUM+1);
-	FThinkerIterator (const TypeInfo *type, int statnum, DThinker *prev);
+	FThinkerIterator (const PClass *type, int statnum=MAX_STATNUM+1);
+	FThinkerIterator (const PClass *type, int statnum, DThinker *prev);
 	DThinker *Next ();
 	void Reinit ();
 };
@@ -105,6 +125,18 @@ public:
 	{
 	}
 	TThinkerIterator (int statnum, DThinker *prev) : FThinkerIterator (RUNTIME_CLASS(T), statnum, prev)
+	{
+	}
+	TThinkerIterator (const PClass *subclass, int statnum=MAX_STATNUM+1) : FThinkerIterator(subclass, statnum)
+	{
+	}
+	TThinkerIterator (FName subclass, int statnum=MAX_STATNUM+1) : FThinkerIterator(PClass::FindClass(subclass), statnum)
+	{
+	}
+	TThinkerIterator (ENamedName subclass, int statnum=MAX_STATNUM+1) : FThinkerIterator(PClass::FindClass(subclass), statnum)
+	{
+	}
+	TThinkerIterator (const char *subclass, int statnum=MAX_STATNUM+1) : FThinkerIterator(PClass::FindClass(subclass), statnum)
 	{
 	}
 	T *Next ()

@@ -1,7 +1,7 @@
 #include "i_musicinterns.h"
 #include "i_cd.h"
 
-void CDSong::Play (bool looping)
+void CDSong::Play (bool looping, int subsong)
 {
 	m_Status = STATE_Stopped;
 	m_Looping = looping;
@@ -59,7 +59,7 @@ CDSong::CDSong (int track, int id)
 		success = CD_Init ();
 	}
 
-	if (success && track == 0 || CD_CheckTrack (track))
+	if (success && (track == 0 || CD_CheckTrack (track)))
 	{
 		m_Inited = true;
 		m_Track = track;

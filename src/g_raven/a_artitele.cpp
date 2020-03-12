@@ -6,6 +6,8 @@
 #include "gi.h"
 #include "s_sound.h"
 #include "m_random.h"
+#include "doomstat.h"
+#include "g_game.h"
 
 static FRandom pr_tele ("TeleportSelf");
 
@@ -13,29 +15,12 @@ static FRandom pr_tele ("TeleportSelf");
 
 class AArtiTeleport : public AInventory
 {
-	DECLARE_ACTOR (AArtiTeleport, AInventory)
+	DECLARE_CLASS (AArtiTeleport, AInventory)
 public:
 	bool Use (bool pickup);
-	const char *PickupMessage ();
 };
 
-FState AArtiTeleport::States[] =
-{
-	S_NORMAL (ATLP, 'A',	4, NULL, &States[1]),
-	S_NORMAL (ATLP, 'B',	4, NULL, &States[2]),
-	S_NORMAL (ATLP, 'C',	4, NULL, &States[3]),
-	S_NORMAL (ATLP, 'B',	4, NULL, &States[0])
-};
-
-IMPLEMENT_ACTOR (AArtiTeleport, Raven, 36, 18)
-	PROP_Flags (MF_SPECIAL|MF_COUNTITEM)
-	PROP_Flags2 (MF2_FLOATBOB)
-	PROP_SpawnState (0)
-	PROP_Inventory_DefMaxAmount
-	PROP_Inventory_FlagsSet (IF_INVBAR|IF_PICKUPFLASH|IF_FANCYPICKUPSOUND)
-	PROP_Inventory_Icon ("ARTIATLP")
-	PROP_Inventory_PickupSound ("misc/p_pkup")
-END_DEFAULTS
+IMPLEMENT_CLASS (AArtiTeleport)
 
 bool AArtiTeleport::Use (bool pickup)
 {
@@ -47,31 +32,32 @@ bool AArtiTeleport::Use (bool pickup)
 	{
 		unsigned int selections = deathmatchstarts.Size ();
 		unsigned int i = pr_tele() % selections;
-		destX = deathmatchstarts[i].x << FRACBITS;
-		destY = deathmatchstarts[i].y << FRACBITS;
+		destX = deathmatchstarts[i].x;
+		destY = deathmatchstarts[i].y;
 		destAngle = ANG45 * (deathmatchstarts[i].angle/45);
 	}
 	else
 	{
-		destX = playerstarts[Owner->player - players].x << FRACBITS;
-		destY = playerstarts[Owner->player - players].y << FRACBITS;
-		destAngle = ANG45 * (playerstarts[Owner->player - players].angle/45);
+		FPlayerStart *start = G_PickPlayerStart(int(Owner->player - players));
+		destX = start->x;
+		destY = start->y;
+		destAngle = ANG45 * (start->angle/45);
 	}
 	P_Teleport (Owner, destX, destY, ONFLOORZ, destAngle, true, true, false);
-	if (gameinfo.gametype == GAME_Hexen && Owner->player->morphTics)
-	{ // Teleporting away will undo any morph effects (pig)
-		P_UndoPlayerMorph (Owner->player);
-	}
-	if (gameinfo.gametype == GAME_Heretic)
-	{ // Full volume laugh
-		S_Sound (Owner, CHAN_VOICE, "*evillaugh", 1, ATTN_NONE);
-	}
+	bool canlaugh = true;
+ 	if (Owner->player->morphTics && (Owner->player->MorphStyle & MORPH_UNDOBYCHAOSDEVICE))
+ 	{ // Teleporting away will undo any morph effects (pig)
+		if (!P_UndoPlayerMorph (Owner->player, Owner->player, MORPH_UNDOBYCHAOSDEVICE)
+			&& (Owner->player->MorphStyle & MORPH_FAILNOLAUGH))
+		{
+			canlaugh = false;
+		}
+ 	}
+	if (canlaugh)
+ 	{ // Full volume laugh
+ 		S_Sound (Owner, CHAN_VOICE, "*evillaugh", 1, ATTN_NONE);
+ 	}
 	return true;
-}
-
-const char *AArtiTeleport::PickupMessage ()
-{
-	return GStrings("TXT_ARTITELEPORT");
 }
 
 //---------------------------------------------------------------------------
@@ -82,7 +68,7 @@ const char *AArtiTeleport::PickupMessage ()
 
 bool P_AutoUseChaosDevice (player_t *player)
 {
-	AArtiTeleport *arti = player->mo->FindInventory<AArtiTeleport> ();
+	AInventory *arti = player->mo->FindInventory(PClass::FindClass("ArtiTeleport"));
 
 	if (arti != NULL)
 	{

@@ -3,7 +3,7 @@
 ** Parses DECALDEFs and creates a "library" of decals
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -42,13 +42,18 @@
 #include "weightedlist.h"
 #include "statnums.h"
 #include "templates.h"
-#include "r_draw.h"
+#include "a_sharedglobal.h"
+#include "r_data/r_translate.h"
+#include "gi.h"
+#include "g_level.h"
+#include "colormatcher.h"
+#include "b_bot.h"
+#include "farchive.h"
 
 FDecalLib DecalLibrary;
 
-static int ReadScale ();
+static fixed_t ReadScale (FScanner &sc);
 static TArray<BYTE> DecalTranslations;
-extern TArray<char*> DecalNames;
 
 // A decal group holds multiple decals and returns one randomly
 // when GetDecal() is called.
@@ -65,7 +70,11 @@ class FDecalGroup : public FDecalBase
 
 public:
 	FDecalGroup () : Choices (pr_decalchoice) {}
-	const FDecal *GetDecal () const;
+	const FDecalTemplate *GetDecal () const;
+	void ReplaceDecalRef (FDecalBase *from, FDecalBase *to)
+	{
+		Choices.ReplaceValues(from, to);
+	}
 	void AddDecal (FDecalBase *decal, WORD weight)
 	{
 		Choices.AddEntry (decal, weight);
@@ -73,6 +82,8 @@ public:
 
 private:
 	TWeightedList<FDecalBase *> Choices;
+
+	FDecalGroup &operator= (const FDecalGroup &) { return *this; }
 };
 
 struct FDecalLib::FTranslation
@@ -89,21 +100,21 @@ struct FDecalAnimator
 {
 	FDecalAnimator (const char *name);
 	virtual ~FDecalAnimator ();
-	virtual DThinker *CreateThinker (AActor *actor) const = 0;
+	virtual DThinker *CreateThinker (DBaseDecal *actor, side_t *wall) const = 0;
 
-	char *Name;
+	FName Name;
 };
 
-static TArray<FDecalAnimator *> Animators;
+TDeletingArray<FDecalAnimator *> Animators;
 
 struct DDecalThinker : public DThinker
 {
 	DECLARE_CLASS (DDecalThinker, DThinker)
 	HAS_OBJECT_POINTERS
 public:
-	DDecalThinker (AActor *decal) : DThinker (STAT_DECALTHINKER), TheDecal (decal) {}
+	DDecalThinker (DBaseDecal *decal) : DThinker (STAT_DECALTHINKER), TheDecal (decal) {}
 	void Serialize (FArchive &arc);
-	AActor *TheDecal;
+	TObjPtr<DBaseDecal> TheDecal;
 protected:
 	DDecalThinker () : DThinker (STAT_DECALTHINKER) {}
 };
@@ -121,7 +132,7 @@ void DDecalThinker::Serialize (FArchive &arc)
 struct FDecalFaderAnim : public FDecalAnimator
 {
 	FDecalFaderAnim (const char *name) : FDecalAnimator (name) {}
-	DThinker *CreateThinker (AActor *actor) const;
+	DThinker *CreateThinker (DBaseDecal *actor, side_t *wall) const;
 
 	int DecayStart;
 	int DecayTime;
@@ -131,7 +142,7 @@ class DDecalFader : public DDecalThinker
 {
 	DECLARE_CLASS (DDecalFader, DDecalThinker)
 public:
-	DDecalFader (AActor *decal) : DDecalThinker (decal) {}
+	DDecalFader (DBaseDecal *decal) : DDecalThinker (decal) {}
 	void Serialize (FArchive &arc);
 	void Tick ();
 
@@ -145,7 +156,7 @@ private:
 struct FDecalColorerAnim : public FDecalAnimator
 {
 	FDecalColorerAnim (const char *name) : FDecalAnimator (name) {}
-	DThinker *CreateThinker (AActor *actor) const;
+	DThinker *CreateThinker (DBaseDecal *actor, side_t *wall) const;
 
 	int DecayStart;
 	int DecayTime;
@@ -156,7 +167,7 @@ class DDecalColorer : public DDecalThinker
 {
 	DECLARE_CLASS (DDecalColorer, DDecalThinker)
 public:
-	DDecalColorer (AActor *decal) : DDecalThinker (decal) {}
+	DDecalColorer (DBaseDecal *decal) : DDecalThinker (decal) {}
 	void Serialize (FArchive &arc);
 	void Tick ();
 
@@ -171,27 +182,27 @@ private:
 struct FDecalStretcherAnim : public FDecalAnimator
 {
 	FDecalStretcherAnim (const char *name) : FDecalAnimator (name) {}
-	DThinker *CreateThinker (AActor *actor) const;
+	DThinker *CreateThinker (DBaseDecal *actor, side_t *wall) const;
 
 	int StretchStart;
 	int StretchTime;
-	int GoalX, GoalY;
+	fixed_t GoalX, GoalY;
 };
 
 class DDecalStretcher : public DDecalThinker
 {
 	DECLARE_CLASS (DDecalStretcher, DDecalThinker)
 public:
-	DDecalStretcher (AActor *decal) : DDecalThinker (decal) {}
+	DDecalStretcher (DBaseDecal *decal) : DDecalThinker (decal) {}
 	void Serialize (FArchive &arc);
 	void Tick ();
 
 	int TimeToStart;
 	int TimeToStop;
-	BYTE GoalX;
-	BYTE StartX;
-	BYTE GoalY;
-	BYTE StartY;
+	fixed_t GoalX;
+	fixed_t StartX;
+	fixed_t GoalY;
+	fixed_t StartY;
 	bool bStretchX;
 	bool bStretchY;
 	bool bStarted;
@@ -202,24 +213,24 @@ private:
 struct FDecalSliderAnim : public FDecalAnimator
 {
 	FDecalSliderAnim (const char *name) : FDecalAnimator (name) {}
-	DThinker *CreateThinker (AActor *actor) const;
+	DThinker *CreateThinker (DBaseDecal *actor, side_t *wall) const;
 
 	int SlideStart;
 	int SlideTime;
-	fixed_t DistX, DistY;
+	fixed_t /*DistX,*/ DistY;
 };
 
 class DDecalSlider : public DDecalThinker
 {
 	DECLARE_CLASS (DDecalSlider, DDecalThinker)
 public:
-	DDecalSlider (AActor *decal) : DDecalThinker (decal) {}
+	DDecalSlider (DBaseDecal *decal) : DDecalThinker (decal) {}
 	void Serialize (FArchive &arc);
 	void Tick ();
 
 	int TimeToStart;
 	int TimeToStop;
-	fixed_t DistX;
+/*	fixed_t DistX; */
 	fixed_t DistY;
 	fixed_t StartX;
 	fixed_t StartY;
@@ -231,7 +242,7 @@ private:
 struct FDecalCombinerAnim : public FDecalAnimator
 {
 	FDecalCombinerAnim (const char *name) : FDecalAnimator (name) {}
-	DThinker *CreateThinker (AActor *actor) const;
+	DThinker *CreateThinker (DBaseDecal *actor, side_t *wall) const;
 
 	int FirstAnimator;
 	int NumAnimators;
@@ -282,9 +293,17 @@ enum
 	DECAL_LOWERDECAL
 };
 
-const FDecal *FDecalBase::GetDecal () const
+const FDecalTemplate *FDecalBase::GetDecal () const
 {
 	return NULL;
+}
+
+void FDecalTemplate::ReplaceDecalRef(FDecalBase *from, FDecalBase *to)
+{
+	if (LowerDecal == from)
+	{
+		LowerDecal = to;
+	}
 }
 
 FDecalLib::FDecalLib ()
@@ -326,139 +345,144 @@ void FDecalLib::DelTree (FDecalBase *root)
 
 void FDecalLib::ReadAllDecals ()
 {
-	int i, lump, lastlump = 0;
+	int lump, lastlump = 0;
+	unsigned int i;
+
+	for(unsigned i=0;i<Animators.Size(); i++)
+	{
+		delete Animators[i];
+	}
+	Animators.Clear();
+	FDecalCombinerAnim::AnimatorList.Clear();
+	DecalTranslations.Clear();
+
+	DecalLibrary.Clear();
 
 	while ((lump = Wads.FindLump ("DECALDEF", &lastlump)) != -1)
 	{
-		SC_OpenLumpNum (lump, "DECALDEF");
-		ReadDecals ();
-		SC_Close ();
+		FScanner sc(lump);
+		ReadDecals (sc);
 	}
 	// Supporting code to allow specifying decals directly in the DECORATE lump
-	for (i = 0; i < TypeInfo::m_RuntimeActors.Size(); i++)
+	for (i = 0; i < PClass::m_RuntimeActors.Size(); i++)
 	{
-		AActor *def = (AActor*)GetDefaultByType (TypeInfo::m_RuntimeActors[i]);
+		AActor *def = (AActor*)GetDefaultByType (PClass::m_RuntimeActors[i]);
 
-		intptr_t v = (intptr_t)def->DecalGenerator;
-		if (v > 0 && v <= DecalNames.Size())
+		FName v = ENamedName(intptr_t(def->DecalGenerator));
+		if (v.IsValidName())
 		{
-			def->DecalGenerator = ScanTreeForName (DecalNames[v-1], Root);
+			def->DecalGenerator = ScanTreeForName (v, Root);
 		}
 	}
-	// Free the array which is no longer needed!
-	for (i = 0; i < DecalNames.Size(); i++)
-	{
-		delete[] DecalNames[i];
-	}
-	DecalNames.Clear();
-	DecalNames.ShrinkToFit();
 }
 
-void FDecalLib::ReadDecals ()
+void FDecalLib::ReadDecals(FScanner &sc)
 {
-	while (SC_GetString ())
+	while (sc.GetString())
 	{
-		if (SC_Compare ("decal"))
+		if (sc.Compare("decal"))
 		{
-			ParseDecal ();
+			ParseDecal(sc);
 		}
-		else if (SC_Compare ("decalgroup"))
+		else if (sc.Compare("decalgroup"))
 		{
-			ParseDecalGroup ();
+			ParseDecalGroup(sc);
 		}
-		else if (SC_Compare ("generator"))
+		else if (sc.Compare("generator"))
 		{
-			ParseGenerator ();
+			ParseGenerator(sc);
 		}
-		else if (SC_Compare ("fader"))
+		else if (sc.Compare("fader"))
 		{
-			ParseFader ();
+			ParseFader(sc);
 		}
-		else if (SC_Compare ("stretcher"))
+		else if (sc.Compare("stretcher"))
 		{
-			ParseStretcher ();
+			ParseStretcher(sc);
 		}
-		else if (SC_Compare ("slider"))
+		else if (sc.Compare("slider"))
 		{
-			ParseSlider ();
+			ParseSlider(sc);
 		}
-		else if (SC_Compare ("combiner"))
+		else if (sc.Compare("combiner"))
 		{
-			ParseCombiner ();
+			ParseCombiner(sc);
 		}
-		else if (SC_Compare ("colorchanger"))
+		else if (sc.Compare("colorchanger"))
 		{
-			ParseColorchanger ();
+			ParseColorchanger(sc);
 		}
 		else
 		{
-			SC_ScriptError (NULL);
+			sc.ScriptError("Unknown decaldef keyword '%s'", sc.String);
 		}
 	}
 }
 
-BYTE FDecalLib::GetDecalID ()
+WORD FDecalLib::GetDecalID (FScanner &sc)
 {
-	SC_MustGetString ();
-	if (!IsNum (sc_String))
+	sc.MustGetString ();
+	if (!IsNum (sc.String))
 	{
-		SC_UnGet ();
+		sc.UnGet ();
 		return 0;
 	}
 	else
 	{
-		unsigned long num = strtoul (sc_String, NULL, 10);
-		if (num < 1 || num > 255)
+		unsigned long num = strtoul (sc.String, NULL, 10);
+		if (num < 1 || num > 65535)
 		{
-			SC_ScriptError ("Decal ID must be between 1 and 255");
+			sc.MustGetStringName ("Decal ID must be between 1 and 65535");
 		}
-		return (BYTE)num;
+		return (WORD)num;
 	}
 }
 
-void FDecalLib::ParseDecal ()
+void FDecalLib::ParseDecal (FScanner &sc)
 {
-	char decalName[64];
-	byte decalNum;
-	FDecal newdecal;
-	int code, picnum;
+	FString decalName;
+	WORD decalNum;
+	FDecalTemplate newdecal;
+	int code;
+	FTextureID picnum;
+	int lumpnum;
 
-	SC_MustGetString ();
-	strcpy (decalName, sc_String);
-	decalNum = GetDecalID ();
-	SC_MustGetStringName ("{");
+	sc.MustGetString ();
+	decalName = sc.String;
+	decalNum = GetDecalID (sc);
+	sc.MustGetStringName ("{");
 
 	memset (&newdecal, 0, sizeof(newdecal));
-	newdecal.PicNum = 0xffff;
-	newdecal.ScaleX = newdecal.ScaleY = 63;
+	newdecal.PicNum.SetInvalid();
+	newdecal.ScaleX = newdecal.ScaleY = FRACUNIT;
 	newdecal.RenderFlags = RF_WALLSPRITE;
 	newdecal.RenderStyle = STYLE_Normal;
 	newdecal.Alpha = 0x8000;
 
 	for (;;)
 	{
-		SC_MustGetString ();
-		if (SC_Compare ("}"))
+		sc.MustGetString ();
+		if (sc.Compare ("}"))
 		{
 			AddDecal (decalName, decalNum, newdecal);
 			break;
 		}
-		switch ((code = SC_MustMatchString (DecalKeywords)))
+		switch ((code = sc.MustMatchString (DecalKeywords)))
 		{
 		case DECAL_XSCALE:
-			newdecal.ScaleX = ReadScale ();
+			newdecal.ScaleX = ReadScale (sc);
 			break;
 
 		case DECAL_YSCALE:
-			newdecal.ScaleY = ReadScale ();
+			newdecal.ScaleY = ReadScale (sc);
 			break;
 
 		case DECAL_PIC:
-			SC_MustGetString ();
-			picnum = TexMan.CheckForTexture (sc_String, FTexture::TEX_Any);
-			if (picnum < 0 && (picnum = Wads.CheckNumForName (sc_String)) >= 0)
+			sc.MustGetString ();
+			picnum = TexMan.CheckForTexture (sc.String, FTexture::TEX_Any);
+			if (!picnum.Exists() && (lumpnum = Wads.CheckNumForName (sc.String, ns_graphics)) >= 0)
 			{
-				picnum = TexMan.CreateTexture (picnum, FTexture::TEX_Decal);
+				picnum = TexMan.CreateTexture (lumpnum, FTexture::TEX_Decal);
 			}
 			newdecal.PicNum = picnum;
 			break;
@@ -468,14 +492,14 @@ void FDecalLib::ParseDecal ()
 			break;
 
 		case DECAL_ADD:
-			SC_MustGetFloat ();
-			newdecal.Alpha = (WORD)(32768.f * sc_Float);
+			sc.MustGetFloat ();
+			newdecal.Alpha = (WORD)(32768.f * sc.Float);
 			newdecal.RenderStyle = STYLE_Add;
 			break;
 
 		case DECAL_TRANSLUCENT:
-			SC_MustGetFloat ();
-			newdecal.Alpha = (WORD)(32768.f * sc_Float);
+			sc.MustGetFloat ();
+			newdecal.Alpha = (WORD)(32768.f * sc.Float);
 			newdecal.RenderStyle = STYLE_Translucent;
 			break;
 
@@ -488,11 +512,11 @@ void FDecalLib::ParseDecal ()
 			break;
 
 		case DECAL_RANDOMFLIPX:
-			newdecal.RenderFlags |= FDecal::DECAL_RandomFlipX;
+			newdecal.RenderFlags |= FDecalTemplate::DECAL_RandomFlipX;
 			break;
 
 		case DECAL_RANDOMFLIPY:
-			newdecal.RenderFlags |= FDecal::DECAL_RandomFlipY;
+			newdecal.RenderFlags |= FDecalTemplate::DECAL_RandomFlipY;
 			break;
 
 		case DECAL_FULLBRIGHT:
@@ -504,9 +528,16 @@ void FDecalLib::ParseDecal ()
 			break;
 
 		case DECAL_SHADE:
-			SC_MustGetString ();
+			sc.MustGetString ();
+			if (!sc.Compare("BloodDefault"))
+			{
+				newdecal.ShadeColor = V_GetColor (NULL, sc.String);
+			}
+			else
+			{
+				newdecal.ShadeColor = gameinfo.defaultbloodcolor;
+			}
 			newdecal.RenderStyle = STYLE_Shaded;
-			newdecal.ShadeColor = V_GetColor (NULL, sc_String);
 			newdecal.ShadeColor |=
 				ColorMatcher.Pick (RPART(newdecal.ShadeColor),
 					GPART(newdecal.ShadeColor), BPART(newdecal.ShadeColor)) << 24;
@@ -515,114 +546,110 @@ void FDecalLib::ParseDecal ()
 		case DECAL_COLORS:
 			DWORD startcolor, endcolor;
 
-			SC_MustGetString (); startcolor = V_GetColor (NULL, sc_String);
-			SC_MustGetString (); endcolor   = V_GetColor (NULL, sc_String);
+			sc.MustGetString (); startcolor = V_GetColor (NULL, sc.String);
+			sc.MustGetString (); endcolor   = V_GetColor (NULL, sc.String);
 			newdecal.Translation = GenerateTranslation (startcolor, endcolor)->Index;
 			break;
 
 		case DECAL_ANIMATOR:
-			SC_MustGetString ();
-			newdecal.Animator = FindAnimator (sc_String);
+			sc.MustGetString ();
+			newdecal.Animator = FindAnimator (sc.String);
 			break;
 
 		case DECAL_LOWERDECAL:
-			SC_MustGetString ();
-			newdecal.LowerDecal = GetDecalByName (sc_String);
+			sc.MustGetString ();
+			newdecal.LowerDecal = GetDecalByName (sc.String);
 			break;
 		}
 	}
 }
 
-void FDecalLib::ParseDecalGroup ()
+void FDecalLib::ParseDecalGroup (FScanner &sc)
 {
-	char groupName[64];
-	BYTE decalNum;
+	FString groupName;
+	WORD decalNum;
 	FDecalBase *targetDecal;
 	FDecalGroup *group;
 
-	SC_MustGetString ();
-	strcpy (groupName, sc_String);
-	decalNum = GetDecalID ();
-	SC_MustGetStringName ("{");
+	sc.MustGetString ();
+	groupName = sc.String;
+	decalNum = GetDecalID (sc);
+	sc.MustGetStringName ("{");
 
 	group = new FDecalGroup;
 
 	for (;;)
 	{
-		SC_MustGetString ();
-		if (SC_Compare ("}"))
+		sc.MustGetString ();
+		if (sc.Compare ("}"))
 		{
-			group->Name = copystring (groupName);
+			group->Name = groupName;
+			group->SpawnID = decalNum;
 			AddDecal (group);
 			break;
 		}
 
-		targetDecal = ScanTreeForName (sc_String, Root);
+		targetDecal = ScanTreeForName (sc.String, Root);
 		if (targetDecal == NULL)
 		{
-			SC_ScriptError ("%s has not been defined", sc_String);
+			sc.ScriptError ("%s has not been defined", sc.String);
 		}
-		SC_MustGetNumber ();
+		sc.MustGetNumber ();
 
-		group->AddDecal (targetDecal, sc_Number);
+		group->AddDecal (targetDecal, sc.Number);
 	}
 }
 
-void FDecalLib::ParseGenerator ()
+void FDecalLib::ParseGenerator (FScanner &sc)
 {
-	const TypeInfo *type;
+	const PClass *type;
 	FDecalBase *decal;
 	AActor *actor;
 
 	// Get name of generator (actor)
-	SC_MustGetString ();
-	type = TypeInfo::FindType (sc_String);
+	sc.MustGetString ();
+	type = PClass::FindClass (sc.String);
 	if (type == NULL || type->ActorInfo == NULL)
 	{
-		if (type == NULL)
-		{
-			type = TypeInfo::IFindType (sc_String);
-			if (type != NULL)
-			{
-				SC_ScriptError ("%s is not an actor. Did you mean %s?", sc_String, type->Name + 1);
-			}
-		}
-		SC_ScriptError ("%s is not an actor.", sc_String);
+		sc.ScriptError ("%s is not an actor.", sc.String);
 	}
-	actor = (AActor *)type->ActorInfo->Defaults;
+	actor = (AActor *)type->Defaults;
 
 	// Get name of generated decal
-	SC_MustGetString ();
-	if (stricmp (sc_String, "None") == 0)
+	sc.MustGetString ();
+	if (stricmp (sc.String, "None") == 0)
 	{
 		decal = NULL;
 	}
 	else
 	{
-		decal = ScanTreeForName (sc_String, Root);
+		decal = ScanTreeForName (sc.String, Root);
 		if (decal == NULL)
 		{
-			SC_ScriptError ("%s has not been defined.", sc_String);
+			sc.ScriptError ("%s has not been defined.", sc.String);
 		}
 	}
 
 	actor->DecalGenerator = decal;
-	decal->Users.Push (type);
+	if (decal != NULL)
+	{
+		decal->Users.Push (type);
+	}
 }
 
-void FDecalLib::ParseFader ()
+void FDecalLib::ParseFader (FScanner &sc)
 {
-	char faderName[64];
+	FString faderName;
 	int startTime = 0, decayTime = 0;
 
-	SC_MustGetString ();
-	strcpy (faderName, sc_String);
-	SC_MustGetStringName ("{");
+	sc.MustGetString ();
+	faderName = sc.String;
+	sc.MustGetStringName ("{");
 	
 	for (;;)
 	{
-		SC_MustGetString ();
-		if (SC_Compare ("}"))
+		sc.MustGetString ();
+		if (sc.Compare ("}"))
 		{
 			FDecalFaderAnim *fader = new FDecalFaderAnim (faderName);
 			fader->DecayStart = startTime;
@@ -630,37 +657,37 @@ void FDecalLib::ParseFader ()
 			Animators.Push (fader);
 			break;
 		}
-		else if (SC_Compare ("DecayStart"))
+		else if (sc.Compare ("DecayStart"))
 		{
-			SC_MustGetFloat ();
-			startTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			startTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("DecayTime"))
+		else if (sc.Compare ("DecayTime"))
 		{
-			SC_MustGetFloat ();
-			decayTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			decayTime = (int)(sc.Float * TICRATE);
 		}
 		else
 		{
-			SC_ScriptError ("Unknown fader parameter '%s'", sc_String);
+			sc.ScriptError ("Unknown fader parameter '%s'", sc.String);
 		}
 	}
 }
 
-void FDecalLib::ParseStretcher ()
+void FDecalLib::ParseStretcher (FScanner &sc)
 {
-	char stretcherName[64];
-	int goalX = -1, goalY = -1;
+	FString stretcherName;
+	fixed_t goalX = -1, goalY = -1;
 	int startTime = 0, takeTime = 0;
 
-	SC_MustGetString ();
-	strcpy (stretcherName, sc_String);
-	SC_MustGetStringName ("{");
+	sc.MustGetString ();
+	stretcherName = sc.String;
+	sc.MustGetStringName ("{");
 	
 	for (;;)
 	{
-		SC_MustGetString ();
-		if (SC_Compare ("}"))
+		sc.MustGetString ();
+		if (sc.Compare ("}"))
 		{
 			if (goalX >= 0 || goalY >= 0)
 			{
@@ -673,98 +700,99 @@ void FDecalLib::ParseStretcher ()
 			}
 			break;
 		}
-		else if (SC_Compare ("StretchStart"))
+		else if (sc.Compare ("StretchStart"))
 		{
-			SC_MustGetFloat ();
-			startTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			startTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("StretchTime"))
+		else if (sc.Compare ("StretchTime"))
 		{
-			SC_MustGetFloat ();
-			takeTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			takeTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("GoalX"))
+		else if (sc.Compare ("GoalX"))
 		{
-			goalX = ReadScale ();
+			goalX = ReadScale (sc);
 		}
-		else if (SC_Compare ("GoalY"))
+		else if (sc.Compare ("GoalY"))
 		{
-			goalY = ReadScale ();
+			goalY = ReadScale (sc);
 		}
 		else
 		{
-			SC_ScriptError ("Unknown stretcher parameter '%s'", sc_String);
+			sc.ScriptError ("Unknown stretcher parameter '%s'", sc.String);
 		}
 	}
 }
 
-void FDecalLib::ParseSlider ()
+void FDecalLib::ParseSlider (FScanner &sc)
 {
-	char sliderName[64];
+	FString sliderName;
 	fixed_t distX = 0, distY = 0;
 	int startTime = 0, takeTime = 0;
 
-	SC_MustGetString ();
-	strcpy (sliderName, sc_String);
-	SC_MustGetStringName ("{");
+	sc.MustGetString ();
+	sliderName = sc.String;
+	sc.MustGetStringName ("{");
 	
 	for (;;)
 	{
-		SC_MustGetString ();
-		if (SC_Compare ("}"))
+		sc.MustGetString ();
+		if (sc.Compare ("}"))
 		{
-			if ((distX | distY) != 0)
+			if ((/*distX |*/ distY) != 0)
 			{
 				FDecalSliderAnim *slider = new FDecalSliderAnim (sliderName);
 				slider->SlideStart = startTime;
 				slider->SlideTime = takeTime;
-				slider->DistX = distX;
+				/*slider->DistX = distX;*/
 				slider->DistY = distY;
 				Animators.Push (slider);
 			}
 			break;
 		}
-		else if (SC_Compare ("SlideStart"))
+		else if (sc.Compare ("SlideStart"))
 		{
-			SC_MustGetFloat ();
-			startTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			startTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("SlideTime"))
+		else if (sc.Compare ("SlideTime"))
 		{
-			SC_MustGetFloat ();
-			takeTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			takeTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("DistX"))
+		else if (sc.Compare ("DistX"))
 		{
-			SC_MustGetFloat ();
-			distX = (fixed_t)(sc_Float * FRACUNIT);
+			sc.MustGetFloat ();
+			distX = (fixed_t)(sc.Float * FRACUNIT);
+			Printf ("DistX in slider decal %s is unsupported\n", sliderName.GetChars());
 		}
-		else if (SC_Compare ("DistY"))
+		else if (sc.Compare ("DistY"))
 		{
-			SC_MustGetFloat ();
-			distY = (fixed_t)(sc_Float * FRACUNIT);
+			sc.MustGetFloat ();
+			distY = (fixed_t)(sc.Float * FRACUNIT);
 		}
 		else
 		{
-			SC_ScriptError ("Unknown slider parameter '%s'", sc_String);
+			sc.ScriptError ("Unknown slider parameter '%s'", sc.String);
 		}
 	}
 }
 
-void FDecalLib::ParseColorchanger ()
+void FDecalLib::ParseColorchanger (FScanner &sc)
 {
-	char faderName[64];
+	FString faderName;
 	int startTime = 0, decayTime = 0;
 	PalEntry goal = 0;
 
-	SC_MustGetString ();
-	strcpy (faderName, sc_String);
-	SC_MustGetStringName ("{");
+	sc.MustGetString ();
+	faderName = sc.String;
+	sc.MustGetStringName ("{");
 	
 	for (;;)
 	{
-		SC_MustGetString ();
-		if (SC_Compare ("}"))
+		sc.MustGetString ();
+		if (sc.Compare ("}"))
 		{
 			FDecalColorerAnim *fader = new FDecalColorerAnim (faderName);
 			fader->DecayStart = startTime;
@@ -773,46 +801,46 @@ void FDecalLib::ParseColorchanger ()
 			Animators.Push (fader);
 			break;
 		}
-		else if (SC_Compare ("FadeStart"))
+		else if (sc.Compare ("FadeStart"))
 		{
-			SC_MustGetFloat ();
-			startTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			startTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("FadeTime"))
+		else if (sc.Compare ("FadeTime"))
 		{
-			SC_MustGetFloat ();
-			decayTime = (int)(sc_Float * TICRATE);
+			sc.MustGetFloat ();
+			decayTime = (int)(sc.Float * TICRATE);
 		}
-		else if (SC_Compare ("Color"))
+		else if (sc.Compare ("Color"))
 		{
-			SC_MustGetString ();
-			goal = V_GetColor (NULL, sc_String);
+			sc.MustGetString ();
+			goal = V_GetColor (NULL, sc.String);
 		}
 		else
 		{
-			SC_ScriptError ("Unknown color changer parameter '%s'", sc_String);
+			sc.ScriptError ("Unknown color changer parameter '%s'", sc.String);
 		}
 	}
 }
 
-void FDecalLib::ParseCombiner ()
+void FDecalLib::ParseCombiner (FScanner &sc)
 {
-	char combinerName[64];
+	FString combinerName;
 	size_t first = FDecalCombinerAnim::AnimatorList.Size ();
 
-	SC_MustGetString ();
-	strcpy (combinerName, sc_String);
-	SC_MustGetStringName ("{");
-	SC_MustGetString ();
-	while (!SC_Compare ("}"))
+	sc.MustGetString ();
+	combinerName = sc.String;
+	sc.MustGetStringName ("{");
+	sc.MustGetString ();
+	while (!sc.Compare ("}"))
 	{
-		FDecalAnimator *anim = FindAnimator (sc_String);
+		FDecalAnimator *anim = FindAnimator (sc.String);
 		if (anim == NULL)
 		{
-			SC_ScriptError ("Undefined animator %s", sc_String);
+			sc.ScriptError ("Undefined animator %s", sc.String);
 		}
 		FDecalCombinerAnim::AnimatorList.Push (anim);
-		SC_MustGetString ();
+		sc.MustGetString ();
 	}
 
 	size_t last = FDecalCombinerAnim::AnimatorList.Size ();
@@ -826,12 +854,23 @@ void FDecalLib::ParseCombiner ()
 	}
 }
 
-void FDecalLib::AddDecal (const char *name, byte num, const FDecal &decal)
+void FDecalLib::ReplaceDecalRef (FDecalBase *from, FDecalBase *to, FDecalBase *root)
 {
-	FDecal *newDecal = new FDecal;
+	if (root == NULL)
+	{
+		return;
+	}
+	ReplaceDecalRef (from, to, root->Left);
+	ReplaceDecalRef (from, to, root->Right);
+	root->ReplaceDecalRef (from, to);
+}
+
+void FDecalLib::AddDecal (const char *name, WORD num, const FDecalTemplate &decal)
+{
+	FDecalTemplate *newDecal = new FDecalTemplate;
 
 	*newDecal = decal;
-	newDecal->Name = copystring (name);
+	newDecal->Name = name;
 	newDecal->SpawnID = num;
 	AddDecal (newDecal);
 }
@@ -871,6 +910,10 @@ void FDecalLib::AddDecal (FDecalBase *decal)
 	}
 	else
 	{ // Yes, replace the old one.
+		// If this decal has been used as the lowerdecal for another decal,
+		// be sure and update the lowerdecal to use the new decal.
+		ReplaceDecalRef(node, decal, Root);
+
 		decal->Left = node->Left;
 		decal->Right = node->Right;
 		*prev = decal;
@@ -878,7 +921,7 @@ void FDecalLib::AddDecal (FDecalBase *decal)
 		// Fix references to the old decal so that they use the new one instead.
 		for (unsigned int i = 0; i < node->Users.Size(); ++i)
 		{
-			((AActor *)node->Users[i]->ActorInfo->Defaults)->DecalGenerator = decal;
+			((AActor *)node->Users[i]->Defaults)->DecalGenerator = decal;
 		}
 		decal->Users = node->Users;
 		delete node;
@@ -895,7 +938,7 @@ void FDecalLib::AddDecal (FDecalBase *decal)
 	}
 }
 
-const FDecal *FDecalLib::GetDecalByNum (byte num) const
+const FDecalTemplate *FDecalLib::GetDecalByNum (WORD num) const
 {
 	if (num == 0)
 	{
@@ -909,7 +952,7 @@ const FDecal *FDecalLib::GetDecalByNum (byte num) const
 	return NULL;
 }
 
-const FDecal *FDecalLib::GetDecalByName (const char *name) const
+const FDecalTemplate *FDecalLib::GetDecalByName (const char *name) const
 {
 	if (name == NULL)
 	{
@@ -918,12 +961,12 @@ const FDecal *FDecalLib::GetDecalByName (const char *name) const
 	FDecalBase *base = ScanTreeForName (name, Root);
 	if (base != NULL)
 	{
-		return static_cast<FDecal *>(base);
+		return static_cast<FDecalTemplate *>(base);
 	}
 	return NULL;
 }
 
-FDecalBase *FDecalLib::ScanTreeForNum (const BYTE num, FDecalBase *root)
+FDecalBase *FDecalLib::ScanTreeForNum (const WORD num, FDecalBase *root)
 {
 	while (root != NULL)
 	{
@@ -983,41 +1026,39 @@ FDecalLib::FTranslation *FDecalLib::GenerateTranslation (DWORD start, DWORD end)
 
 FDecalBase::FDecalBase ()
 {
-	Name = NULL;
+	Name = NAME_None;
 }
 
 FDecalBase::~FDecalBase ()
 {
-	if (Name != NULL)
-		delete[] Name;
 }
 
-void FDecal::ApplyToActor (AActor *actor) const
+void FDecalTemplate::ApplyToDecal (DBaseDecal *decal, side_t *wall) const
 {
-	if (RenderStyle == STYLE_Shaded)
+	if (RenderStyle.Flags & STYLEF_ColorIsFixed)
 	{
-		actor->SetShade (ShadeColor);
+		decal->SetShade (ShadeColor);
 	}
-	actor->Translation = Translation;
-	actor->xscale = ScaleX;
-	actor->yscale = ScaleY;
-	actor->picnum = PicNum;
-	actor->alpha = Alpha << 1;
-	actor->RenderStyle = RenderStyle;
-	actor->renderflags = (RenderFlags & ~(DECAL_RandomFlipX|DECAL_RandomFlipY)) |
-		(actor->renderflags & (RF_RELMASK|RF_CLIPMASK|RF_INVISIBLE|RF_ONESIDED));
+	decal->Translation = Translation;
+	decal->ScaleX = ScaleX;
+	decal->ScaleY = ScaleY;
+	decal->PicNum = PicNum;
+	decal->Alpha = Alpha << 1;
+	decal->RenderStyle = RenderStyle;
+	decal->RenderFlags = (RenderFlags & ~(DECAL_RandomFlipX|DECAL_RandomFlipY)) |
+		(decal->RenderFlags & (RF_RELMASK|RF_CLIPMASK|RF_INVISIBLE|RF_ONESIDED));
 	if (RenderFlags & (DECAL_RandomFlipX|DECAL_RandomFlipY))
 	{
-		actor->renderflags ^= pr_decal() &
+		decal->RenderFlags ^= pr_decal() &
 			((RenderFlags & (DECAL_RandomFlipX|DECAL_RandomFlipY)) >> 8);
 	}
 	if (Animator != NULL)
 	{
-		Animator->CreateThinker (actor);
+		Animator->CreateThinker (decal, wall);
 	}
 }
 
-const FDecal *FDecal::GetDecal () const
+const FDecalTemplate *FDecalTemplate::GetDecal () const
 {
 	return this;
 }
@@ -1080,33 +1121,31 @@ FDecalLib::FTranslation *FDecalLib::FTranslation::LocateTranslation (DWORD start
 	return trans;
 }
 
-const FDecal *FDecalGroup::GetDecal () const
+const FDecalTemplate *FDecalGroup::GetDecal () const
 {
 	const FDecalBase *decal = Choices.PickEntry ();
-	const FDecalBase *remember;
+	const FDecalBase *remember = decal;
 
 	// Repeatedly GetDecal() until the result is constant, since
 	// the choice might be another FDecalGroup.
-	do
+	if (decal != NULL)
 	{
-		remember = decal;
-		decal = decal->GetDecal ();
-	} while (decal != remember);
-	return static_cast<const FDecal *>(decal);
+		do
+		{
+			remember = decal;
+			decal = decal->GetDecal ();
+		} while (decal != NULL && decal != remember);
+	}
+	return static_cast<const FDecalTemplate *>(remember);
 }
 
 FDecalAnimator::FDecalAnimator (const char *name)
 {
-	Name = copystring (name);
+	Name = name;
 }
 
 FDecalAnimator::~FDecalAnimator ()
 {
-	if (Name != NULL)
-	{
-		delete[] Name;
-		Name = NULL;
-	}
 }
 
 IMPLEMENT_CLASS (DDecalFader)
@@ -1133,24 +1172,20 @@ void DDecalFader::Tick ()
 		{
 			TheDecal->Destroy ();		// remove the decal
 			Destroy ();					// remove myself
+			return;
 		}
 		if (StartTrans == -1)
 		{
-			StartTrans = TheDecal->alpha;
+			StartTrans = TheDecal->Alpha;
 		}
 
 		int distanceToEnd = TimeToEndDecay - level.maptime;
 		int fadeDistance = TimeToEndDecay - TimeToStartDecay;
-		TheDecal->alpha = Scale (StartTrans, distanceToEnd, fadeDistance);
-
-		if (TheDecal->RenderStyle < STYLE_Translucent)
-		{
-			TheDecal->RenderStyle = STYLE_Translucent;
-		}
+		TheDecal->Alpha = Scale (StartTrans, distanceToEnd, fadeDistance);
 	}
 }
 
-DThinker *FDecalFaderAnim::CreateThinker (AActor *actor) const
+DThinker *FDecalFaderAnim::CreateThinker (DBaseDecal *actor, side_t *wall) const
 {
 	DDecalFader *fader = new DDecalFader (actor);
 
@@ -1176,12 +1211,13 @@ void DDecalStretcher::Serialize (FArchive &arc)
 		<< bStarted;
 }
 
-DThinker *FDecalStretcherAnim::CreateThinker (AActor *actor) const
+DThinker *FDecalStretcherAnim::CreateThinker (DBaseDecal *actor, side_t *wall) const
 {
 	DDecalStretcher *thinker = new DDecalStretcher (actor);
 
 	thinker->TimeToStart = level.maptime + StretchStart;
 	thinker->TimeToStop = thinker->TimeToStart + StretchTime;
+
 	if (GoalX >= 0)
 	{
 		thinker->GoalX = GoalX;
@@ -1219,11 +1255,11 @@ void DDecalStretcher::Tick ()
 	{
 		if (bStretchX)
 		{
-			TheDecal->xscale = GoalX;
+			TheDecal->ScaleX = GoalX;
 		}
 		if (bStretchY)
 		{
-			TheDecal->yscale = GoalY;
+			TheDecal->ScaleY = GoalY;
 		}
 		Destroy ();
 		return;
@@ -1231,19 +1267,19 @@ void DDecalStretcher::Tick ()
 	if (!bStarted)
 	{
 		bStarted = true;
-		StartX = TheDecal->xscale;
-		StartY = TheDecal->yscale;
+		StartX = TheDecal->ScaleX;
+		StartY = TheDecal->ScaleY;
 	}
 
 	int distance = level.maptime - TimeToStart;
 	int maxDistance = TimeToStop - TimeToStart;
 	if (bStretchX)
 	{
-		TheDecal->xscale = StartX + Scale (GoalX - StartX, distance, maxDistance);
+		TheDecal->ScaleX = StartX + Scale (GoalX - StartX, distance, maxDistance);
 	}
 	if (bStretchY)
 	{
-		TheDecal->yscale = StartY + Scale (GoalY - StartY, distance, maxDistance);
+		TheDecal->ScaleY = StartY + Scale (GoalY - StartY, distance, maxDistance);
 	}
 }
 
@@ -1254,20 +1290,20 @@ void DDecalSlider::Serialize (FArchive &arc)
 	Super::Serialize (arc);
 	arc << TimeToStart
 		<< TimeToStop
-		<< DistX
+		/*<< DistX*/
 		<< DistY
-		<< StartX
+		/*<< StartX*/
 		<< StartY
 		<< bStarted;
 }
 
-DThinker *FDecalSliderAnim::CreateThinker (AActor *actor) const
+DThinker *FDecalSliderAnim::CreateThinker (DBaseDecal *actor, side_t *wall) const
 {
 	DDecalSlider *thinker = new DDecalSlider (actor);
 
 	thinker->TimeToStart = level.maptime + SlideStart;
 	thinker->TimeToStop = thinker->TimeToStart + SlideTime;
-	thinker->DistX = DistX;
+	/*thinker->DistX = DistX;*/
 	thinker->DistY = DistY;
 	thinker->bStarted = false;
 	return thinker;
@@ -1287,39 +1323,39 @@ void DDecalSlider::Tick ()
 	if (!bStarted)
 	{
 		bStarted = true;
-		StartX = TheDecal->x;
-		StartY = TheDecal->z;
+		/*StartX = TheDecal->LeftDistance;*/
+		StartY = TheDecal->Z;
 	}
 	if (level.maptime >= TimeToStop)
 	{
-		TheDecal->x = StartX + DistX;
-		TheDecal->z = StartY + DistY;
+		/*TheDecal->LeftDistance = StartX + DistX;*/
+		TheDecal->Z = StartY + DistY;
 		Destroy ();
 		return;
 	}
 
 	int distance = level.maptime - TimeToStart;
 	int maxDistance = TimeToStop - TimeToStart;
-	TheDecal->x = StartX + Scale (DistX, distance, maxDistance);
-	TheDecal->z = StartY + Scale (DistY, distance, maxDistance);
+	/*TheDecal->LeftDistance = StartX + Scale (DistX, distance, maxDistance);*/
+	TheDecal->Z = StartY + Scale (DistY, distance, maxDistance);
 }
 
-DThinker *FDecalCombinerAnim::CreateThinker (AActor *actor) const
+DThinker *FDecalCombinerAnim::CreateThinker (DBaseDecal *actor, side_t *wall) const
 {
 	DThinker *thinker = NULL;
 
 	for (int i = 0; i < NumAnimators; ++i)
 	{
-		thinker = AnimatorList[FirstAnimator+i]->CreateThinker (actor);
+		thinker = AnimatorList[FirstAnimator+i]->CreateThinker (actor, wall);
 	}
 	return thinker;
 }
 
 FDecalAnimator *FDecalLib::FindAnimator (const char *name)
 {
-	unsigned int i;
+	int i;
 
-	for (i = Animators.Size ()-1; i >= 0; --i)
+	for (i = (int)Animators.Size ()-1; i >= 0; --i)
 	{
 		if (stricmp (name, Animators[i]->Name) == 0)
 		{
@@ -1340,7 +1376,7 @@ void DDecalColorer::Serialize (FArchive &arc)
 
 void DDecalColorer::Tick ()
 {
-	if (TheDecal == NULL || TheDecal->RenderStyle != STYLE_Shaded)
+	if (TheDecal == NULL || !(TheDecal->RenderStyle.Flags & STYLEF_ColorIsFixed))
 	{
 		Destroy ();
 	}
@@ -1357,7 +1393,7 @@ void DDecalColorer::Tick ()
 		}
 		if (StartColor.a == 255)
 		{
-			StartColor = TheDecal->alphacolor & 0xffffff;
+			StartColor = TheDecal->AlphaColor & 0xffffff;
 			if (StartColor == GoalColor)
 			{
 				Destroy ();
@@ -1378,7 +1414,7 @@ void DDecalColorer::Tick ()
 	}
 }
 
-DThinker *FDecalColorerAnim::CreateThinker (AActor *actor) const
+DThinker *FDecalColorerAnim::CreateThinker (DBaseDecal *actor, side_t *wall) const
 {
 	DDecalColorer *Colorer = new DDecalColorer (actor);
 
@@ -1389,8 +1425,8 @@ DThinker *FDecalColorerAnim::CreateThinker (AActor *actor) const
 	return Colorer;
 }
 
-static int ReadScale ()
+static fixed_t ReadScale (FScanner &sc)
 {
-	SC_MustGetFloat ();
-	return clamp ((int)(sc_Float * 64.f), 1, 256) - 1;
+	sc.MustGetFloat ();
+	return fixed_t(clamp (sc.Float * FRACUNIT, 256.0, 256.0*FRACUNIT));
 }

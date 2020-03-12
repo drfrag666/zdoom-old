@@ -3,66 +3,86 @@
 #endif
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
-#include "doomtype.h"
-#include "fmopl.h"
 #include "opl_mus_player.h"
+#include "doomtype.h"
+#include "opl.h"
 #include "w_wad.h"
 #include "templates.h"
 #include "c_cvars.h"
 #include "i_system.h"
 #include "stats.h"
-#include "v_text.h"
-#include "c_dispatch.h"
 
-#define IMF_RATE	700
+#define IMF_RATE				700.0
 
-EXTERN_CVAR (Bool, opl_onechip)
+EXTERN_CVAR (Int, opl_numchips)
 
-static OPLmusicBlock *BlockForStats;
-
-OPLmusicBlock::OPLmusicBlock (FILE *file, int len, int rate, int maxSamples)
-	: SampleRate (rate), NextTickIn (0), Looping (false), ScoreLen (len)
+OPLmusicBlock::OPLmusicBlock()
 {
 	scoredata = NULL;
-	SampleBuff = NULL;
-	TwoChips = !opl_onechip;
+	NextTickIn = 0;
+	LastOffset = 0;
+	NumChips = MIN(*opl_numchips, 2);
+	Looping = false;
+	FullPan = false;
+	io = NULL;
 	io = new OPLio;
+}
 
-#ifdef _WIN32
-	InitializeCriticalSection (&ChipAccess);
-#else
-	ChipAccess = SDL_CreateMutex ();
-	if (ChipAccess == NULL)
+OPLmusicBlock::~OPLmusicBlock()
+{
+	delete io;
+}
+
+void OPLmusicBlock::ResetChips ()
+{
+	ChipAccess.Enter();
+	io->OPLdeinit ();
+	NumChips = io->OPLinit(MIN(*opl_numchips, 2), FullPan);
+	ChipAccess.Leave();
+}
+
+void OPLmusicBlock::Restart()
+{
+	OPLstopMusic ();
+	OPLplayMusic (127);
+	MLtime = 0;
+	playingcount = 0;
+	LastOffset = 0;
+}
+
+OPLmusicFile::OPLmusicFile (FILE *file, BYTE *musiccache, int len)
+	: ScoreLen (len)
+{
+	if (io == NULL)
 	{
 		return;
 	}
-#endif
 
 	scoredata = new BYTE[len];
-	if (fread (scoredata, 1, len, file) != (size_t)len || io->OPLinit (TwoChips + 1, rate))
-	{
-		delete[] scoredata;
-		scoredata = NULL;
-		return;
-	}
 
-	// Check for MUS format
-	if (*(DWORD *)scoredata == MAKE_ID('M','U','S',0x1a))
+	if (file)
 	{
-		FWadLump data = Wads.OpenLumpName ("GENMIDI");
-		if (0 != OPLloadBank (data))
+		if (fread (scoredata, 1, len, file) != (size_t)len)
 		{
-			delete[] scoredata;
+fail:		delete[] scoredata;
 			scoredata = NULL;
 			return;
 		}
-		BlockForStats = this;
-		SamplesPerTick = ((rate/14)+5)/10;	// round to nearest, not lowest
-		RawPlayer = NotRaw;
 	}
+	else
+	{
+		memcpy(scoredata, &musiccache[0], len);
+	}
+
+	if (0 == (NumChips = io->OPLinit(NumChips)))
+	{
+		goto fail;
+	}
+
 	// Check for RDosPlay raw OPL format
-	else if (((DWORD *)scoredata)[0] == MAKE_ID('R','A','W','A') &&
+	if (((DWORD *)scoredata)[0] == MAKE_ID('R','A','W','A') &&
 			 ((DWORD *)scoredata)[1] == MAKE_ID('D','A','T','A'))
 	{
 		RawPlayer = RDosPlay;
@@ -70,7 +90,40 @@ OPLmusicBlock::OPLmusicBlock (FILE *file, int len, int rate, int maxSamples)
 		{ // A clock speed of 0 is bad
 			*(WORD *)(scoredata + 8) = 0xFFFF; 
 		}
-		SamplesPerTick = Scale (rate, LittleShort(*(WORD *)(scoredata + 8)), 1193180);
+		SamplesPerTick = LittleShort(*(WORD *)(scoredata + 8)) / ADLIB_CLOCK_MUL;
+	}
+	// Check for DosBox OPL dump
+	else if (((DWORD *)scoredata)[0] == MAKE_ID('D','B','R','A') &&
+		((DWORD *)scoredata)[1] == MAKE_ID('W','O','P','L'))
+	{
+		if (((DWORD *)scoredata)[2] == MAKE_ID(0,0,1,0))
+		{
+			RawPlayer = DosBox1;
+			SamplesPerTick = OPL_SAMPLE_RATE / 1000;
+			ScoreLen = MIN<int>(len - 24, LittleLong(((DWORD *)scoredata)[4])) + 24;
+		}
+		else if (((DWORD *)scoredata)[2] == MAKE_ID(2,0,0,0))
+		{
+			if (scoredata[20] != 0)
+			{
+				Printf("Unsupported DOSBox Raw OPL format %d\n", scoredata[20]);
+				goto fail;
+			}
+			if (scoredata[21] != 0)
+			{
+				Printf("Unsupported DOSBox Raw OPL compression %d\n", scoredata[21]);
+				goto fail;
+			}
+			RawPlayer = DosBox2;
+			SamplesPerTick = OPL_SAMPLE_RATE / 1000;
+			int headersize = 0x1A + scoredata[0x19];
+			ScoreLen = MIN<int>(len - headersize, LittleLong(((DWORD *)scoredata)[3]) * 2) + headersize;
+		}
+		else
+		{
+			Printf("Unsupported DOSBox Raw OPL version %d.%d\n", LittleShort(((WORD *)scoredata)[4]), LittleShort(((WORD *)scoredata)[5]));
+			goto fail;
+		}
 	}
 	// Check for modified IMF format (includes a header)
 	else if (((DWORD *)scoredata)[0] == MAKE_ID('A','D','L','I') &&
@@ -79,7 +132,7 @@ OPLmusicBlock::OPLmusicBlock (FILE *file, int len, int rate, int maxSamples)
 		int songlen;
 		BYTE *max = scoredata + ScoreLen;
 		RawPlayer = IMF;
-		SamplesPerTick = rate / IMF_RATE;
+		SamplesPerTick = OPL_SAMPLE_RATE / IMF_RATE;
 
 		score = scoredata + 6;
 		// Skip track and game name
@@ -100,82 +153,56 @@ OPLmusicBlock::OPLmusicBlock (FILE *file, int len, int rate, int maxSamples)
 			ScoreLen = songlen + int(score - scoredata);
 		}
 	}
+	else
+	{
+		goto fail;
+	}
 
-	SampleBuff = new int[maxSamples];
 	Restart ();
 }
 
-OPLmusicBlock::~OPLmusicBlock ()
+OPLmusicFile::~OPLmusicFile ()
 {
-	BlockForStats = NULL;
 	if (scoredata != NULL)
 	{
 		io->OPLdeinit ();
 		delete[] scoredata;
 		scoredata = NULL;
 	}
-	if (SampleBuff != NULL)
-	{
-		delete[] SampleBuff;
-		SampleBuff = NULL;
-	}
-#ifdef _WIN32
-	DeleteCriticalSection (&ChipAccess);
-#else
-	if (ChipAccess != NULL)
-	{
-		SDL_DestroyMutex (ChipAccess);
-		ChipAccess = NULL;
-	}
-#endif
-	delete io;
 }
 
-void OPLmusicBlock::ResetChips ()
-{
-	TwoChips = !opl_onechip;
-#ifdef _WIN32
-	EnterCriticalSection (&ChipAccess);
-#else
-	if (SDL_mutexP (ChipAccess) != 0)
-		return;
-#endif
-	io->OPLdeinit ();
-	io->OPLinit (TwoChips + 1, SampleRate);
-#ifdef _WIN32
-	LeaveCriticalSection (&ChipAccess);
-#else
-	SDL_mutexV (ChipAccess);
-#endif
-}
-
-bool OPLmusicBlock::IsValid () const
+bool OPLmusicFile::IsValid () const
 {
 	return scoredata != NULL;
 }
 
-void OPLmusicBlock::SetLooping (bool loop)
+void OPLmusicFile::SetLooping (bool loop)
 {
 	Looping = loop;
 }
 
-void OPLmusicBlock::Restart ()
+void OPLmusicFile::Restart ()
 {
-	OPLstopMusic ();
-	OPLplayMusic ();
-	MLtime = 0;
-	playingcount = 0;
-	if (RawPlayer == NotRaw)
+	OPLmusicBlock::Restart();
+	WhichChip = 0;
+	switch (RawPlayer)
 	{
-		score = scoredata + ((MUSheader *)scoredata)->scoreStart;
-	}
-	else if (RawPlayer == RDosPlay)
-	{
+	case RDosPlay:
 		score = scoredata + 10;
-		SamplesPerTick = Scale (SampleRate, LittleShort(*(WORD *)(scoredata + 8)), 1193180);
-	}
-	else if (RawPlayer == IMF)
-	{
+		SamplesPerTick = LittleShort(*(WORD *)(scoredata + 8)) / ADLIB_CLOCK_MUL;
+		break;
+
+	case DosBox1:
+		score = scoredata + 24;
+		SamplesPerTick = OPL_SAMPLE_RATE / 1000;
+		break;
+
+	case DosBox2:
+		score = scoredata + 0x1A + scoredata[0x19];
+		SamplesPerTick = OPL_SAMPLE_RATE / 1000;
+		break;
+
+	case IMF:
 		score = scoredata + 6;
 
 		// Skip track and game name
@@ -188,56 +215,58 @@ void OPLmusicBlock::Restart ()
 		{
 			score += 4;		// Skip song length
 		}
+		break;
 	}
+	io->SetClockRate(SamplesPerTick);
 }
 
 bool OPLmusicBlock::ServiceStream (void *buff, int numbytes)
 {
-	short *samples = (short *)buff;
-	int *samples1 = SampleBuff;
-	int numsamples = numbytes / 2;
+	float *samples1 = (float *)buff;
+	int stereoshift = (int)(FullPan | io->IsOPL3);
+	int numsamples = numbytes / (sizeof(float) << stereoshift);
 	bool prevEnded = false;
 	bool res = true;
 
-	memset (SampleBuff, 0, numsamples * 4);
+	memset(buff, 0, numbytes);
 
-#ifdef _WIN32
-	EnterCriticalSection (&ChipAccess);
-#else
-	if (SDL_mutexP (ChipAccess) != 0)
-		return true;
-#endif
+	ChipAccess.Enter();
 	while (numsamples > 0)
 	{
-		int samplesleft = MIN (numsamples, NextTickIn);
+		double ticky = NextTickIn;
+		int tick_in = int(NextTickIn);
+		int samplesleft = MIN(numsamples, tick_in);
+		size_t i;
 
 		if (samplesleft > 0)
 		{
-			YM3812UpdateOne (0, samples1, samplesleft);
-			if (TwoChips)
+			for (i = 0; i < io->NumChips; ++i)
 			{
-				YM3812UpdateOne (1, samples1, samplesleft);
+				io->chips[i]->Update(samples1, samplesleft);
 			}
+			OffsetSamples(samples1, samplesleft << stereoshift);
+			assert(NextTickIn == ticky);
 			NextTickIn -= samplesleft;
 			assert (NextTickIn >= 0);
 			numsamples -= samplesleft;
-			samples1 += samplesleft;
+			samples1 += samplesleft << stereoshift;
 		}
 		
-		if (NextTickIn == 0)
+		if (NextTickIn < 1)
 		{
-			int next = PlayTick ();
+			int next = PlayTick();
+			assert(next >= 0);
 			if (next == 0)
 			{ // end of song
 				if (!Looping || prevEnded)
 				{
 					if (numsamples > 0)
 					{
-						YM3812UpdateOne (0, samples1, numsamples);
-						if (TwoChips)
+						for (i = 0; i < io->NumChips; ++i)
 						{
-							YM3812UpdateOne (1, samples1, numsamples);
+							io->chips[i]->Update(samples1, samplesleft);
 						}
+						OffsetSamples(samples1, numsamples << stereoshift);
 					}
 					res = false;
 					break;
@@ -252,110 +281,98 @@ bool OPLmusicBlock::ServiceStream (void *buff, int numbytes)
 			else
 			{
 				prevEnded = false;
-				NextTickIn = SamplesPerTick * next;
+				io->WriteDelay(next);
+				NextTickIn += SamplesPerTick * next;
 				assert (NextTickIn >= 0);
 				MLtime += next;
 			}
 		}
 	}
-#ifdef _WIN32
-	LeaveCriticalSection (&ChipAccess);
-#else
-	SDL_mutexV (ChipAccess);
-#endif
-	numsamples = numbytes / 2;
-	samples1 = SampleBuff;
-
-#if defined(_MSC_VER) && defined(USEASM)
-	if (CPU.bCMOV && numsamples > 1)
-	{
-		__asm
-		{
-			mov ecx, numsamples
-			mov esi, samples1
-			mov edi, samples
-			shr ecx, 1
-			lea esi, [esi+ecx*8]
-			lea edi, [edi+ecx*4]
-			neg ecx
-			mov edx, 0x00007fff
-looper:		mov eax, [esi+ecx*8]
-			mov ebx, [esi+ecx*8+4]
-
-			// Shift the samples down to reduce the chance of clipping at the high end.
-			// Since most of the waveforms we produce only use the upper half of the
-			// sine wave, this is a good thing. Although it does leave less room at
-			// the bottom of the sine before clipping, almost none of the songs I tested
-			// went below -9000.
-			sub eax, 18000
-			sub ebx, 18000
-
-			// Clamp high
-			cmp eax, edx
-			cmovg eax, edx
-			cmp ebx, edx
-			cmovg ebx, edx
-
-			// Clamp low
-			not edx
-			cmp eax, edx
-			cmovl eax, edx
-			cmp ebx, edx
-			cmovl ebx, edx
-
-			not edx
-			mov [edi+ecx*4], ax
-			mov [edi+ecx*4+2], bx
-
-			inc ecx
-			jnz looper
-
-			test numsamples, 1
-			jz done
-
-			mov eax, [esi+ecx*8]
-			sub eax, 18000
-			cmp eax, edx
-			cmovg eax, edx
-			not edx
-			cmp eax, edx
-			cmovl eax, edx
-			mov [edi+ecx*2], ax
-done:
-		}
-	}
-	else
-#endif
-	{
-		for (int i = 1; i < numsamples; i+=2)
-		{
-			int u = samples1[i-1] - 18000;
-			int v = samples1[i  ] - 18000;
-			if (u < -32768) u = -32768; else if (u > 32767) u = 32767;
-			if (v < -32768) v = -32768; else if (v > 32767) v = 32767;
-			samples[i-1] = u;
-			samples[i  ] = v;
-		}
-		if (numsamples & 1)
-		{
- 			int v = samples1[numsamples-1] - 18000;
-			if (v < -32768) v = -32768; else if (v > 32767) v = 32767;
-			samples[numsamples-1] = v;
-		}
-	}
+	ChipAccess.Leave();
 	return res;
 }
 
-int OPLmusicBlock::PlayTick ()
+void OPLmusicBlock::OffsetSamples(float *buff, int count)
+{
+	// Three out of four of the OPL waveforms are non-negative. Depending on
+	// timbre selection, this can cause the output waveform to tend toward
+	// very large positive values. Heretic's music is particularly bad for
+	// this. This function attempts to compensate by offseting the sample
+	// data back to around the [-1.0, 1.0] range.
+
+	double max = -1e10, min = 1e10, offset, step;
+	int i, ramp, largest_at = 0;
+
+	// Find max and min values for this segment of the waveform.
+	for (i = 0; i < count; ++i)
+	{
+		if (buff[i] > max)
+		{
+			max = buff[i];
+			largest_at = i;
+		}
+		if (buff[i] < min)
+		{
+			min = buff[i];
+			largest_at = i;
+		}
+	}
+	// Prefer to keep the offset at 0, even if it means a little clipping.
+	if (LastOffset == 0 && min >= -1.1 && max <= 1.1)
+	{
+		offset = 0;
+	}
+	else
+	{
+		offset = (max + min) / 2;
+		// If the new offset is close to 0, make it 0 to avoid making another
+		// full loop through the sample data.
+		if (fabs(offset) < 1/256.0)
+		{
+			offset = 0;
+		}
+	}
+	// Ramp the offset change so there aren't any abrupt clicks in the output.
+	// If the ramp is too short, it can sound scratchy. cblood2.mid is
+	// particularly unforgiving of short ramps.
+	if (count >= 512)
+	{
+		ramp = 512;
+		step = (offset - LastOffset) / 512;
+	}
+	else
+	{
+		ramp = MIN(count, MAX(196, largest_at));
+		step = (offset - LastOffset) / ramp;
+	}
+	offset = LastOffset;
+	i = 0;
+	if (step != 0)
+	{
+		for (; i < ramp; ++i)
+		{
+			buff[i] = float(buff[i] - offset);
+			offset += step;
+		}
+	}
+	if (offset != 0)
+	{
+		for (; i < count; ++i)
+		{
+			buff[i] = float(buff[i] - offset);
+		}
+	}
+	LastOffset = float(offset);
+}
+
+int OPLmusicFile::PlayTick ()
 {
 	BYTE reg, data;
+	WORD delay;
 
-	if (RawPlayer == NotRaw)
+	switch (RawPlayer)
 	{
-		return playTick ();
-	}
-	else if (RawPlayer == RDosPlay)
-	{
+	case RDosPlay:
 		while (score < scoredata + ScoreLen)
 		{
 			data = *score++;
@@ -372,8 +389,17 @@ int OPLmusicBlock::PlayTick ()
 			case 2:		// Speed change or OPL3 switch
 				if (data == 0)
 				{
-					SamplesPerTick = Scale (SampleRate, LittleShort(*(WORD *)(score)), 1193180);
+					SamplesPerTick = LittleShort(*(WORD *)(score)) / ADLIB_CLOCK_MUL;
+					io->SetClockRate(SamplesPerTick);
 					score += 2;
+				}
+				else if (data == 1)
+				{
+					WhichChip = 0;
+				}
+				else if (data == 2)
+				{
+					WhichChip = 1;
 				}
 				break;
 
@@ -385,17 +411,90 @@ int OPLmusicBlock::PlayTick ()
 				break;
 
 			default:	// It's something to stuff into the OPL chip
-				io->OPLwriteReg (0, reg, data);
+				io->OPLwriteReg(WhichChip, reg, data);
 				break;
 			}
 		}
-	}
-	else if (RawPlayer == IMF)
-	{
-		WORD delay = 0;
+		break;
 
+	case DosBox1:
+		while (score < scoredata + ScoreLen)
+		{
+			reg = *score++;
+
+			if (reg == 4)
+			{
+				reg = *score++;
+				data = *score++;
+			}
+			else if (reg == 0)
+			{ // One-byte delay
+				return *score++ + 1;
+			}
+			else if (reg == 1)
+			{ // Two-byte delay
+				int delay = score[0] + (score[1] << 8) + 1;
+				score += 2;
+				return delay;
+			}
+			else if (reg == 2)
+			{ // Select OPL chip 0
+				WhichChip = 0;
+				continue;
+			}
+			else if (reg == 3)
+			{ // Select OPL chip 1
+				WhichChip = 1;
+				continue;
+			}
+			else
+			{
+				data = *score++;
+			}
+			io->OPLwriteReg(WhichChip, reg, data);
+		}
+		break;
+
+	case DosBox2:
+		{
+			BYTE *to_reg = scoredata + 0x1A;
+			BYTE to_reg_size = scoredata[0x19];
+			BYTE short_delay_code = scoredata[0x17];
+			BYTE long_delay_code = scoredata[0x18];
+
+			while (score < scoredata + ScoreLen)
+			{
+				BYTE code = *score++;
+				data = *score++;
+
+				// Which OPL chip to write to is encoded in the high bit of the code value.
+				int which = !!(code & 0x80);
+				code &= 0x7F;
+
+				if (code == short_delay_code)
+				{
+					return data + 1;
+				}
+				else if (code == long_delay_code)
+				{
+					return (data + 1) << 8;
+				}
+				else if (code < to_reg_size)
+				{
+					io->OPLwriteReg(which, to_reg[code], data);
+				}
+			}
+		}
+		break;
+
+	case IMF:
+		delay = 0;
 		while (delay == 0 && score + 4 - scoredata <= ScoreLen)
 		{
+			if (*(DWORD *)score == 0xFFFFFFFF)
+			{ // This is a special value that means to end the song.
+				return 0;
+			}
 			reg = score[0];
 			data = score[1];
 			delay = LittleShort(((WORD *)score)[1]);
@@ -407,199 +506,40 @@ int OPLmusicBlock::PlayTick ()
 	return 0;
 }
 
-ADD_STAT (opl, out)
+/*
+ADD_STAT (opl)
 {
-	uint i;
+	return YM3812GetVoiceString ();
+}
+*/
 
-	if (BlockForStats != NULL)
+OPLmusicFile::OPLmusicFile(const OPLmusicFile *source, const char *filename)
+{
+	ScoreLen = source->ScoreLen;
+	scoredata = new BYTE[ScoreLen];
+	memcpy(scoredata, source->scoredata, ScoreLen);
+	SamplesPerTick = source->SamplesPerTick;
+	RawPlayer = source->RawPlayer;
+	score = source->score;
+	NumChips = source->NumChips;
+	WhichChip = 0;
+	if (io != NULL)
 	{
-		for (i = 0; i < BlockForStats->io->OPLchannels; ++i)
-		{
-			int color;
-
-			if (BlockForStats->channels[i].flags & CH_FREE)
-			{
-				color = CR_BRICK;
-			}
-			else if (BlockForStats->channels[i].flags & CH_SUSTAIN)
-			{
-				color = CR_ORANGE;
-			}
-			else if (BlockForStats->channels[i].flags & CH_SECONDARY)
-			{
-				color = CR_BLUE;
-			}
-			else
-			{
-				color = CR_GREEN;
-			}
-			out[i*3+0] = '\x1c';
-			out[i*3+1] = 'A'+color;
-			out[i*3+2] = '*';
-		}
-		out[i*3] = 0;
+		delete io;
 	}
-	else
-	{
-		YM3812GetVoiceString (out);
-	}
+	io = new DiskWriterIO(filename);
+	NumChips = io->OPLinit(NumChips);
+	Restart();
 }
 
-struct DiskWriterIO : public OPLio
+void OPLmusicFile::Dump()
 {
-	DiskWriterIO () : File(NULL) {}
-	virtual ~DiskWriterIO () { if (File != NULL) fclose (File); }
-	int OPLinit(const char *filename);
-	virtual void OPLwriteReg(int which, uint reg, uchar data);
+	int time;
 
-	FILE *File;
-	bool RawFormat;
-};
-
-class OPLmusicWriter : public musicBlock
-{
-public:
-	OPLmusicWriter (const char *songname, const char *filename);
-	~OPLmusicWriter ();
-	void Go ();
-
-	bool SharingData;
-	FILE *File;
-};
-
-OPLmusicWriter::OPLmusicWriter (const char *songname, const char *filename)
-{
-	io = NULL;
-	SharingData = true;
-	if (songname == NULL)
+	time = PlayTick();
+	while (time != 0)
 	{
-		if (BlockForStats == NULL)
-		{
-			Printf ("Not currently playing an OPL song.\n");
-			return;
-		}
-		scoredata = BlockForStats->scoredata;
-		OPLinstruments = BlockForStats->OPLinstruments;
+		io->WriteDelay(time);
+		time = PlayTick();
 	}
-	else
-	{
-		SharingData = false;
-		int lumpnum = Wads.CheckNumForName (songname);
-		if (lumpnum == -1)
-		{
-			Printf ("Song %s is unknown.\n", songname);
-			return;
-		}
-		FWadLump song = Wads.OpenLumpNum (lumpnum);
-		scoredata = new BYTE [song.GetLength ()];
-		song.Read (scoredata, song.GetLength());
-		FWadLump genmidi = Wads.OpenLumpName ("GENMIDI");
-		OPLloadBank (genmidi);
-	}
-	io = new DiskWriterIO ();
-	if (((DiskWriterIO *)io)->OPLinit (filename) == 0)
-	{
-		OPLplayMusic ();
-		score = scoredata + ((MUSheader *)scoredata)->scoreStart;
-		Go ();
-	}
-}
-
-OPLmusicWriter::~OPLmusicWriter ()
-{
-	if (io != NULL) delete io;
-	if (!SharingData)
-	{
-		delete scoredata;
-	}
-	else
-	{
-		OPLinstruments = NULL;
-	}
-}
-
-void OPLmusicWriter::Go ()
-{
-	int next;
-
-	while ((next = playTick()) != 0)
-	{
-		MLtime += next;
-		while (next > 255)
-		{
-			io->OPLwriteReg (10, 0, 255);
-			next -= 255;
-		}
-		io->OPLwriteReg (10, 0, next);
-	}
-	io->OPLwriteReg (10, 0xFF, 0xFF);
-}
-
-int DiskWriterIO::OPLinit (const char *filename)
-{
-	int numchips;
-	//size_t namelen;
-
-	// If the file extension is unknown or not present, the default format
-	// is RAW. Otherwise, you can use DRO. But not right now. The DRO format
-	// is still in a state of flux, so I don't want the hassle.
-	//namelen = strlen (filename);
-	RawFormat = 1; //(namelen < 5 || stricmp (filename + namelen - 4, ".dro") != 0);
-	File = fopen (filename, "wb");
-	if (File == NULL)
-	{
-		return -1;
-	}
-
-	if (RawFormat)
-	{
-		fwrite ("RAWADATA", 1, 8, File);
-		WORD clock = LittleShort(17045/2);
-		fwrite (&clock, 2, 1, File);
-		numchips = 1;
-	}
-	else
-	{
-		numchips = 2;
-	}
-
-	OPLchannels = OPL2CHANNELS*numchips;
-	for (int i = 0; i < numchips; ++i)
-	{
-		OPLwriteReg (i, 0x01, 0x20);	// enable Waveform Select
-		OPLwriteReg (i, 0x0B, 0x40);	// turn off CSW mode
-		OPLwriteReg (i, 0xBD, 0x00);	// set vibrato/tremolo depth to low, set melodic mode
-	}
-	OPLshutup();
-	return 0;
-}
-
-void DiskWriterIO::OPLwriteReg(int which, uint reg, uchar data)
-{
-	if (which == 10 || (reg != 0 && reg != 2 && reg != 0xFF))
-	{
-		struct { BYTE data, reg; } out = { data, reg };
-		fwrite (&out, 2, 1, File);
-	}
-	else
-	{
-		reg = reg;
-	}
-}
-
-CCMD (writeopl)
-{
-	if (argv.argc() == 2)
-	{
-		OPLmusicWriter writer (NULL, argv[1]);
-	}
-	else if (argv.argc() == 3)
-	{
-		OPLmusicWriter writer (argv[1], argv[2]);
-	}
-	else
-	{
-		Printf ("Usage: writeopl [songname] <filename>");
-	}
-
 }

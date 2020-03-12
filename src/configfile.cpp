@@ -3,7 +3,7 @@
 ** Implements the basic .ini parsing class
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2008 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -30,20 +30,25 @@
 ** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **---------------------------------------------------------------------------
 **
-** This could have been done with a lot less source code using the STL and
-** maps, but how much larger would the object code be?
-**
-** Regardless of object size, I had not considered the possibility of using
-** the STL when I wrote this.
 */
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "doomtype.h"
 #include "configfile.h"
+#include "m_random.h"
 
 #define READBUFFERSIZE	256
+
+static FRandom pr_endtag;
+
+//====================================================================
+//
+// FConfigFile Constructor
+//
+//====================================================================
 
 FConfigFile::FConfigFile ()
 {
@@ -51,7 +56,15 @@ FConfigFile::FConfigFile ()
 	LastSectionPtr = &Sections;
 	CurrentEntry = NULL;
 	PathName = "";
+	OkayToWrite = true;
+	FileExisted = true;
 }
+
+//====================================================================
+//
+// FConfigFile Constructor
+//
+//====================================================================
 
 FConfigFile::FConfigFile (const char *pathname,
 	void (*nosechandler)(const char *pathname, FConfigFile *config, void *userdata),
@@ -62,7 +75,15 @@ FConfigFile::FConfigFile (const char *pathname,
 	CurrentEntry = NULL;
 	ChangePathName (pathname);
 	LoadConfigFile (nosechandler, userdata);
+	OkayToWrite = true;
+	FileExisted = true;
 }
+
+//====================================================================
+//
+// FConfigFile Copy Constructor
+//
+//====================================================================
 
 FConfigFile::FConfigFile (const FConfigFile &other)
 {
@@ -71,7 +92,15 @@ FConfigFile::FConfigFile (const FConfigFile &other)
 	CurrentEntry = NULL;
 	ChangePathName (other.PathName);
 	*this = other;
+	OkayToWrite = other.OkayToWrite;
+	FileExisted = other.FileExisted;
 }
+
+//====================================================================
+//
+// FConfigFile Destructor
+//
+//====================================================================
 
 FConfigFile::~FConfigFile ()
 {
@@ -85,13 +114,21 @@ FConfigFile::~FConfigFile ()
 		while (entry != NULL)
 		{
 			FConfigEntry *nextentry = entry->Next;
+			delete[] entry->Value;
 			delete[] (char *)entry;
 			entry = nextentry;
 		}
+		section->~FConfigSection();
 		delete[] (char *)section;
 		section = nextsection;
 	}
 }
+
+//====================================================================
+//
+// FConfigFile Copy Operator
+//
+//====================================================================
 
 FConfigFile &FConfigFile::operator = (const FConfigFile &other)
 {
@@ -114,6 +151,14 @@ FConfigFile &FConfigFile::operator = (const FConfigFile &other)
 	return *this;
 }
 
+//====================================================================
+//
+// FConfigFile :: ClearConfig
+//
+// Removes all sections and entries from the config file.
+//
+//====================================================================
+
 void FConfigFile::ClearConfig ()
 {
 	CurrentSection = Sections;
@@ -128,10 +173,72 @@ void FConfigFile::ClearConfig ()
 	LastSectionPtr = &Sections;
 }
 
-void FConfigFile::ChangePathName (const string &pathname)
+//====================================================================
+//
+// FConfigFile :: ChangePathName
+//
+//====================================================================
+
+void FConfigFile::ChangePathName (const char *pathname)
 {
 	PathName = pathname;
 }
+
+//====================================================================
+//
+// FConfigFile :: CreateSectionAtStart
+//
+// Creates the section at the start of the file if it does not exist.
+// Otherwise, simply moves the section to the start of the file.
+//
+//====================================================================
+
+void FConfigFile::CreateSectionAtStart (const char *name)
+{
+	NewConfigSection (name);
+	MoveSectionToStart (name);
+}
+
+//====================================================================
+//
+// FConfigFile :: MoveSectionToStart
+//
+// Moves the named section to the start of the file if it exists.
+// Otherwise, does nothing.
+//
+//====================================================================
+
+void FConfigFile::MoveSectionToStart (const char *name)
+{
+	FConfigSection *section = FindSection (name);
+
+	if (section != NULL)
+	{
+		FConfigSection **prevsec = &Sections;
+		while (*prevsec != NULL && *prevsec != section)
+		{
+			prevsec = &((*prevsec)->Next);
+		}
+		*prevsec = section->Next;
+		section->Next = Sections;
+		Sections = section;
+		if (LastSectionPtr == &section->Next)
+		{
+			LastSectionPtr = prevsec;
+		}
+	}
+}
+
+
+//====================================================================
+//
+// FConfigFile :: SetSection
+//
+// Sets the current section to the named one, optionally creating it
+// if it does not exist. Returns true if the section exists (even if
+// it was newly created), false otherwise.
+//
+//====================================================================
 
 bool FConfigFile::SetSection (const char *name, bool allowCreate)
 {
@@ -149,6 +256,15 @@ bool FConfigFile::SetSection (const char *name, bool allowCreate)
 	return false;
 }
 
+//====================================================================
+//
+// FConfigFile :: SetFirstSection
+//
+// Sets the current section to the first one in the file. Returns
+// false if there are no sections.
+//
+//====================================================================
+
 bool FConfigFile::SetFirstSection ()
 {
 	CurrentSection = Sections;
@@ -159,6 +275,15 @@ bool FConfigFile::SetFirstSection ()
 	}
 	return false;
 }
+
+//====================================================================
+//
+// FConfigFile :: SetNextSection
+//
+// Advances the current section to the next one in the file. Returns
+// false if there are no more sections.
+//
+//====================================================================
 
 bool FConfigFile::SetNextSection ()
 {
@@ -174,6 +299,14 @@ bool FConfigFile::SetNextSection ()
 	return false;
 }
 
+//====================================================================
+//
+// FConfigFile :: GetCurrentSection
+//
+// Returns the name of the current section.
+//
+//====================================================================
+
 const char *FConfigFile::GetCurrentSection () const
 {
 	if (CurrentSection != NULL)
@@ -182,6 +315,14 @@ const char *FConfigFile::GetCurrentSection () const
 	}
 	return NULL;
 }
+
+//====================================================================
+//
+// FConfigFile :: ClearCurrentSection
+//
+// Removes all entries from the current section.
+//
+//====================================================================
 
 void FConfigFile::ClearCurrentSection ()
 {
@@ -194,13 +335,108 @@ void FConfigFile::ClearCurrentSection ()
 		{
 			next = entry->Next;
 			delete[] entry->Value;
-			delete entry;
+			delete[] (char *)entry;
 			entry = next;
 		}
 		CurrentSection->RootEntry = NULL;
 		CurrentSection->LastEntryPtr = &CurrentSection->RootEntry;
 	}
 }
+
+//====================================================================
+//
+// FConfigFile :: DeleteCurrentSection
+//
+// Completely removes the current section. The current section is
+// advanced to the next section. Returns true if there is still a
+// current section.
+//
+//====================================================================
+
+bool FConfigFile::DeleteCurrentSection()
+{
+	if (CurrentSection != NULL)
+	{
+		FConfigSection *sec;
+
+		ClearCurrentSection();
+
+		// Find the preceding section.
+		for (sec = Sections; sec != NULL && sec->Next != CurrentSection; sec = sec->Next)
+		{ }
+
+		sec->Next = CurrentSection->Next;
+		if (LastSectionPtr == &CurrentSection->Next)
+		{
+			LastSectionPtr = &sec->Next;
+		}
+
+		CurrentSection->~FConfigSection();
+		delete[] (char *)CurrentSection;
+
+		CurrentSection = sec->Next;
+		return CurrentSection != NULL;
+	}
+	return false;
+}
+
+//====================================================================
+//
+// FConfigFile :: ClearKey
+//
+// Removes a key from the current section, if found. If there are
+// duplicates, only the first is removed.
+//
+//====================================================================
+
+void FConfigFile::ClearKey(const char *key)
+{
+	if (CurrentSection->RootEntry == NULL)
+	{
+		return;
+	}
+	FConfigEntry **prober = &CurrentSection->RootEntry, *probe = *prober;
+
+	while (probe != NULL && stricmp(probe->Key, key) != 0)
+	{
+		prober = &probe->Next;
+		probe = *prober;
+	}
+	if (probe != NULL)
+	{
+		*prober = probe->Next;
+		if (CurrentSection->LastEntryPtr == &probe->Next)
+		{
+			CurrentSection->LastEntryPtr = prober;
+		}
+		delete[] probe->Value;
+		delete[] (char *)probe;
+	}
+}
+
+//====================================================================
+//
+// FConfigFile :: SectionIsEmpty
+//
+// Returns true if the current section has no entries. If there is
+// no current section, it is also considered empty.
+//
+//====================================================================
+
+bool FConfigFile::SectionIsEmpty()
+{
+	return (CurrentSection == NULL) || (CurrentSection->RootEntry == NULL);
+}
+
+
+//====================================================================
+//
+// FConfigFile :: NextInSection
+//
+// Provides the next key/value pair in the current section. Returns
+// true if there was another, false otherwise.
+//
+//====================================================================
 
 bool FConfigFile::NextInSection (const char *&key, const char *&value)
 {
@@ -215,6 +451,15 @@ bool FConfigFile::NextInSection (const char *&key, const char *&value)
 	return true;
 }
 
+//====================================================================
+//
+// FConfigFile :: GetValueForKey
+//
+// Returns the value for the specified key in the current section,
+// returning NULL if the key does not exist.
+//
+//====================================================================
+
 const char *FConfigFile::GetValueForKey (const char *key) const
 {
 	FConfigEntry *entry = FindEntry (CurrentSection, key);
@@ -225,6 +470,16 @@ const char *FConfigFile::GetValueForKey (const char *key) const
 	}
 	return NULL;
 }
+
+//====================================================================
+//
+// FConfigFile :: SetValueForKey
+//
+// Sets they key/value pair as specified in the current section. If
+// duplicates are allowed, it always creates a new pair. Otherwise, it
+// will overwrite the value of an existing key with the same name.
+//
+//====================================================================
 
 void FConfigFile::SetValueForKey (const char *key, const char *value, bool duplicates)
 {
@@ -243,6 +498,12 @@ void FConfigFile::SetValueForKey (const char *key, const char *value, bool dupli
 	}
 }
 
+//====================================================================
+//
+// FConfigFile :: FindSection
+//
+//====================================================================
+
 FConfigFile::FConfigSection *FConfigFile::FindSection (const char *name) const
 {
 	FConfigSection *section = Sections;
@@ -253,6 +514,12 @@ FConfigFile::FConfigSection *FConfigFile::FindSection (const char *name) const
 	}
 	return section;
 }
+
+//====================================================================
+//
+// FConfigFile :: FindEntry
+//
+//====================================================================
 
 FConfigFile::FConfigEntry *FConfigFile::FindEntry (
 	FConfigFile::FConfigSection *section, const char *key) const
@@ -266,15 +533,23 @@ FConfigFile::FConfigEntry *FConfigFile::FindEntry (
 	return probe;
 }
 
+//====================================================================
+//
+// FConfigFile :: NewConfigSection
+//
+//====================================================================
+
 FConfigFile::FConfigSection *FConfigFile::NewConfigSection (const char *name)
 {
 	FConfigSection *section;
+	char *memblock;
 
 	section = FindSection (name);
 	if (section == NULL)
 	{
 		size_t namelen = strlen (name);
-		section = (FConfigSection *)new char[sizeof(*section)+namelen];
+		memblock = new char[sizeof(*section)+namelen];
+		section = ::new(memblock) FConfigSection;
 		section->RootEntry = NULL;
 		section->LastEntryPtr = &section->RootEntry;
 		section->Next = NULL;
@@ -285,6 +560,12 @@ FConfigFile::FConfigSection *FConfigFile::NewConfigSection (const char *name)
 	}
 	return section;
 }
+
+//====================================================================
+//
+// FConfigFile :: NewConfigEntry
+//
+//====================================================================
 
 FConfigFile::FConfigEntry *FConfigFile::NewConfigEntry (
 	FConfigFile::FConfigSection *section, const char *key, const char *value)
@@ -304,25 +585,41 @@ FConfigFile::FConfigEntry *FConfigFile::NewConfigEntry (
 	return entry;
 }
 
+//====================================================================
+//
+// FConfigFile :: LoadConfigFile
+//
+//====================================================================
+
 void FConfigFile::LoadConfigFile (void (*nosechandler)(const char *pathname, FConfigFile *config, void *userdata), void *userdata)
 {
-	FILE *file = fopen (PathName.GetChars(), "r");
+	FILE *file = fopen (PathName, "r");
 	bool succ;
 
+	FileExisted = false;
 	if (file == NULL)
+	{
 		return;
+	}
 
 	succ = ReadConfig (file);
 	fclose (file);
+	FileExisted = succ;
 
 	if (!succ)
 	{ // First valid line did not define a section
 		if (nosechandler != NULL)
 		{
-			nosechandler (PathName.GetChars(), this, userdata);
+			nosechandler (PathName, this, userdata);
 		}
 	}
 }
+
+//====================================================================
+//
+// FConfigFile :: ReadConfig
+//
+//====================================================================
 
 bool FConfigFile::ReadConfig (void *file)
 {
@@ -373,38 +670,112 @@ bool FConfigFile::ReadConfig (void *file)
 			{
 				// Remove white space in front of =
 				char *whiteprobe = equalpt - 1;
-				while (whiteprobe > start && *whiteprobe <= ' ')
+				while (whiteprobe > start && isspace(*whiteprobe))
 				{
 					whiteprobe--;
 				}
 				whiteprobe[1] = 0;
 				// Remove white space after =
 				whiteprobe = equalpt + 1;
-				while (*whiteprobe && *whiteprobe <= ' ')
+				while (*whiteprobe && isspace(*whiteprobe))
 				{
 					whiteprobe++;
 				}
 				*(whiteprobe - 1) = 0;
-				NewConfigEntry (section, start, whiteprobe);
+				// Check for multi-line value
+				if (whiteprobe[0] == '<' && whiteprobe[1] == '<' && whiteprobe[2] == '<' && whiteprobe[3] != '\0')
+				{
+					ReadMultiLineValue (file, section, start, whiteprobe + 3);
+				}
+				else
+				{
+					NewConfigEntry (section, start, whiteprobe);
+				}
 			}
 		}
 	}
 	return true;
 }
 
+//====================================================================
+//
+// FConfigFile :: ReadMultiLineValue
+//
+// Reads a multi-line value, with format as follows:
+//
+//    key=<<<ENDTAG
+//    ... blah blah blah ...
+//    >>>ENDTAG
+//
+// The final ENDTAG must be on a line all by itself.
+//
+//====================================================================
+
+FConfigFile::FConfigEntry *FConfigFile::ReadMultiLineValue(void *file, FConfigSection *section, const char *key, const char *endtag)
+{
+	char readbuf[READBUFFERSIZE];
+	FString value;
+	size_t endlen = strlen(endtag);
+
+	// Keep on reading lines until we reach a line that matches >>>endtag
+	while (ReadLine(readbuf, READBUFFERSIZE, file) != NULL)
+	{
+		// Does the start of this line match the endtag?
+		if (readbuf[0] == '>' && readbuf[1] == '>' && readbuf[2] == '>' &&
+			strncmp(readbuf + 3, endtag, endlen) == 0)
+		{ // Is there nothing but line break characters after the match?
+			size_t i;
+			for (i = endlen + 3; readbuf[i] != '\0'; ++i)
+			{
+				if (readbuf[i] != '\n' && readbuf[i] != '\r')
+				{ // Not a line break character
+					break;
+				}
+			}
+			if (readbuf[i] == '\0')
+			{ // We're done; strip the previous line's line breaks, since it's not part of the value.
+				value.StripRight("\n\r");
+			}
+			break;
+		}
+		// Append this line to the value.
+		value << readbuf;
+	}
+	return NewConfigEntry(section, key, value);
+}
+
+//====================================================================
+//
+// FConfigFile :: ReadLine
+//
+//====================================================================
+
 char *FConfigFile::ReadLine (char *string, int n, void *file) const
 {
 	return fgets (string, n, (FILE *)file);
 }
 
-void FConfigFile::WriteConfigFile () const
+//====================================================================
+//
+// FConfigFile :: WriteConfigFile
+//
+//====================================================================
+
+bool FConfigFile::WriteConfigFile () const
 {
-	FILE *file = fopen (PathName.GetChars(), "w");
+	if (!OkayToWrite && FileExisted)
+	{ // Pretend it was written anyway so that the user doesn't get
+	  // any "config not written" notifications, but only if the file
+	  // already existed. Otherwise, let it write out a default one.
+		return true;
+	}
+
+	FILE *file = fopen (PathName, "w");
 	FConfigSection *section;
 	FConfigEntry *entry;
 
 	if (file == NULL)
-		return;
+		return false;
 
 	WriteCommentHeader (file);
 
@@ -412,21 +783,87 @@ void FConfigFile::WriteConfigFile () const
 	while (section != NULL)
 	{
 		entry = section->RootEntry;
+		if (section->Note.IsNotEmpty())
+		{
+			fputs (section->Note.GetChars(), file);
+		}
 		fprintf (file, "[%s]\n", section->Name);
 		while (entry != NULL)
 		{
-			fprintf (file, "%s=%s\n", entry->Key, entry->Value);
+			if (strpbrk(entry->Value, "\r\n") == NULL)
+			{ // Single-line value
+				fprintf (file, "%s=%s\n", entry->Key, entry->Value);
+			}
+			else
+			{ // Multi-line value
+				const char *endtag = GenerateEndTag(entry->Value);
+				fprintf (file, "%s=<<<%s\n%s\n>>>%s\n", entry->Key,
+					endtag, entry->Value, endtag);
+			}
 			entry = entry->Next;
 		}
 		section = section->Next;
-		fprintf (file, "\n");
+		fputs ("\n", file);
 	}
 	fclose (file);
+	return true;
 }
+
+//====================================================================
+//
+// FConfigFile :: GenerateEndTag
+//
+// Generates a terminator sequence for multi-line values that does
+// not appear anywhere in the value.
+//
+//====================================================================
+
+const char *FConfigFile::GenerateEndTag(const char *value)
+{
+	static const char Base64Table[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._";
+	static char EndTag[25] = "EOV-";
+
+	// Try different 20-character sequences until we find one that
+	// isn't in the value. We create the sequences by generating two
+	// 64-bit random numbers and Base64 encoding the first 15 bytes
+	// from them.
+	union { QWORD rand_num[2]; BYTE rand_bytes[16]; };
+	do
+	{
+		rand_num[0] = pr_endtag.GenRand64();
+		rand_num[1] = pr_endtag.GenRand64();
+
+		for (int i = 0; i < 5; ++i)
+		{
+			DWORD three_bytes = (rand_bytes[i*3] << 16) | (rand_bytes[i*3+1] << 8) | (rand_bytes[i*3+2]);
+			EndTag[4+i*4  ] = Base64Table[rand_bytes[i*3] >> 2];
+			EndTag[4+i*4+1] = Base64Table[((rand_bytes[i*3] & 3) << 4) | (rand_bytes[i*3+1] >> 4)];
+			EndTag[4+i*4+2] = Base64Table[((rand_bytes[i*3+1] & 15) << 2) | (rand_bytes[i*3+2] >> 6)];
+			EndTag[4+i*4+3] = Base64Table[rand_bytes[i*3+2] & 63];
+		}
+	}
+	while (strstr(value, EndTag) != NULL);
+	return EndTag;
+}
+
+//====================================================================
+//
+// FConfigFile :: WriteCommentHeader
+//
+// Override in a subclass to write a header to the config file.
+//
+//====================================================================
 
 void FConfigFile::WriteCommentHeader (FILE *file) const
 {
 }
+
+//====================================================================
+//
+// FConfigFile :: FConfigEntry :: SetValue
+//
+//====================================================================
 
 void FConfigFile::FConfigEntry::SetValue (const char *value)
 {
@@ -438,14 +875,62 @@ void FConfigFile::FConfigEntry::SetValue (const char *value)
 	strcpy (Value, value);
 }
 
+//====================================================================
+//
+// FConfigFile :: GetPosition
+//
+// Populates a struct with the current position of the parse cursor.
+//
+//====================================================================
+
 void FConfigFile::GetPosition (FConfigFile::Position &pos) const
 {
 	pos.Section = CurrentSection;
 	pos.Entry = CurrentEntry;
 }
 
+//====================================================================
+//
+// FConfigFile :: SetPosition
+//
+// Sets the parse cursor to a previously retrieved position.
+//
+//====================================================================
+
 void FConfigFile::SetPosition (const FConfigFile::Position &pos)
 {
 	CurrentSection = pos.Section;
 	CurrentEntry = pos.Entry;
+}
+
+//====================================================================
+//
+// FConfigFile :: SetSectionNote
+//
+// Sets a comment note to be inserted into the INI verbatim directly
+// ahead of the section. Notes are lost when the INI is read so must
+// be explicitly set to be maintained.
+//
+//====================================================================
+
+void FConfigFile::SetSectionNote(const char *section, const char *note)
+{
+	SetSectionNote(FindSection(section), note);
+}
+
+void FConfigFile::SetSectionNote(const char *note)
+{
+	SetSectionNote(CurrentSection, note);
+}
+
+void FConfigFile::SetSectionNote(FConfigSection *section, const char *note)
+{
+	if (section != NULL)
+	{
+		if (note == NULL)
+		{
+			note = "";
+		}
+		section->Note = note;
+	}
 }

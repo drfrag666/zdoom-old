@@ -3,7 +3,7 @@
 ** Handles pillars
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -37,11 +37,39 @@
 #include "p_spec.h"
 #include "g_level.h"
 #include "s_sndseq.h"
+#include "farchive.h"
+#include "r_data/r_interpolate.h"
 
-IMPLEMENT_CLASS (DPillar)
+IMPLEMENT_POINTY_CLASS (DPillar)
+	DECLARE_POINTER(m_Interp_Floor)
+	DECLARE_POINTER(m_Interp_Ceiling)
+END_POINTERS
+
+inline FArchive &operator<< (FArchive &arc, DPillar::EPillar &type)
+{
+	BYTE val = (BYTE)type;
+	arc << val;
+	type = (DPillar::EPillar)val;
+	return arc;
+}
 
 DPillar::DPillar ()
 {
+}
+
+void DPillar::Destroy()
+{
+	if (m_Interp_Ceiling != NULL)
+	{
+		m_Interp_Ceiling->DelRef();
+		m_Interp_Ceiling = NULL;
+	}
+	if (m_Interp_Floor != NULL)
+	{
+		m_Interp_Floor->DelRef();
+		m_Interp_Floor = NULL;
+	}
+	Super::Destroy();
 }
 
 void DPillar::Serialize (FArchive &arc)
@@ -52,7 +80,10 @@ void DPillar::Serialize (FArchive &arc)
 		<< m_CeilingSpeed
 		<< m_FloorTarget
 		<< m_CeilingTarget
-		<< m_Crush;
+		<< m_Crush
+		<< m_Hexencrush
+		<< m_Interp_Floor
+		<< m_Interp_Ceiling;
 }
 
 void DPillar::Tick ()
@@ -65,46 +96,47 @@ void DPillar::Tick ()
 
 	if (m_Type == pillarBuild)
 	{
-		r = MoveFloor (m_FloorSpeed, m_FloorTarget, m_Crush, 1);
-		s = MoveCeiling (m_CeilingSpeed, m_CeilingTarget, m_Crush, -1);
+		r = MoveFloor (m_FloorSpeed, m_FloorTarget, m_Crush, 1, m_Hexencrush);
+		s = MoveCeiling (m_CeilingSpeed, m_CeilingTarget, m_Crush, -1, m_Hexencrush);
 	}
 	else
 	{
-		r = MoveFloor (m_FloorSpeed, m_FloorTarget, m_Crush, -1);
-		s = MoveCeiling (m_CeilingSpeed, m_CeilingTarget, m_Crush, 1);
+		r = MoveFloor (m_FloorSpeed, m_FloorTarget, m_Crush, -1, m_Hexencrush);
+		s = MoveCeiling (m_CeilingSpeed, m_CeilingTarget, m_Crush, 1, m_Hexencrush);
 	}
 
 	if (r == pastdest && s == pastdest)
 	{
-		SN_StopSequence (m_Sector);
+		SN_StopSequence (m_Sector, CHAN_FLOOR);
 		Destroy ();
 	}
 	else
 	{
 		if (r == crushed)
 		{
-			MoveFloor (m_FloorSpeed, oldfloor, -1, -1);
+			MoveFloor (m_FloorSpeed, oldfloor, -1, -1, m_Hexencrush);
 		}
 		if (s == crushed)
 		{
-			MoveCeiling (m_CeilingSpeed, oldceiling, -1, 1);
+			MoveCeiling (m_CeilingSpeed, oldceiling, -1, 1, m_Hexencrush);
 		}
 	}
 }
 
 DPillar::DPillar (sector_t *sector, EPillar type, fixed_t speed,
-				  fixed_t floordist, fixed_t ceilingdist, int crush)
+				  fixed_t floordist, fixed_t ceilingdist, int crush, bool hexencrush)
 	: DMover (sector)
 {
 	fixed_t newheight;
 	vertex_t *spot;
 
 	sector->floordata = sector->ceilingdata = this;
-	setinterpolation (INTERP_SectorFloor, sector);
-	setinterpolation (INTERP_SectorCeiling, sector);
+	m_Interp_Floor = sector->SetInterpolation(sector_t::FloorMove, true);
+	m_Interp_Ceiling = sector->SetInterpolation(sector_t::CeilingMove, true);
 
 	m_Type = type;
 	m_Crush = crush;
+	m_Hexencrush = hexencrush;
 
 	if (type == pillarBuild)
 	{
@@ -167,13 +199,21 @@ DPillar::DPillar (sector_t *sector, EPillar type, fixed_t speed,
 	}
 
 	if (sector->seqType >= 0)
-		SN_StartSequence (sector, sector->seqType, SEQ_PLATFORM);
+	{
+		SN_StartSequence (sector, CHAN_FLOOR, sector->seqType, SEQ_PLATFORM, 0);
+	}
+	else if (sector->SeqName != NAME_None)
+	{
+		SN_StartSequence (sector, CHAN_FLOOR, sector->SeqName, 0);
+	}
 	else
-		SN_StartSequence (sector, "Floor");
+	{
+		SN_StartSequence (sector, CHAN_FLOOR, "Floor", 0);
+	}
 }
 
 bool EV_DoPillar (DPillar::EPillar type, int tag, fixed_t speed, fixed_t height,
-				  fixed_t height2, int crush)
+				  fixed_t height2, int crush, bool hexencrush)
 {
 	bool rtn = false;
 	int secnum = -1;
@@ -182,7 +222,7 @@ bool EV_DoPillar (DPillar::EPillar type, int tag, fixed_t speed, fixed_t height,
 	{
 		sector_t *sec = &sectors[secnum];
 
-		if (sec->floordata || sec->ceilingdata)
+		if (sec->PlaneMoving(sector_t::floor) || sec->PlaneMoving(sector_t::ceiling))
 			continue;
 
 		fixed_t flor, ceil;
@@ -197,7 +237,7 @@ bool EV_DoPillar (DPillar::EPillar type, int tag, fixed_t speed, fixed_t height,
 			continue;
 
 		rtn = true;
-		new DPillar (sec, type, speed, height, height2, crush);
+		new DPillar (sec, type, speed, height, height2, crush, hexencrush);
 	}
 	return rtn;
 }

@@ -12,18 +12,20 @@
 #include <stdlib.h>
 #include "doomtype.h"
 
-#if defined(__GNUG__)
+#if defined(__GNUC__) && defined(__i386__)
 #include "gccinlines.h"
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && defined(_M_IX86)
 #include "mscinlines.h"
 #else
 #include "basicinlines.h"
 #endif
 
+#include "xs_Float.h"
+
 #define MAKESAFEDIVSCALE(x) \
 	inline SDWORD SafeDivScale##x (SDWORD a, SDWORD b) \
 	{ \
-		if (abs(a) >> (31-x) >= abs (b)) \
+		if ((DWORD)abs(a) >> (31-x) >= (DWORD)abs (b)) \
 			return (a^b)<0 ? FIXED_MIN : FIXED_MAX; \
 		return DivScale##x (a, b); \
 	}
@@ -62,14 +64,14 @@ MAKESAFEDIVSCALE(30)
 
 inline SDWORD SafeDivScale31 (SDWORD a, SDWORD b)
 {
-	if (abs(a) >= abs (b))
+	if ((DWORD)abs(a) >= (DWORD)abs (b))
 		return (a^b)<0 ? FIXED_MIN : FIXED_MAX;
-	return DivScale32 (a, b);
+	return DivScale31 (a, b);
 }
 
 inline SDWORD SafeDivScale32 (SDWORD a, SDWORD b)
 {
-	if (abs(a) >= abs (b) >> 1)
+	if ((DWORD)abs(a) >= (DWORD)abs (b) >> 1)
 		return (a^b)<0 ? FIXED_MIN : FIXED_MAX;
 	return DivScale32 (a, b);
 }
@@ -133,5 +135,10 @@ inline SDWORD ModDiv (SDWORD num, SDWORD den, SDWORD *dmval)
 	*dmval = num / den;
 	return num % den;
 }
+
+
+#define FLOAT2FIXED(f)		xs_Fix<16>::ToFix(f)
+#define FIXED2FLOAT(f)		((f) / float(65536))
+#define FIXED2DBL(f)		((f) / double(65536))
 
 #endif

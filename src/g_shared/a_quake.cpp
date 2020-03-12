@@ -6,39 +6,68 @@
 #include "m_bbox.h"
 #include "m_random.h"
 #include "s_sound.h"
+#include "a_sharedglobal.h"
+#include "statnums.h"
+#include "farchive.h"
 
 static FRandom pr_quake ("Quake");
-
-class DEarthquake : public DThinker
-{
-	DECLARE_CLASS (DEarthquake, DThinker)
-	HAS_OBJECT_POINTERS
-public:
-	DEarthquake (AActor *center, int intensity, int duration, int damrad, int tremrad);
-
-	void Serialize (FArchive &arc);
-	void Tick ();
-
-	AActor *m_Spot;
-	fixed_t m_TremorRadius, m_DamageRadius;
-	int m_Intensity;
-	int m_Countdown;
-	int m_QuakeSFX;
-private:
-	DEarthquake () {}
-};
 
 IMPLEMENT_POINTY_CLASS (DEarthquake)
  DECLARE_POINTER (m_Spot)
 END_POINTERS
 
+//==========================================================================
+//
+// DEarthquake :: DEarthquake private constructor
+//
+//==========================================================================
+
+DEarthquake::DEarthquake()
+: DThinker(STAT_EARTHQUAKE)
+{
+}
+
+//==========================================================================
+//
+// DEarthquake :: DEarthquake public constructor
+//
+//==========================================================================
+
+DEarthquake::DEarthquake (AActor *center, int intensity, int duration,
+						  int damrad, int tremrad, FSoundID quakesound)
+						  : DThinker(STAT_EARTHQUAKE)
+{
+	m_QuakeSFX = quakesound;
+	m_Spot = center;
+	// Radii are specified in tile units (64 pixels)
+	m_DamageRadius = damrad << (FRACBITS);
+	m_TremorRadius = tremrad << (FRACBITS);
+	m_Intensity = intensity;
+	m_Countdown = duration;
+}
+
+//==========================================================================
+//
+// DEarthquake :: Serialize
+//
+//==========================================================================
+
 void DEarthquake::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
 	arc << m_Spot << m_Intensity << m_Countdown
-		<< m_TremorRadius << m_DamageRadius;
-	m_QuakeSFX = S_FindSound ("world/quake");
+		<< m_TremorRadius << m_DamageRadius
+		<< m_QuakeSFX;
 }
+
+//==========================================================================
+//
+// DEarthquake :: Tick
+//
+// Deals damage to any players near the earthquake and makes sure it's
+// making noise.
+//
+//==========================================================================
 
 void DEarthquake::Tick ()
 {
@@ -50,64 +79,109 @@ void DEarthquake::Tick ()
 		return;
 	}
 
-	if (!S_GetSoundPlayingInfo (m_Spot, m_QuakeSFX))
-		S_SoundID (m_Spot, CHAN_BODY, m_QuakeSFX, 1, ATTN_NORM);
-
-	for (i = 0; i < MAXPLAYERS; i++)
+	if (!S_IsActorPlayingSomething (m_Spot, CHAN_BODY, m_QuakeSFX))
 	{
-		if (playeringame[i] && !(players[i].cheats & CF_NOCLIP))
+		S_Sound (m_Spot, CHAN_BODY | CHAN_LOOP, m_QuakeSFX, 1, ATTN_NORM);
+	}
+	if (m_DamageRadius > 0)
+	{
+		for (i = 0; i < MAXPLAYERS; i++)
 		{
-			AActor *victim = players[i].mo;
-			fixed_t dist;
+			if (playeringame[i] && !(players[i].cheats & CF_NOCLIP))
+			{
+				AActor *victim = players[i].mo;
+				fixed_t dist;
 
-			dist = P_AproxDistance (victim->x - m_Spot->x, victim->y - m_Spot->y);
-			// Tested in tile units (64 pixels)
-			if (dist < m_TremorRadius)
-			{
-				players[i].xviewshift = m_Intensity;
-			}
-			// Check if in damage radius
-			if (dist < m_DamageRadius && victim->z <= victim->floorz)
-			{
-				if (pr_quake() < 50)
+				dist = P_AproxDistance (victim->x - m_Spot->x, victim->y - m_Spot->y);
+				// Check if in damage radius
+				if (dist < m_DamageRadius && victim->z <= victim->floorz)
 				{
-					P_DamageMobj (victim, NULL, NULL, pr_quake.HitDice (1), MOD_UNKNOWN);
+					if (pr_quake() < 50)
+					{
+						P_DamageMobj (victim, NULL, NULL, pr_quake.HitDice (1), NAME_None);
+					}
+					// Thrust player around
+					angle_t an = victim->angle + ANGLE_1*pr_quake();
+					P_ThrustMobj (victim, an, m_Intensity << (FRACBITS-1));
 				}
-				// Thrust player around
-				angle_t an = victim->angle + ANGLE_1*pr_quake();
-				P_ThrustMobj (victim, an, m_Intensity << (FRACBITS-1));
 			}
 		}
 	}
 	if (--m_Countdown == 0)
 	{
-		Destroy ();
+		if (S_IsActorPlayingSomething(m_Spot, CHAN_BODY, m_QuakeSFX))
+		{
+			S_StopSound(m_Spot, CHAN_BODY);
+		}
+		Destroy();
 	}
 }
 
-DEarthquake::DEarthquake (AActor *center, int intensity, int duration,
-						  int damrad, int tremrad)
+//==========================================================================
+//
+// DEarthquake::StaticGetQuakeIntensity
+//
+// Searches for all quakes near the victim and returns their combined
+// intensity.
+//
+//==========================================================================
+
+int DEarthquake::StaticGetQuakeIntensity (AActor *victim)
 {
-	m_QuakeSFX = S_FindSound ("world/quake");
-	m_Spot = center;
-	m_DamageRadius = damrad << (FRACBITS+6);
-	m_TremorRadius = tremrad << (FRACBITS+6);
-	m_Intensity = intensity;
-	m_Countdown = duration;
+	int intensity = 0;
+	TThinkerIterator<DEarthquake> iterator (STAT_EARTHQUAKE);
+	DEarthquake *quake;
+
+	if (victim->player != NULL && (victim->player->cheats & CF_NOCLIP))
+	{
+		return 0;
+	}
+
+	while ( (quake = iterator.Next()) != NULL)
+	{
+		if (quake->m_Spot != NULL)
+		{
+			fixed_t dist = P_AproxDistance (victim->x - quake->m_Spot->x,
+				victim->y - quake->m_Spot->y);
+			if (dist < quake->m_TremorRadius)
+			{
+				if (intensity < quake->m_Intensity)
+					intensity = quake->m_Intensity;
+			}
+		}
+	}
+	return intensity;
 }
 
-bool P_StartQuake (int tid, int intensity, int duration, int damrad, int tremrad)
+//==========================================================================
+//
+// P_StartQuake
+//
+//==========================================================================
+
+bool P_StartQuake (AActor *activator, int tid, int intensity, int duration, int damrad, int tremrad, FSoundID quakesfx)
 {
 	AActor *center;
-	FActorIterator iterator (tid);
 	bool res = false;
 
 	intensity = clamp (intensity, 1, 9);
 
-	while ( (center = iterator.Next ()) )
+	if (tid == 0)
 	{
-		res = true;
-		new DEarthquake (center, intensity, duration, damrad, tremrad);
+		if (activator != NULL)
+		{
+			new DEarthquake(activator, intensity, duration, damrad, tremrad, quakesfx);
+			return true;
+		}
+	}
+	else
+	{
+		FActorIterator iterator (tid);
+		while ( (center = iterator.Next ()) )
+		{
+			res = true;
+			new DEarthquake (center, intensity, duration, damrad, tremrad, quakesfx);
+		}
 	}
 	
 	return res;

@@ -43,12 +43,13 @@
 *		Added modulation wheel (vibrato) support
 */
 
-#include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
 #include <io.h>
 #endif
 #include "muslib.h"
+#include "files.h"
 
 #include "c_cvars.h"
 
@@ -82,9 +83,9 @@ void musicBlock::writeModulation(uint slot, struct OPL2instrument *instr, int st
 		instr->trem_vibr_2 | state);
 }
 
-uint musicBlock::calcVolume(uint channelVolume, uint MUSvolume, uint noteVolume)
+uint musicBlock::calcVolume(uint channelVolume, uint channelExpression, uint noteVolume)
 {
-	noteVolume = ((ulong)channelVolume * MUSvolume * noteVolume) / (256*127);
+	noteVolume = ((ulong)channelVolume * channelExpression * noteVolume) / (127*127);
 	if (noteVolume > 127)
 		return 127;
 	else
@@ -95,20 +96,20 @@ int musicBlock::occupyChannel(uint slot, uint channel,
 						 int note, int volume, struct OP2instrEntry *instrument, uchar secondary)
 {
 	struct OPL2instrument *instr;
-	struct OPLdata *data = &driverdata;
 	struct channelEntry *ch = &channels[slot];
 
 	ch->channel = channel;
 	ch->note = note;
 	ch->flags = secondary ? CH_SECONDARY : 0;
-	if (data->channelModulation[channel] >= MOD_MIN)
+	if (driverdata.channelModulation[channel] >= MOD_MIN)
 		ch->flags |= CH_VIBRATO;
 	ch->time = MLtime;
 	if (volume == -1)
-		volume = data->channelLastVolume[channel];
+		volume = driverdata.channelLastVolume[channel];
 	else
-		data->channelLastVolume[channel] = volume;
-	ch->realvolume = calcVolume(data->channelVolume[channel], 256, ch->volume = volume);
+		driverdata.channelLastVolume[channel] = volume;
+	ch->realvolume = calcVolume(driverdata.channelVolume[channel],
+		driverdata.channelExpression[channel], ch->volume = volume);
 	if (instrument->flags & FL_FIXED_PITCH)
 		note = instrument->note;
 	else if (channel == PERCUSSION)
@@ -117,7 +118,7 @@ int musicBlock::occupyChannel(uint slot, uint channel,
 		ch->finetune = (instrument->finetune - 0x80) >> 1;
 	else
 		ch->finetune = 0;
-	ch->pitch = ch->finetune + data->channelPitch[channel];
+	ch->pitch = ch->finetune + driverdata.channelPitch[channel];
 	if (secondary)
 		instr = &instrument->instr[1];
 	else
@@ -135,7 +136,7 @@ int musicBlock::occupyChannel(uint slot, uint channel,
 	io->OPLwriteInstrument(slot, instr);
 	if (ch->flags & CH_VIBRATO)
 		writeModulation(slot, instr, 1);
-	io->OPLwritePan(slot, instr, data->channelPan[channel]);
+	io->OPLwritePan(slot, instr, driverdata.channelPan[channel]);
 	io->OPLwriteVolume(slot, instr, ch->realvolume);
 	writeFrequency(slot, note, ch->pitch, 1);
 	return slot;
@@ -208,7 +209,8 @@ struct OP2instrEntry *musicBlock::getInstrument(uint channel, uchar note)
 		if (note < 35 || note > 81)
 			return NULL;		/* wrong percussion number */
 		instrnumber = note + (128-35);
-	} else
+	}
+	else
 	{
 		instrnumber = driverdata.channelInstr[channel];
 	}
@@ -253,8 +255,7 @@ void musicBlock::OPLreleaseNote(uint channel, uchar note)
 {
 	uint i;
 	uint id = channel;
-	struct OPLdata *data = &driverdata;
-	uint sustain = data->channelSustain[channel];
+	uint sustain = driverdata.channelSustain[channel];
 
 	for(i = 0; i < io->OPLchannels; i++)
 	{
@@ -273,11 +274,11 @@ void musicBlock::OPLpitchWheel(uint channel, int pitch)
 {
 	uint i;
 	uint id = channel;
-	struct OPLdata *data = &driverdata;
 
-	//pitch -= 0x80;
-	pitch >>= 1;
-	data->channelPitch[channel] = pitch;
+	// Convert pitch from 14-bit to 7-bit, then scale it, since the player
+	// code only understands sensitivities of 2 semitones.
+	pitch = (pitch - 8192) * driverdata.channelPitchSens[channel] / (200 * 128) + 64;
+	driverdata.channelPitch[channel] = pitch;
 	for(i = 0; i < io->OPLchannels; i++)
 	{
 		struct channelEntry *ch = &channels[i];
@@ -295,15 +296,15 @@ void musicBlock::OPLchangeControl(uint channel, uchar controller, int value)
 {
 	uint i;
 	uint id = channel;
-	struct OPLdata *data = &driverdata;
 
 	switch (controller)
 	{
 	case ctrlPatch:			/* change instrument */
-		data->channelInstr[channel] = value;
+		OPLprogramChange(channel, value);
 		break;
+
 	case ctrlModulation:
-		data->channelModulation[channel] = value;
+		driverdata.channelModulation[channel] = value;
 		for(i = 0; i < io->OPLchannels; i++)
 		{
 			struct channelEntry *ch = &channels[i];
@@ -324,21 +325,30 @@ void musicBlock::OPLchangeControl(uint channel, uchar controller, int value)
 			}
 		}
 		break;
+
 	case ctrlVolume:		/* change volume */
-		data->channelVolume[channel] = value;
+		driverdata.channelVolume[channel] = value;
+		/* fall-through */
+	case ctrlExpression:	/* change expression */
+		if (controller == ctrlExpression)
+		{
+			driverdata.channelExpression[channel] = value;
+		}
 		for(i = 0; i < io->OPLchannels; i++)
 		{
 			struct channelEntry *ch = &channels[i];
 			if (ch->channel == id)
 			{
 				ch->time = MLtime;
-				ch->realvolume = calcVolume(value, 256, ch->volume);
+				ch->realvolume = calcVolume(driverdata.channelVolume[channel],
+					driverdata.channelExpression[channel], ch->volume);
 				io->OPLwriteVolume(i, ch->instr, ch->realvolume);
 			}
 		}
 		break;
+
 	case ctrlPan:			/* change pan (balance) */
-		data->channelPan[channel] = value -= 64;
+		driverdata.channelPan[channel] = value -= 64;
 		for(i = 0; i < io->OPLchannels; i++)
 		{
 			struct channelEntry *ch = &channels[i];
@@ -349,26 +359,88 @@ void musicBlock::OPLchangeControl(uint channel, uchar controller, int value)
 			}
 		}
 		break;
+
 	case ctrlSustainPedal:		/* change sustain pedal (hold) */
-		data->channelSustain[channel] = value;
+		driverdata.channelSustain[channel] = value;
 		if (value < 0x40)
 			releaseSustain(channel);
+		break;
+
+	case ctrlNotesOff:			/* turn off all notes that are not sustained */
+		for (i = 0; i < io->OPLchannels; ++i)
+		{
+			if (channels[i].channel == id)
+			{
+				if (driverdata.channelSustain[id] < 0x40)
+					releaseChannel(i, 0);
+				else
+					channels[i].flags |= CH_SUSTAIN;
+			}
+		}
+		break;
+
+	case ctrlSoundsOff:			/* release all notes for this channel */
+		for (i = 0; i < io->OPLchannels; ++i)
+		{
+			if (channels[i].channel == id)
+			{
+				releaseChannel(i, 0);
+			}
+		}
+		break;
+
+	case ctrlRPNHi:
+		driverdata.channelRPN[id] = (driverdata.channelRPN[id] & 0x007F) | (value << 7);
+		break;
+
+	case ctrlRPNLo:
+		driverdata.channelRPN[id] = (driverdata.channelRPN[id] & 0x3F80) | value;
+		break;
+
+	case ctrlNRPNLo:
+	case ctrlNRPNHi:
+		driverdata.channelRPN[id] = 0x3FFF;
+		break;
+
+	case ctrlDataEntryHi:
+		if (driverdata.channelRPN[id] == 0)
+		{
+			driverdata.channelPitchSens[id] = value * 100 + (driverdata.channelPitchSens[id] % 100);
+		}
+		break;
+
+	case ctrlDataEntryLo:
+		if (driverdata.channelRPN[id] == 0)
+		{
+			driverdata.channelPitchSens[id] = value + (driverdata.channelPitchSens[id] / 100) * 100;
+		}
 		break;
 	}
 }
 
+void musicBlock::OPLresetControllers(uint chan, int vol)
+{
+	driverdata.channelVolume[chan] = vol;
+	driverdata.channelExpression[chan] = 127;
+	driverdata.channelSustain[chan] = 0;
+	driverdata.channelLastVolume[chan] = 64;
+	driverdata.channelPitch[chan] = 64;
+	driverdata.channelRPN[chan] = 0x3fff;
+	driverdata.channelPitchSens[chan] = 200;
+}
 
-void musicBlock::OPLplayMusic()
+void musicBlock::OPLprogramChange(uint channel, int value)
+{
+	driverdata.channelInstr[channel] = value;
+}
+
+void musicBlock::OPLplayMusic(int vol)
 {
 	uint i;
-	struct OPLdata *data = &driverdata;
 
 	for (i = 0; i < CHANNELS; i++)
 	{
-		data->channelVolume[i] = 127;	/* default volume 127 (full volume) */
-		data->channelSustain[i] = 0;
-		data->channelLastVolume[i] = 64;
-		data->channelPitch[i] = 64;
+		OPLresetControllers(i, vol);
 	}
 }
 
@@ -378,18 +450,6 @@ void musicBlock::OPLstopMusic()
 	for(i = 0; i < io->OPLchannels; i++)
 		if (!(channels[i].flags & CH_FREE))
 			releaseChannel(i, 1);
-}
-
-void musicBlock::OPLchangeVolume(uint volume)
-{
-	uchar *channelVolume = driverdata.channelVolume;
-	uint i;
-	for(i = 0; i < io->OPLchannels; i++)
-	{
-		struct channelEntry *ch = &channels[i];
-		ch->realvolume = calcVolume(channelVolume[ch->channel & 0xF], volume, ch->volume);
-		io->OPLwriteVolume(i, ch->instr, ch->realvolume);
-	}
 }
 
 int musicBlock::OPLloadBank (FileReader &data)

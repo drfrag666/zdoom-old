@@ -8,13 +8,78 @@
  *
  */
 
+/* From muslib175.zip/README.1ST:
+
+1.1 - Disclaimer of Warranties
+------------------------------
+
+#ifdef LAWYER
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+#else
+
+Use this software at your own risk.
+
+#endif
+
+
+1.2 - Terms of Use
+------------------
+
+This library may be used in any freeware or shareware product free of
+charge. The product may not be sold for profit (except for shareware) and
+should be freely available to the public. It would be nice of you if you
+credited me in your product and notified me if you use this library.
+
+If you want to use this library in a commercial product, contact me
+and we will make an agreement. It is a violation of the law to make money
+of this product without prior signing an agreement and paying a license fee.
+This licence will allow its holder to sell any products based on MUSLib,
+royalty-free. There is no need to buy separate licences for different
+products once the licence fee is paid.
+
+
+1.3 - Contacting the Author
+---------------------------
+
+Internet (address valid probably until the end of year 1998):
+  xarnos00@dcse.fee.vutbr.cz
+
+FIDO:
+  2:423/36.2
+
+Snail-mail:
+
+  Vladimir Arnost
+  Ceska 921
+  Chrudim 4
+  537 01
+  CZECH REPUBLIC
+
+Voice-mail (Czech language only, not recommended; weekends only):
+
+  +42-455-2154
+*/
+
 #ifndef __MUSLIB_H_
 #define __MUSLIB_H_
 
 #ifndef __DEFTYPES_H_
   #include "deftypes.h"
 #endif
-#include "files.h"
+
+class FileReader;
 
 /* Global Definitions */
 
@@ -66,7 +131,7 @@ struct OP2instrEntry {
 };
 
 #define FL_FIXED_PITCH	0x0001		// note has fixed pitch (see below)
-#define FL_UNKNOWN	0x0002			// ??? (used in instrument #65 only)
+#define FL_UNKNOWN		0x0002		// ??? (used in instrument #65 only)
 #define FL_DOUBLE_VOICE	0x0004		// use two voices instead of one
 
 
@@ -76,7 +141,8 @@ struct OP2instrEntry {
 /* From MLOPL_IO.CPP */
 #define OPL2CHANNELS	9
 #define OPL3CHANNELS	18
-#define MAXCHANNELS		18
+#define MAXOPL2CHIPS	8
+#define MAXCHANNELS		(OPL2CHANNELS * MAXOPL2CHIPS)
 
 
 /* Channel Flags: */
@@ -90,12 +156,17 @@ struct OPLdata {
 	uchar	channelVolume[CHANNELS];		// volume
 	uchar	channelLastVolume[CHANNELS];	// last volume
 	schar	channelPan[CHANNELS];			// pan, 0=normal
-	schar	channelPitch[CHANNELS];			// pitch wheel, 0=normal
+	schar	channelPitch[CHANNELS];			// pitch wheel, 64=normal
 	uchar	channelSustain[CHANNELS];		// sustain pedal value
 	uchar	channelModulation[CHANNELS];	// modulation pot value
+	ushort	channelPitchSens[CHANNELS];		// pitch sensitivity, 2=default
+	ushort	channelRPN[CHANNELS];			// RPN number for data entry
+	uchar	channelExpression[CHANNELS];	// expression
 };
 
 struct OPLio {
+	virtual ~OPLio();
+
 	void	OPLwriteChannel(uint regbase, uint channel, uchar data1, uchar data2);
 	void	OPLwriteValue(uint regbase, uint channel, uchar value);
 	void	OPLwriteFreq(uint channel, uint freq, uint octave, uint keyon);
@@ -105,12 +176,44 @@ struct OPLio {
 	void	OPLwritePan(uint channel, struct OPL2instrument *instr, int pan);
 	void	OPLwriteInstrument(uint channel, struct OPL2instrument *instr);
 	void	OPLshutup(void);
+	void	OPLwriteInitState(bool initopl3);
 
-	virtual int		OPLinit(uint numchips, uint rate);
+	virtual int		OPLinit(uint numchips, bool stereo=false, bool initopl3=false);
 	virtual void	OPLdeinit(void);
 	virtual void	OPLwriteReg(int which, uint reg, uchar data);
+	virtual void	SetClockRate(double samples_per_tick);
+	virtual void	WriteDelay(int ticks);
 
+	class OPLEmul *chips[MAXOPL2CHIPS];
 	uint OPLchannels;
+	uint NumChips;
+	bool IsOPL3;
+};
+
+struct DiskWriterIO : public OPLio
+{
+	DiskWriterIO(const char *filename);
+	~DiskWriterIO();
+
+	int OPLinit(uint numchips, bool notused=false);
+	void OPLdeinit();
+	void OPLwriteReg(int which, uint reg, uchar data);
+	void SetClockRate(double samples_per_tick);
+	void WriteDelay(int ticks);
+
+	void SetChip(int chipnum);
+
+	FILE *File;
+	FString Filename;
+	int Format;
+	bool NeedClockRate;
+	double TimePerTick;		// In milliseconds
+	double CurTime;
+	int CurIntTime;
+	int TickMul;
+	int CurChip;
+
+	enum { FMT_RDOS, FMT_DOSBOX };
 };
 
 struct musicBlock {
@@ -127,19 +230,18 @@ struct musicBlock {
 
 	ulong MLtime;
 
-	int playTick();
-
 	void OPLplayNote(uint channel, uchar note, int volume);
 	void OPLreleaseNote(uint channel, uchar note);
 	void OPLpitchWheel(uint channel, int pitch);
 	void OPLchangeControl(uint channel, uchar controller, int value);
-	void OPLplayMusic();
+	void OPLprogramChange(uint channel, int value);
+	void OPLresetControllers(uint channel, int vol);
+	void OPLplayMusic(int vol);
 	void OPLstopMusic();
-	void OPLchangeVolume(uint volume);
 
 	int OPLloadBank (FileReader &data);
 
-private:
+protected:
 	/* OPL channel (voice) data */
 	struct channelEntry {
 		uchar	channel;		/* MUS channel number */
@@ -156,7 +258,7 @@ private:
 
 	void writeFrequency(uint slot, uint note, int pitch, uint keyOn);
 	void writeModulation(uint slot, struct OPL2instrument *instr, int state);
-	uint calcVolume(uint channelVolume, uint MUSvolume, uint noteVolume);
+	uint calcVolume(uint channelVolume, uint channelExpression, uint noteVolume);
 	int occupyChannel(uint slot, uint channel,
 						 int note, int volume, struct OP2instrEntry *instrument, uchar secondary);
 	int releaseChannel(uint slot, uint killed);
@@ -179,12 +281,19 @@ enum MUSctrl {
     ctrlChorus,
     ctrlSustainPedal,
     ctrlSoftPedal,
-    _ctrlCount_,
-    ctrlSoundsOff = _ctrlCount_,
+	ctrlRPNHi,
+	ctrlRPNLo,
+	ctrlNRPNHi,
+	ctrlNRPNLo,
+	ctrlDataEntryHi,
+	ctrlDataEntryLo,
+
+	ctrlSoundsOff,
     ctrlNotesOff,
     ctrlMono,
     ctrlPoly,
-    ctrlResetCtrls
 };
+
+#define ADLIB_CLOCK_MUL			24.0
 
 #endif // __MUSLIB_H_

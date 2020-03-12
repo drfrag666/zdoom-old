@@ -1,192 +1,60 @@
+/*
 #include "actor.h"
 #include "info.h"
 #include "a_pickups.h"
 #include "a_artifacts.h"
 #include "gstrings.h"
 #include "p_local.h"
-#include "p_enemy.h"
 #include "s_sound.h"
 #include "m_random.h"
 #include "a_action.h"
 #include "a_hexenglobal.h"
 #include "w_wad.h"
+#include "thingdef/thingdef.h"
+#include "g_level.h"
+*/
+
+EXTERN_CVAR(Bool, sv_unlimited_pickup)
 
 static FRandom pr_poisonbag ("PoisonBag");
 static FRandom pr_poisoncloud ("PoisonCloud");
 static FRandom pr_poisoncloudd ("PoisonCloudDamage");
 
-void A_PoisonBagInit (AActor *);
-void A_PoisonBagDamage (AActor *);
-void A_PoisonBagCheck (AActor *);
-void A_CheckThrowBomb (AActor *);
-void A_CheckThrowBomb2 (AActor *);
-
-// Poison Bag (Flechette used by Cleric) ------------------------------------
-
-class APoisonBag : public AActor
-{
-	DECLARE_ACTOR (APoisonBag, AActor)
-};
-
-FState APoisonBag::States[] =
-{
-#define S_POISONBAG1 0
-	S_BRIGHT (PSBG, 'A',   18, NULL					    , &States[S_POISONBAG1+1]),
-	S_BRIGHT (PSBG, 'B',	4, NULL					    , &States[S_POISONBAG1+2]),
-	S_NORMAL (PSBG, 'C',	3, NULL					    , &States[S_POISONBAG1+3]),
-	S_NORMAL (PSBG, 'C',	1, A_PoisonBagInit		    , NULL),
-};
-
-IMPLEMENT_ACTOR (APoisonBag, Hexen, -1, 0)
-	PROP_RadiusFixed (5)
-	PROP_HeightFixed (5)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
-
-	PROP_SpawnState (S_POISONBAG1)
-END_DEFAULTS
-
-// Fire Bomb (Flechette used by Mage) ---------------------------------------
-
-class AFireBomb : public AActor
-{
-	DECLARE_ACTOR (AFireBomb, AActor)
-public:
-	void PreExplode ()
-	{
-		z += 32*FRACUNIT;
-		RenderStyle = STYLE_Normal;
-	}
-};
-
-FState AFireBomb::States[] =
-{
-#define S_FIREBOMB1 0
-	S_NORMAL (PSBG, 'A',   20, NULL					    , &States[S_FIREBOMB1+1]),
-	S_NORMAL (PSBG, 'A',   10, NULL					    , &States[S_FIREBOMB1+2]),
-	S_NORMAL (PSBG, 'A',   10, NULL					    , &States[S_FIREBOMB1+3]),
-	S_NORMAL (PSBG, 'B',	4, NULL					    , &States[S_FIREBOMB1+4]),
-	S_NORMAL (PSBG, 'C',	4, A_Scream				    , &States[S_FIREBOMB1+5]),
-	S_BRIGHT (XPL1, 'A',	4, A_Explode			    , &States[S_FIREBOMB1+6]),
-	S_BRIGHT (XPL1, 'B',	4, NULL					    , &States[S_FIREBOMB1+7]),
-	S_BRIGHT (XPL1, 'C',	4, NULL					    , &States[S_FIREBOMB1+8]),
-	S_BRIGHT (XPL1, 'D',	4, NULL					    , &States[S_FIREBOMB1+9]),
-	S_BRIGHT (XPL1, 'E',	4, NULL					    , &States[S_FIREBOMB1+10]),
-	S_BRIGHT (XPL1, 'F',	4, NULL					    , NULL),
-};
-
-IMPLEMENT_ACTOR (AFireBomb, Hexen, -1, 0)
-	PROP_DamageType (MOD_FIRE)
-	PROP_Flags (MF_NOGRAVITY)
-	PROP_Flags3 (MF3_FOILINVUL)
-	PROP_RenderStyle (STYLE_Translucent)
-	PROP_Alpha (HX_ALTSHADOW)
-
-	PROP_SpawnState (S_FIREBOMB1)
-
-	PROP_DeathSound ("FlechetteExplode")
-END_DEFAULTS
-
-// Throwing Bomb (Flechette used by Fighter) --------------------------------
-
-class AThrowingBomb : public AActor
-{
-	DECLARE_ACTOR (AThrowingBomb, AActor)
-};
-
-FState AThrowingBomb::States[] =
-{
-#define S_THROWINGBOMB1 0
-	S_NORMAL (THRW, 'A',	4, A_CheckThrowBomb		    , &States[S_THROWINGBOMB1+1]),
-	S_NORMAL (THRW, 'B',	3, A_CheckThrowBomb		    , &States[S_THROWINGBOMB1+2]),
-	S_NORMAL (THRW, 'C',	3, A_CheckThrowBomb		    , &States[S_THROWINGBOMB1+3]),
-	S_NORMAL (THRW, 'D',	3, A_CheckThrowBomb		    , &States[S_THROWINGBOMB1+4]),
-	S_NORMAL (THRW, 'E',	3, A_CheckThrowBomb		    , &States[S_THROWINGBOMB1+5]),
-	S_NORMAL (THRW, 'F',	3, A_CheckThrowBomb2	    , &States[S_THROWINGBOMB1]),
-
-#define S_THROWINGBOMB7 (S_THROWINGBOMB1+6)
-	S_NORMAL (THRW, 'G',	6, A_CheckThrowBomb		    , &States[S_THROWINGBOMB7+1]),
-	S_NORMAL (THRW, 'F',	4, A_CheckThrowBomb		    , &States[S_THROWINGBOMB7+2]),
-	S_NORMAL (THRW, 'H',	6, A_CheckThrowBomb		    , &States[S_THROWINGBOMB7+3]),
-	S_NORMAL (THRW, 'F',	4, A_CheckThrowBomb		    , &States[S_THROWINGBOMB7+4]),
-	S_NORMAL (THRW, 'G',	6, A_CheckThrowBomb		    , &States[S_THROWINGBOMB7+5]),
-	S_NORMAL (THRW, 'F',	3, A_CheckThrowBomb		    , &States[S_THROWINGBOMB7+5]),
-
-#define S_THROWINGBOMB_X1 (S_THROWINGBOMB7+6)
-	S_BRIGHT (CFCF, 'Q',	4, A_NoGravity			    , &States[S_THROWINGBOMB_X1+1]),
-	S_BRIGHT (CFCF, 'R',	3, A_Scream				    , &States[S_THROWINGBOMB_X1+2]),
-	S_BRIGHT (CFCF, 'S',	4, A_Explode			    , &States[S_THROWINGBOMB_X1+3]),
-	S_BRIGHT (CFCF, 'T',	3, NULL					    , &States[S_THROWINGBOMB_X1+4]),
-	S_BRIGHT (CFCF, 'U',	4, NULL					    , &States[S_THROWINGBOMB_X1+5]),
-	S_BRIGHT (CFCF, 'W',	3, NULL					    , &States[S_THROWINGBOMB_X1+6]),
-	S_BRIGHT (CFCF, 'X',	4, NULL					    , &States[S_THROWINGBOMB_X1+7]),
-	S_BRIGHT (CFCF, 'Z',	3, NULL					    , NULL),
-};
-
-IMPLEMENT_ACTOR (AThrowingBomb, Hexen, -1, 0)
-	PROP_SpawnHealth (48)
-	PROP_SpeedFixed (12)
-	PROP_RadiusFixed (8)
-	PROP_HeightFixed (10)
-	PROP_DamageType (MOD_FIRE)
-	PROP_Flags (MF_NOBLOCKMAP|MF_DROPOFF|MF_MISSILE)
-	PROP_Flags2 (MF2_HEXENBOUNCE)
-
-	PROP_SpawnState (S_THROWINGBOMB1)
-	PROP_DeathState (S_THROWINGBOMB_X1)
-
-	PROP_SeeSound ("FlechetteBounce")
-	PROP_DeathSound ("FlechetteExplode")
-END_DEFAULTS
+DECLARE_ACTION(A_CheckThrowBomb)
 
 // Poison Bag Artifact (Flechette) ------------------------------------------
 
 class AArtiPoisonBag : public AInventory
 {
-	DECLARE_ACTOR (AArtiPoisonBag, AInventory)
+	DECLARE_CLASS (AArtiPoisonBag, AInventory)
 public:
 	bool HandlePickup (AInventory *item);
 	AInventory *CreateCopy (AActor *other);
-	const char *PickupMessage ();
 	void BeginPlay ();
 };
 
-FState AArtiPoisonBag::States[] =
-{
-	S_NORMAL (PSBG, 'A',   -1, NULL					    , NULL),
-};
-
-IMPLEMENT_ACTOR (AArtiPoisonBag, Hexen, 8000, 72)
-	PROP_Flags (MF_SPECIAL)
-	PROP_Flags2 (MF2_FLOATBOB)
-	PROP_SpawnState (0)
-	PROP_Inventory_DefMaxAmount
-	PROP_Inventory_FlagsSet (IF_INVBAR|IF_PICKUPFLASH|IF_FANCYPICKUPSOUND)
-	PROP_Inventory_Icon ("ARTIPSBG")
-	PROP_Inventory_PickupSound ("misc/p_pkup")
-END_DEFAULTS
+IMPLEMENT_CLASS (AArtiPoisonBag)
 
 // Poison Bag 1 (The Cleric's) ----------------------------------------------
 
 class AArtiPoisonBag1 : public AArtiPoisonBag
 {
-	DECLARE_STATELESS_ACTOR (AArtiPoisonBag1, AArtiPoisonBag)
+	DECLARE_CLASS (AArtiPoisonBag1, AArtiPoisonBag)
 public:
 	bool Use (bool pickup);
 };
 
-IMPLEMENT_STATELESS_ACTOR (AArtiPoisonBag1, Hexen, -1, 0)
-	PROP_Inventory_Icon ("ARTIPSB1")
-END_DEFAULTS
+IMPLEMENT_CLASS (AArtiPoisonBag1)
 
 bool AArtiPoisonBag1::Use (bool pickup)
 {
 	angle_t angle = Owner->angle >> ANGLETOFINESHIFT;
 	AActor *mo;
 
-	mo = Spawn<APoisonBag> (
+	mo = Spawn ("PoisonBag",
 		Owner->x+16*finecosine[angle],
 		Owner->y+24*finesine[angle], Owner->z-
-		Owner->floorclip+8*FRACUNIT);
+		Owner->floorclip+8*FRACUNIT, ALLOW_REPLACE);
 	if (mo)
 	{
 		mo->target = Owner;
@@ -199,24 +67,22 @@ bool AArtiPoisonBag1::Use (bool pickup)
 
 class AArtiPoisonBag2 : public AArtiPoisonBag
 {
-	DECLARE_STATELESS_ACTOR (AArtiPoisonBag2, AArtiPoisonBag)
+	DECLARE_CLASS (AArtiPoisonBag2, AArtiPoisonBag)
 public:
 	bool Use (bool pickup);
 };
 
-IMPLEMENT_STATELESS_ACTOR (AArtiPoisonBag2, Hexen, -1, 0)
-	PROP_Inventory_Icon ("ARTIPSB2")
-END_DEFAULTS
+IMPLEMENT_CLASS (AArtiPoisonBag2)
 
 bool AArtiPoisonBag2::Use (bool pickup)
 {
 	angle_t angle = Owner->angle >> ANGLETOFINESHIFT;
 	AActor *mo;
 
-	mo = Spawn<AFireBomb> (
+	mo = Spawn ("FireBomb",
 		Owner->x+16*finecosine[angle],
 		Owner->y+24*finesine[angle], Owner->z-
-		Owner->floorclip+8*FRACUNIT);
+		Owner->floorclip+8*FRACUNIT, ALLOW_REPLACE);
 	if (mo)
 	{
 		mo->target = Owner;
@@ -229,37 +95,134 @@ bool AArtiPoisonBag2::Use (bool pickup)
 
 class AArtiPoisonBag3 : public AArtiPoisonBag
 {
-	DECLARE_STATELESS_ACTOR (AArtiPoisonBag3, AArtiPoisonBag)
+	DECLARE_CLASS (AArtiPoisonBag3, AArtiPoisonBag)
 public:
 	bool Use (bool pickup);
 };
 
-IMPLEMENT_STATELESS_ACTOR (AArtiPoisonBag3, Hexen, -1, 0)
-	PROP_Inventory_Icon ("ARTIPSB3")
-END_DEFAULTS
+IMPLEMENT_CLASS (AArtiPoisonBag3)
 
 bool AArtiPoisonBag3::Use (bool pickup)
 {
 	AActor *mo;
 
-	mo = Spawn<AThrowingBomb> (Owner->x, Owner->y, 
-		Owner->z-Owner->floorclip+35*FRACUNIT);
+	mo = Spawn("ThrowingBomb", Owner->x, Owner->y, 
+		Owner->z-Owner->floorclip+35*FRACUNIT + (Owner->player? Owner->player->crouchoffset : 0), ALLOW_REPLACE);
 	if (mo)
 	{
-		angle_t pitch = (angle_t)Owner->pitch >> ANGLETOFINESHIFT;
+		mo->angle = Owner->angle + (((pr_poisonbag()&7) - 4) << 24);
 
-		mo->angle = Owner->angle+(((pr_poisonbag()&7)-4)<<24);
-		mo->momz = 4*FRACUNIT + 2*finesine[pitch];
-		mo->z += 2*finesine[pitch];
-		P_ThrustMobj (mo, mo->angle, mo->Speed);
-		mo->momx += Owner->momx>>1;
-		mo->momy += Owner->momy>>1;
+		/* Original flight code from Hexen
+		 * mo->momz = 4*FRACUNIT+((player->lookdir)<<(FRACBITS-4));
+		 * mo->z += player->lookdir<<(FRACBITS-4);
+		 * P_ThrustMobj(mo, mo->angle, mo->info->speed);
+		 * mo->momx += player->mo->momx>>1;
+		 * mo->momy += player->mo->momy>>1;
+		 */
+
+		// When looking straight ahead, it uses a z velocity of 4 while the xy velocity
+		// is as set by the projectile. To accommodate this with a proper trajectory, we
+		// aim the projectile ~20 degrees higher than we're looking at and increase the
+		// speed we fire at accordingly.
+		angle_t orgpitch = angle_t(-Owner->pitch) >> ANGLETOFINESHIFT;
+		angle_t modpitch = angle_t(0xDC00000 - Owner->pitch) >> ANGLETOFINESHIFT;
+		angle_t angle = mo->angle >> ANGLETOFINESHIFT;
+		fixed_t speed = fixed_t(sqrt((double)mo->Speed*mo->Speed + (4.0*65536*4*65536)));
+		fixed_t xyscale = FixedMul(speed, finecosine[modpitch]);
+
+		mo->velz = FixedMul(speed, finesine[modpitch]);
+		mo->velx = FixedMul(xyscale, finecosine[angle]) + (Owner->velx >> 1);
+		mo->vely = FixedMul(xyscale, finesine[angle]) + (Owner->vely >> 1);
+		mo->z += FixedMul(mo->Speed, finesine[orgpitch]);
+
 		mo->target = Owner;
 		mo->tics -= pr_poisonbag()&3;
-		P_CheckMissileSpawn (mo);
+		P_CheckMissileSpawn(mo, Owner->radius);
 		return true;
 	}
 	return false;
+}
+
+// Poison Bag 4 (Generic Giver) ----------------------------------------------
+
+class AArtiPoisonBagGiver : public AArtiPoisonBag
+{
+	DECLARE_CLASS (AArtiPoisonBagGiver, AArtiPoisonBag)
+public:
+	bool Use (bool pickup);
+};
+
+IMPLEMENT_CLASS (AArtiPoisonBagGiver)
+
+bool AArtiPoisonBagGiver::Use (bool pickup)
+{
+	const PClass *MissileType = PClass::FindClass((ENamedName) this->GetClass()->Meta.GetMetaInt (ACMETA_MissileName, NAME_None));
+	if (MissileType != NULL)
+	{
+		AActor *mo = Spawn (MissileType, Owner->x, Owner->y, Owner->z, ALLOW_REPLACE);
+		if (mo != NULL)
+		{
+			if (mo->IsKindOf(RUNTIME_CLASS(AInventory)))
+			{
+				AInventory *inv = static_cast<AInventory *>(mo);
+				if (inv->CallTryPickup(Owner))
+					return true;
+			}
+			mo->Destroy();	// Destroy if not inventory or couldn't be picked up
+		}
+	}
+	return false;
+}
+
+// Poison Bag 5 (Generic Thrower) ----------------------------------------------
+
+class AArtiPoisonBagShooter : public AArtiPoisonBag
+{
+	DECLARE_CLASS (AArtiPoisonBagShooter, AArtiPoisonBag)
+public:
+	bool Use (bool pickup);
+};
+
+IMPLEMENT_CLASS (AArtiPoisonBagShooter)
+
+bool AArtiPoisonBagShooter::Use (bool pickup)
+{
+	const PClass *MissileType = PClass::FindClass((ENamedName) this->GetClass()->Meta.GetMetaInt (ACMETA_MissileName, NAME_None));
+	if (MissileType != NULL)
+	{
+		AActor *mo = P_SpawnPlayerMissile(Owner, MissileType);
+		if (mo != NULL)
+		{
+			// automatic handling of seeker missiles
+			if (mo->flags2 & MF2_SEEKERMISSILE)
+			{
+				mo->tracer = Owner->target;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+//============================================================================
+//
+// GetFlechetteType
+//
+//============================================================================
+
+const PClass *GetFlechetteType(AActor *other)
+{
+	const PClass *spawntype = NULL;
+	if (other->IsKindOf(RUNTIME_CLASS(APlayerPawn)))
+	{
+		spawntype = static_cast<APlayerPawn*>(other)->FlechetteType;
+	}
+	if (spawntype == NULL)
+	{
+		// default fallback if nothing valid defined.
+		spawntype = RUNTIME_CLASS(AArtiPoisonBag3);
+	}
+	return spawntype;
 }
 
 //============================================================================
@@ -276,26 +239,12 @@ bool AArtiPoisonBag::HandlePickup (AInventory *item)
 		return Super::HandlePickup (item);
 	}
 
-	bool matched;
-
-	if (Owner->IsKindOf (RUNTIME_CLASS(AClericPlayer)))
+	if (GetClass() == GetFlechetteType(Owner))
 	{
-		matched = (GetClass() == RUNTIME_CLASS(AArtiPoisonBag1));
-	}
-	else if (Owner->IsKindOf (RUNTIME_CLASS(AMagePlayer)))
-	{
-		matched = (GetClass() == RUNTIME_CLASS(AArtiPoisonBag2));
-	}
-	else
-	{
-		matched = (GetClass() == RUNTIME_CLASS(AArtiPoisonBag3));
-	}
-	if (matched)
-	{
-		if (Amount < MaxAmount)
+		if (Amount < MaxAmount || sv_unlimited_pickup)
 		{
 			Amount += item->Amount;
-			if (Amount > MaxAmount)
+			if (Amount > MaxAmount && !sv_unlimited_pickup)
 			{
 				Amount = MaxAmount;
 			}
@@ -325,36 +274,13 @@ AInventory *AArtiPoisonBag::CreateCopy (AActor *other)
 	}
 
 	AInventory *copy;
-	const TypeInfo *spawntype;
 
-	if (other->IsKindOf (RUNTIME_CLASS(AClericPlayer)))
-	{
-		spawntype = RUNTIME_CLASS(AArtiPoisonBag1);
-	}
-	else if (other->IsKindOf (RUNTIME_CLASS(AMagePlayer)))
-	{
-		spawntype = RUNTIME_CLASS(AArtiPoisonBag2);
-	}
-	else
-	{
-		spawntype = RUNTIME_CLASS(AArtiPoisonBag3);
-	}
-	copy = static_cast<AInventory *>(Spawn (spawntype, 0, 0, 0));
+	const PClass *spawntype = GetFlechetteType(other);
+	copy = static_cast<AInventory *>(Spawn (spawntype, 0, 0, 0, NO_REPLACE));
 	copy->Amount = Amount;
 	copy->MaxAmount = MaxAmount;
 	GoAwayAndDie ();
 	return copy;
-}
-
-//============================================================================
-//
-// AArtiPoisonBag :: PickupMessage
-//
-//============================================================================
-
-const char *AArtiPoisonBag::PickupMessage ()
-{
-	return GStrings("TXT_ARTIPOISONBAG");
 }
 
 //============================================================================
@@ -367,7 +293,7 @@ void AArtiPoisonBag::BeginPlay ()
 {
 	Super::BeginPlay ();
 	// If a subclass's specific icon is not defined, let it use the base class's.
-	if (Icon <= 0)
+	if (!Icon.isValid())
 	{
 		AInventory *defbag;
 		// Why doesn't this work?
@@ -379,64 +305,24 @@ void AArtiPoisonBag::BeginPlay ()
 
 // Poison Cloud -------------------------------------------------------------
 
-FState APoisonCloud::States[] =
+class APoisonCloud : public AActor
 {
-#define S_POISONCLOUD1 0
-	S_NORMAL (PSBG, 'D',	1, NULL					    , &States[S_POISONCLOUD1+1]),
-	S_NORMAL (PSBG, 'D',	1, A_Scream				    , &States[S_POISONCLOUD1+2]),
-	S_NORMAL (PSBG, 'D',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+3]),
-	S_NORMAL (PSBG, 'E',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+4]),
-	S_NORMAL (PSBG, 'E',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+5]),
-	S_NORMAL (PSBG, 'E',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+6]),
-	S_NORMAL (PSBG, 'F',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+7]),
-	S_NORMAL (PSBG, 'F',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+8]),
-	S_NORMAL (PSBG, 'F',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+9]),
-	S_NORMAL (PSBG, 'G',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+10]),
-	S_NORMAL (PSBG, 'G',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+11]),
-	S_NORMAL (PSBG, 'G',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+12]),
-	S_NORMAL (PSBG, 'H',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+13]),
-	S_NORMAL (PSBG, 'H',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+14]),
-	S_NORMAL (PSBG, 'H',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+15]),
-	S_NORMAL (PSBG, 'I',	2, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+16]),
-	S_NORMAL (PSBG, 'I',	1, A_PoisonBagDamage	    , &States[S_POISONCLOUD1+17]),
-	S_NORMAL (PSBG, 'I',	1, A_PoisonBagCheck		    , &States[S_POISONCLOUD1+3]),
-
-#define S_POISONCLOUD_X1 (S_POISONCLOUD1+18)
-	S_NORMAL (PSBG, 'H',	7, NULL					    , &States[S_POISONCLOUD_X1+1]),
-	S_NORMAL (PSBG, 'G',	7, NULL					    , &States[S_POISONCLOUD_X1+2]),
-	S_NORMAL (PSBG, 'F',	6, NULL					    , &States[S_POISONCLOUD_X1+3]),
-	S_NORMAL (PSBG, 'D',	6, NULL					    , NULL)
+	DECLARE_CLASS (APoisonCloud, AActor)
+public:
+	int DoSpecialDamage (AActor *target, int damage, FName damagetype);
+	void BeginPlay ();
 };
 
-IMPLEMENT_ACTOR (APoisonCloud, Hexen, -1, 0)
-	PROP_Radius (20)
-	PROP_Height (30)
-	PROP_MassLong (0x7fffffff)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY|MF_DROPOFF)
-	PROP_Flags2 (MF2_NODMGTHRUST)
-	PROP_Flags3 (MF3_DONTSPLASH|MF3_FOILINVUL|MF3_CANBLAST)
-	PROP_RenderStyle (STYLE_Translucent)
-	PROP_Alpha (HX_SHADOW)
-
-	PROP_SpawnState (S_POISONCLOUD1)
-
-	PROP_DeathSound ("PoisonShroomDeath")
-END_DEFAULTS
+IMPLEMENT_CLASS (APoisonCloud)
 
 void APoisonCloud::BeginPlay ()
 {
-	momx = 1; // missile objects must move to impact other objects
+	velx = 1; // missile objects must move to impact other objects
 	special1 = 24+(pr_poisoncloud()&7);
 	special2 = 0;
 }
 
-void APoisonCloud::GetExplodeParms (int &damage, int &distance, bool &hurtSource)
-{
-	damage = 4;
-	distance = 40;
-}
-
-int APoisonCloud::DoSpecialDamage (AActor *victim, int damage)
+int APoisonCloud::DoSpecialDamage (AActor *victim, int damage, FName damagetype)
 {
 	if (victim->player)
 	{
@@ -449,7 +335,7 @@ int APoisonCloud::DoSpecialDamage (AActor *victim, int damage)
 		}
 		else
 		{
-			dopoison = victim->player->poisoncount < (int)(4.f * teamdamage);
+			dopoison = victim->player->poisoncount < (int)(4.f * level.teamdamage);
 		}
 
 		if (dopoison)
@@ -457,15 +343,27 @@ int APoisonCloud::DoSpecialDamage (AActor *victim, int damage)
 			int damage = 15 + (pr_poisoncloudd()&15);
 			if (mate)
 			{
-				damage = (int)((float)damage * teamdamage);
+				damage = (int)((float)damage * level.teamdamage);
+			}
+			// Handle passive damage modifiers (e.g. PowerProtection)
+			if (victim->Inventory != NULL)
+			{
+				victim->Inventory->ModifyDamage(damage, damagetype, damage, true);
+			}
+			// Modify with damage factors
+			damage = FixedMul(damage, victim->DamageFactor);
+			if (damage > 0)
+			{
+				damage = DamageTypeDefinition::ApplyMobjDamageFactor(damage, damagetype, victim->GetClass()->ActorInfo->DamageFactors);
 			}
 			if (damage > 0)
 			{
 				P_PoisonDamage (victim->player, this,
 					15+(pr_poisoncloudd()&15), false); // Don't play painsound
-				P_PoisonPlayer (victim->player, this, this->target, 50);
 
-				S_Sound (victim, CHAN_VOICE, "*poison", 1, ATTN_NORM);
+				// If successful, play the poison sound.
+				if (P_PoisonPlayer (victim->player, this, this->target, 50))
+					S_Sound (victim, CHAN_VOICE, "*poison", 1, ATTN_NORM);
 			}
 		}	
 		return -1;
@@ -483,14 +381,14 @@ int APoisonCloud::DoSpecialDamage (AActor *victim, int damage)
 //
 //===========================================================================
 
-void A_PoisonBagInit (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_PoisonBagInit)
 {
 	AActor *mo;
 	
-	mo = Spawn<APoisonCloud> (actor->x, actor->y, actor->z+28*FRACUNIT);
+	mo = Spawn<APoisonCloud> (self->x, self->y, self->z+28*FRACUNIT, ALLOW_REPLACE);
 	if (mo)
 	{
-		mo->target = actor->target;
+		mo->target = self->target;
 	}
 }
 
@@ -500,11 +398,11 @@ void A_PoisonBagInit (AActor *actor)
 //
 //===========================================================================
 
-void A_PoisonBagCheck (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_PoisonBagCheck)
 {
-	if (--actor->special1 <= 0)
+	if (--self->special1 <= 0)
 	{
-		actor->SetState (&APoisonCloud::States[S_POISONCLOUD_X1]);
+		self->SetState (self->FindState ("Death"));
 	}
 	else
 	{
@@ -518,14 +416,14 @@ void A_PoisonBagCheck (AActor *actor)
 //
 //===========================================================================
 
-void A_PoisonBagDamage (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_PoisonBagDamage)
 {
 	int bobIndex;
 	
-	A_Explode (actor);	
-	bobIndex = actor->special2;
-	actor->z += FloatBobOffsets[bobIndex]>>4;
-	actor->special2 = (bobIndex+1)&63;
+	P_RadiusAttack (self, self->target, 4, 40, self->DamageType, RADF_HURTSOURCE);
+	bobIndex = self->special2;
+	self->z += finesine[bobIndex << BOBTOFINESHIFT] >> 1;
+	self->special2 = (bobIndex + 1) & 63;
 }
 
 //===========================================================================
@@ -534,11 +432,11 @@ void A_PoisonBagDamage (AActor *actor)
 //
 //===========================================================================
 
-void A_CheckThrowBomb (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_CheckThrowBomb)
 {
-	if (--actor->health <= 0)
+	if (--self->health <= 0)
 	{
-		actor->SetState (actor->DeathState);
+		self->SetState (self->FindState(NAME_Death));
 	}
 }
 
@@ -548,20 +446,20 @@ void A_CheckThrowBomb (AActor *actor)
 //
 //===========================================================================
 
-void A_CheckThrowBomb2 (AActor *actor)
+DEFINE_ACTION_FUNCTION(AActor, A_CheckThrowBomb2)
 {
-	// [RH] Check using actual velocity, although the momz < 2 check still stands
-	//if (abs(actor->momx) < FRACUNIT*3/2 && abs(actor->momy) < FRACUNIT*3/2
-	//	&& actor->momz < 2*FRACUNIT)
-	if (actor->momz < 2*FRACUNIT &&
-		TMulScale32 (actor->momx, actor->momx, actor->momy, actor->momy, actor->momz, actor->momz)
+	// [RH] Check using actual velocity, although the velz < 2 check still stands
+	//if (abs(self->velx) < FRACUNIT*3/2 && abs(self->vely) < FRACUNIT*3/2
+	//	&& self->velz < 2*FRACUNIT)
+	if (self->velz < 2*FRACUNIT &&
+		TMulScale32 (self->velx, self->velx, self->vely, self->vely, self->velz, self->velz)
 		< (3*3)/(2*2))
 	{
-		actor->SetState (&AThrowingBomb::States[S_THROWINGBOMB7]);
-		actor->z = actor->floorz;
-		actor->momz = 0;
-		actor->flags2 &= ~MF2_BOUNCETYPE;
-		actor->flags &= ~MF_MISSILE;
+		self->SetState (self->SpawnState + 6);
+		self->z = self->floorz;
+		self->velz = 0;
+		self->BounceFlags = BOUNCE_None;
+		self->flags &= ~MF_MISSILE;
 	}
-	A_CheckThrowBomb (actor);
+	CALL_ACTION(A_CheckThrowBomb, self);
 }

@@ -3,7 +3,7 @@
 ** Implements the Duke Nukem 3D-ish security camera
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -35,24 +35,8 @@
 #include "actor.h"
 #include "info.h"
 #include "a_sharedglobal.h"
-#include "r_main.h"
 #include "p_local.h"
-#include "vectors.h"
-
-class ADoomBuilderCamera : public AActor
-{
-	DECLARE_STATELESS_ACTOR (ADoomBuilderCamera, AActor)
-public:
-	void PostBeginPlay ();
-};
-
-IMPLEMENT_STATELESS_ACTOR (ADoomBuilderCamera, Any, 32000, 0)
-END_DEFAULTS
-
-void ADoomBuilderCamera::PostBeginPlay ()
-{
-	Destroy ();
-}
+#include "farchive.h"
 
 /*
 == SecurityCamera
@@ -65,11 +49,10 @@ void ADoomBuilderCamera::PostBeginPlay ()
 
 class ASecurityCamera : public AActor
 {
-	DECLARE_STATELESS_ACTOR (ASecurityCamera, AActor)
+	DECLARE_CLASS (ASecurityCamera, AActor)
 public:
 	void PostBeginPlay ();
 	void Tick ();
-	angle_t AngleIncrements ();
 
 	void Serialize (FArchive &arc);
 protected:
@@ -79,20 +62,12 @@ protected:
 	angle_t Range;
 };
 
-IMPLEMENT_STATELESS_ACTOR (ASecurityCamera, Any, 9025, 0)
-	PROP_Flags (MF_NOBLOCKMAP|MF_NOGRAVITY)
-	PROP_RenderStyle (STYLE_None)
-END_DEFAULTS
+IMPLEMENT_CLASS (ASecurityCamera)
 
 void ASecurityCamera::Serialize (FArchive &arc)
 {
 	Super::Serialize (arc);
 	arc << Center << Acc << Delta << Range;
-}
-
-angle_t ASecurityCamera::AngleIncrements ()
-{
-	return ANGLE_1;
 }
 
 void ASecurityCamera::PostBeginPlay ()
@@ -137,7 +112,7 @@ void ASecurityCamera::Tick ()
 
 class AAimingCamera : public ASecurityCamera
 {
-	DECLARE_STATELESS_ACTOR (AAimingCamera, ASecurityCamera)
+	DECLARE_CLASS (AAimingCamera, ASecurityCamera)
 public:
 	void PostBeginPlay ();
 	void Tick ();
@@ -147,8 +122,7 @@ protected:
 	int MaxPitchChange;
 };
 
-IMPLEMENT_STATELESS_ACTOR (AAimingCamera, Any, 9073, 0)
-END_DEFAULTS
+IMPLEMENT_CLASS (AAimingCamera)
 
 void AAimingCamera::Serialize (FArchive &arc)
 {
@@ -169,12 +143,21 @@ void AAimingCamera::PostBeginPlay ()
 	tracer = iterator.Next ();
 	if (tracer == NULL)
 	{
-		Printf ("AimingCamera %d: Can't find thing %d\n", tid, args[3]);
+		//Printf ("AimingCamera %d: Can't find TID %d\n", tid, args[3]);
+	}
+	else
+	{ // Don't try for a new target upon losing this one.
+		args[3] = 0;
 	}
 }
 
 void AAimingCamera::Tick ()
 {
+	if (tracer == NULL && args[3] != 0)
+	{ // Recheck, in case something with this TID was created since the last time.
+		TActorIterator<AActor> iterator (args[3]);
+		tracer = iterator.Next ();
+	}
 	if (tracer != NULL)
 	{
 		angle_t delta;

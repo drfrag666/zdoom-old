@@ -76,6 +76,13 @@ Low priority:
 #include "r_main.h"
 #include "r_draw.h"
 #include "templates.h"
+#include "r_sky.h"
+#include "g_level.h"
+#include "r_bsp.h"
+#include "v_palette.h"
+#include "v_font.h"
+#include "v_video.h"
+#include "r_data/colormaps.h"
 
 EXTERN_CVAR (Int, r_polymost)
 
@@ -327,7 +334,7 @@ int PolyClipper::DoMost (float x0, float y0, float x1, float y1, pmostcallbackty
 	double dx, d, n, t;
 	float spx[4], spy[4], cy[2], cv[2];
 	int j, k, z, scnt, dir, spt[4];
-	vsptype *vsp, *nvsp, *vcnt, *ni;
+	vsptype *vsp, *nvsp, *vcnt = NULL, *ni;
 	int did = 1;
 	
 	if (x0 < x1)
@@ -522,11 +529,10 @@ int PolyClipper::DoMost (float x0, float y0, float x1, float y1, pmostcallbackty
 }
 
 #include "d_event.h"
-CVAR(Bool, testpolymost, false, 0)
 static int pmx, pmy;
 static int pt, px0, py0, px1, py1;
-static struct { float x, y; } polypts[80];
-static byte polysize[32];
+static struct polypt { float x, y; } polypts[80];
+static BYTE polysize[32];
 static int numpoly, polypt;
 PolyClipper TestPoly;
 
@@ -664,19 +670,19 @@ void drawquad(float x0, float y0, float x1, float y1, float x2, float y2, float 
 
 void printnum(int x, int y, int num)
 {
-	char foo[16]; sprintf (foo, "%d", num);
-	RenderTarget->DrawText (CR_WHITE, x, y, foo);
+	char foo[16]; mysnprintf (foo, countof(foo), "%d", num);
+	RenderTarget->DrawText (SmallFont, CR_WHITE, x, y, foo, TAG_DONE);
 }
 
 void drawpolymosttest()
 {
-	float cx0, cy0, fx0, fy0;
+	float cx0 = 0, cy0 = 0, fx0 = 0, fy0 = 0;
 	int ccol, fcol;
 	PolyClipper::vsptype *vsp, *ovsp = &TestPoly.UsedList, *nvsp;
 
 	fcol = 0; ccol = 0;
 
-	RenderTarget->Clear(0, 0, RenderTarget->GetWidth(), RenderTarget->GetHeight(), 0);
+	RenderTarget->Clear(0, 0, RenderTarget->GetWidth(), RenderTarget->GetHeight(), 0, 0);
 	for (vsp = ovsp->Next; vsp->Next != &TestPoly.UsedList; ovsp = vsp, vsp = nvsp)
 	{
 		nvsp = vsp->Next;
@@ -804,7 +810,7 @@ CCMD(initpolymosttest)
 static void testpolycallback (double *dpx, double *dpy, int n, void *foo)
 {
 	if (numpoly == sizeof(polysize)) return;
-	if (size_t(polypt + n) > sizeof(polypts)/sizeof(polypts[0])) return;
+	if (size_t(polypt + n) > countof(polypts)) return;
 	polysize[numpoly++] = n;
 	for (int i = 0; i < n; ++i)
 	{
@@ -830,7 +836,7 @@ void Polymost_Responder (event_t *ev)
 	}
 	else if (ev->type == EV_KeyUp && ev->data1 == KEY_MOUSE1)
 	{
-		if (pt == 1) if (px0 != px1) pt++; else pt--;
+		if (pt == 1) { if (px0 != px1) pt++; else pt--; }
 		if (pt == 2)
 		{
 			numpoly = polypt = 0;
@@ -864,7 +870,7 @@ extern FTexture *bottomtexture;
 extern FTexture *midtexture;
 extern bool			rw_mustmarkfloor, rw_mustmarkceiling;
 extern void R_NewWall(bool);
-extern void R_GetExtraLight (int *light, const secplane_t &plane, FExtraLight *el);
+//extern void R_GetExtraLight (int *light, const secplane_t &plane, FExtraLight *el);
 extern int doorclosed;
 extern int viewpitch;
 #include "p_lnspec.h"
@@ -1035,7 +1041,7 @@ void RP_AddLine (seg_t *line)
 	fixed_t			tx1, tx2, ty1, ty2;
 	fixed_t			fcz0, ffz0, fcz1, ffz1, bcz0, bfz0, bcz1, bfz1;
 	double x0, x1, xp0, yp0, xp1, yp1, oxp0, oyp0, nx0, ny0, nx1, ny1, ryp0, ryp1;
-	double cy0, fy0, cy1, fy1, ocy0, ofy0, ocy1, ofy1;
+	double cy0, fy0, cy1, fy1, ocy0 = 0, ofy0 = 0, ocy1 = 0, ofy1 = 0;
 	double t0, t1;
 	double x, y;
 
@@ -1197,9 +1203,9 @@ void RP_AddLine (seg_t *line)
 	}
 	else
 	{ // The seg is only part of the wall.
-		if (line->linedef->sidenum[0] != line->sidedef - sides)
+		if (line->linedef->sidedef[0] != line->sidedef)
 		{
-			swap (v1, v2);
+			swapvalues (v1, v2);
 		}
 		tx1 = v1->x - viewx;
 		tx2 = v2->x - viewx;
@@ -1266,8 +1272,8 @@ void RP_AddLine (seg_t *line)
 			solid = true;
 		}
 		else if (
-			(backsector->ceilingpic != skyflatnum ||
-			frontsector->ceilingpic != skyflatnum)
+			(backsector->GetTexture(sector_t::ceiling) != skyflatnum ||
+			frontsector->GetTexture(sector_t::ceiling) != skyflatnum)
 
 		// if door is closed because back is shut:
 		&& bcz0 <= bfz0 && bcz1 <= bfz1
@@ -1275,7 +1281,7 @@ void RP_AddLine (seg_t *line)
 		// preserve a kind of transparent door/lift special effect:
 		&& bcz0 >= fcz0 && bcz1 >= fcz1
 
-		&& ((bfz0 <= ffz0 && bfz1 <= ffz1) || line->sidedef->bottomtexture != 0))
+		&& ((bfz0 <= ffz0 && bfz1 <= ffz1) || line->sidedef->GetTexture(side_t::bottom).isValid()))
 		{
 		// killough 1/18/98 -- This function is used to fix the automap bug which
 		// showed lines behind closed doors simply because the door had a dropoff.
@@ -1295,33 +1301,33 @@ void RP_AddLine (seg_t *line)
 			solid = false;
 		}
 		else if (backsector->lightlevel != frontsector->lightlevel
-			|| backsector->floorpic != frontsector->floorpic
-			|| backsector->ceilingpic != frontsector->ceilingpic
-			|| curline->sidedef->midtexture != 0
+			|| backsector->GetTexture(sector_t::floor) != frontsector->GetTexture(sector_t::floor)
+			|| backsector->GetTexture(sector_t::ceiling) != frontsector->GetTexture(sector_t::ceiling)
+			|| curline->sidedef->GetTexture(side_t::mid).isValid()
 
 			// killough 3/7/98: Take flats offsets into account:
-			|| backsector->floor_xoffs != frontsector->floor_xoffs
-			|| (backsector->floor_yoffs + backsector->base_floor_yoffs) != (frontsector->floor_yoffs + backsector->base_floor_yoffs)
-			|| backsector->ceiling_xoffs != frontsector->ceiling_xoffs
-			|| (backsector->ceiling_yoffs + backsector->base_ceiling_yoffs) != (frontsector->ceiling_yoffs + frontsector->base_ceiling_yoffs)
-
-			|| backsector->FloorLight != frontsector->FloorLight
-			|| backsector->CeilingLight != frontsector->CeilingLight
-			|| backsector->FloorFlags != frontsector->FloorFlags
-			|| backsector->CeilingFlags != frontsector->CeilingFlags
+			|| backsector->GetXOffset(sector_t::floor) != frontsector->GetXOffset(sector_t::floor)
+			|| backsector->GetYOffset(sector_t::floor) != frontsector->GetYOffset(sector_t::floor)
+			|| backsector->GetXOffset(sector_t::ceiling) != frontsector->GetXOffset(sector_t::ceiling)
+			|| backsector->GetYOffset(sector_t::ceiling) != frontsector->GetYOffset(sector_t::ceiling)
+	
+			|| backsector->GetPlaneLight(sector_t::floor) != frontsector->GetPlaneLight(sector_t::floor)
+			|| backsector->GetPlaneLight(sector_t::ceiling) != frontsector->GetPlaneLight(sector_t::ceiling)
+			|| backsector->GetFlags(sector_t::floor) != frontsector->GetFlags(sector_t::floor)
+			|| backsector->GetFlags(sector_t::ceiling) != frontsector->GetFlags(sector_t::ceiling)
 
 			// [RH] Also consider colormaps
 			|| backsector->ColorMap != frontsector->ColorMap
 
 			// [RH] and scaling
-			|| backsector->floor_xscale != frontsector->floor_xscale
-			|| backsector->floor_yscale != frontsector->floor_yscale
-			|| backsector->ceiling_xscale != frontsector->ceiling_xscale
-			|| backsector->ceiling_yscale != frontsector->ceiling_yscale
+			|| backsector->GetXScale(sector_t::floor) != frontsector->GetXScale(sector_t::floor)
+			|| backsector->GetYScale(sector_t::floor) != frontsector->GetYScale(sector_t::floor)
+			|| backsector->GetXScale(sector_t::ceiling) != frontsector->GetXScale(sector_t::ceiling)
+			|| backsector->GetYScale(sector_t::ceiling) != frontsector->GetYScale(sector_t::ceiling)
 
 			// [RH] and rotation
-			|| (backsector->floor_angle + backsector->base_floor_angle) != (frontsector->floor_angle + frontsector->base_floor_angle)
-			|| (backsector->ceiling_angle + backsector->base_ceiling_angle) != (frontsector->ceiling_angle + frontsector->base_ceiling_angle)
+			|| backsector->GetAngle(sector_t::floor) != frontsector->GetAngle(sector_t::floor)
+			|| backsector->GetAngle(sector_t::ceiling) != frontsector->GetAngle(sector_t::ceiling)
 			)
 		{
 			solid = false;
@@ -1342,7 +1348,8 @@ void RP_AddLine (seg_t *line)
 		markceiling = markfloor = true;
 	}
 
-	rw_offset = line->sidedef->textureoffset;
+	// must be fixed in case the polymost renderer ever gets developed further!
+	rw_offset = line->sidedef->GetTextureXOffset(side_t::mid);
 
 	R_NewWall (false);
 	if (rw_markmirror)
@@ -1395,19 +1402,19 @@ void RP_Subsector (subsector_t *sub)
 
 	frontsector = sub->sector;
 	count = sub->numlines;
-	line = &segs[sub->firstline];
+	line = sub->firstline;
 
 	// killough 3/8/98, 4/4/98: Deep water / fake ceiling effect
 	frontsector = R_FakeFlat(frontsector, &tempsec, &floorlightlevel,
 						   &ceilinglightlevel, false);	// killough 4/11/98
 
-	basecolormap = frontsector->ColorMap->Maps;
-	R_GetExtraLight (&ceilinglightlevel, frontsector->ceilingplane, frontsector->ExtraLights);
+	basecolormap = frontsector->ColorMap;
+	//R_GetExtraLight (&ceilinglightlevel, frontsector->ceilingplane, frontsector->ExtraLights);
 
 	// [RH] set foggy flag
 	foggy = level.fadeto || frontsector->ColorMap->Fade || (level.flags & LEVEL_HASFADETABLE);
 	r_actualextralight = foggy ? 0 : extralight << 4;
-	basecolormap = frontsector->ColorMap->Maps;
+	basecolormap = frontsector->ColorMap;
 /*	ceilingplane = frontsector->ceilingplane.ZatPoint (viewx, viewy) > viewz ||
 		frontsector->ceilingpic == skyflatnum ||
 		(frontsector->CeilingSkyBox != NULL && frontsector->CeilingSkyBox->bAlways) ||
@@ -1415,20 +1422,19 @@ void RP_Subsector (subsector_t *sub)
 		 !(frontsector->heightsec->MoreFlags & SECF_IGNOREHEIGHTSEC) &&
 		 frontsector->heightsec->floorpic == skyflatnum) ?
 		R_FindPlane(frontsector->ceilingplane,		// killough 3/8/98
-					frontsector->ceilingpic == skyflatnum &&  // killough 10/98
-						frontsector->sky & PL_SKYFLAT ? frontsector->sky :
-						frontsector->ceilingpic,
+					frontsector->ceilingpic,
 					ceilinglightlevel + r_actualextralight,				// killough 4/11/98
 					frontsector->ceiling_xoffs,		// killough 3/7/98
 					frontsector->ceiling_yoffs + frontsector->base_ceiling_yoffs,
 					frontsector->ceiling_xscale,
 					frontsector->ceiling_yscale,
 					frontsector->ceiling_angle + frontsector->base_ceiling_angle,
-					frontsector->CeilingSkyBox
+					frontsector->sky,
+					frontsector->CeilingSkyBox,
 					) : NULL;*/
 
-	basecolormap = frontsector->ColorMap->Maps;
-	R_GetExtraLight (&floorlightlevel, frontsector->floorplane, frontsector->ExtraLights);
+	basecolormap = frontsector->ColorMap;
+	//R_GetExtraLight (&floorlightlevel, frontsector->floorplane, frontsector->ExtraLights);
 
 	// killough 3/7/98: Add (x,y) offsets to flats, add deep water check
 	// killough 3/16/98: add floorlightlevel
@@ -1440,15 +1446,14 @@ void RP_Subsector (subsector_t *sub)
 		 !(frontsector->heightsec->MoreFlags & SECF_IGNOREHEIGHTSEC) &&
 		 frontsector->heightsec->ceilingpic == skyflatnum) ?
 		R_FindPlane(frontsector->floorplane,
-					frontsector->floorpic == skyflatnum &&  // killough 10/98
-						frontsector->sky & PL_SKYFLAT ? frontsector->sky :
-						frontsector->floorpic,
+					frontsector->floorpic,
 					floorlightlevel + r_actualextralight,				// killough 3/16/98
 					frontsector->floor_xoffs,		// killough 3/7/98
 					frontsector->floor_yoffs + frontsector->base_floor_yoffs,
 					frontsector->floor_xscale,
 					frontsector->floor_yscale,
 					frontsector->floor_angle + frontsector->base_floor_angle,
+					frontsector->sky,
 					frontsector->FloorSkyBox
 					) : NULL;*/
 
@@ -1467,6 +1472,7 @@ void RP_Subsector (subsector_t *sub)
 //		R_ProjectParticle (Particles + i, subsectors[sub-subsectors].sector, shade, FakeSide);
 //	}
 
+#if 0
 	if (sub->poly)
 	{ // Render the polyobj in the subsector first
 		int polyCount = sub->poly->numsegs;
@@ -1476,10 +1482,11 @@ void RP_Subsector (subsector_t *sub)
 			RP_AddLine (*polySeg++);
 		}
 	}
+#endif
 
 	while (count--)
 	{
-		if (!line->bPolySeg)
+		if (line->sidedef == NULL || !(line->sidedef->Flags & WALLF_POLYOBJ))
 		{
 			RP_AddLine (line);
 		}
@@ -1489,7 +1496,7 @@ void RP_Subsector (subsector_t *sub)
 
 extern "C" const int checkcoord[12][4];
 
-static BOOL RP_CheckBBox (fixed_t *bspcoord)
+static bool RP_CheckBBox (fixed_t *bspcoord)
 {
 	int 				boxx;
 	int 				boxy;

@@ -2,7 +2,7 @@
 ** hardware.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -47,47 +47,24 @@ class IVideo
 
 	virtual DFrameBuffer *CreateFrameBuffer (int width, int height, bool fs, DFrameBuffer *old) = 0;
 
-	virtual bool FullscreenChanged (bool fs) = 0;
-	virtual void StartModeIterator (int bits) = 0;
+	virtual void StartModeIterator (int bits, bool fs) = 0;
 	virtual bool NextMode (int *width, int *height, bool *letterbox) = 0;
+
+	virtual bool SetResolution (int width, int height, int bits);
+
+	virtual void DumpAdapters();
 };
 
-class IInputDevice
-{
- public:
-	virtual ~IInputDevice () {}
-	virtual void ProcessInput (bool parm) = 0;
-};
+void I_InitGraphics ();
+void I_ShutdownGraphics ();
+void I_CreateRenderer();
 
-class IKeyboard : public IInputDevice
-{
- public:
-	virtual void ProcessInput (bool consoleOpen) = 0;
-	virtual void SetKeypadRemapping (bool remap) = 0;
-};
+void I_SaveWindowedPos ();
+void I_RestoreWindowedPos ();
 
-class IMouse : public IInputDevice
-{
- public:
-	virtual void SetGrabbed (bool grabbed) = 0;
-	virtual void ProcessInput (bool active) = 0;
-};
+void I_SetFPSLimit(int limit);
 
-class IJoystick : public IInputDevice
-{
- public:
-	enum EJoyProp
-	{
-		JOYPROP_SpeedMultiplier,
-		JOYPROP_XSensitivity,
-		JOYPROP_YSensitivity,
-		JOYPROP_XThreshold,
-		JOYPROP_YThreshold
-	};
-	virtual void SetProperty (EJoyProp prop, float val) = 0;
-};
 
-void I_InitHardware ();
-void STACK_ARGS I_ShutdownHardware ();
+extern IVideo *Video;
 
 #endif	// __HARDWARE_H__

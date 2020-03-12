@@ -3,7 +3,7 @@
 ** Performance-monitoring statistics
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -40,20 +40,30 @@
 #include "st_stuff.h"
 #include "c_dispatch.h"
 #include "m_swap.h"
+#include "sbar.h"
 
-FStat *FStat::m_FirstStat;
-FStat *FStat::m_CurrStat;
+
+#if defined (__APPLE__)
+
+mach_timebase_info_data_t cycle_t::s_info;
+bool cycle_t::s_initialized;
+
+#endif // __APPLE__
+
+
+FStat *FStat::FirstStat;
 
 FStat::FStat (const char *name)
 {
 	m_Name = name;
-	m_Next = m_FirstStat;
-	m_FirstStat = this;
+	m_Active = false;
+	m_Next = FirstStat;
+	FirstStat = this;
 }
 
 FStat::~FStat ()
 {
-	FStat **prev = &m_FirstStat;
+	FStat **prev = &FirstStat;
 
 	while (*prev && *prev != this)
 		prev = &((*prev)->m_Next)->m_Next;
@@ -64,7 +74,7 @@ FStat::~FStat ()
 
 FStat *FStat::FindStat (const char *name)
 {
-	FStat *stat = m_FirstStat;
+	FStat *stat = FirstStat;
 
 	while (stat && stricmp (name, stat->m_Name))
 		stat = stat->m_Next;
@@ -72,62 +82,60 @@ FStat *FStat::FindStat (const char *name)
 	return stat;
 }
 
-void FStat::SelectStat (const char *name)
-{
-	FStat *stat = FindStat (name);
-	if (stat)
-		SelectStat (stat);
-	else
-		Printf ("Unknown stat: %s\n", name);
-}
-
-void FStat::SelectStat (FStat *stat)
-{
-	m_CurrStat = stat;
-	SB_state = screen->GetPageCount ();
-}
-
 void FStat::ToggleStat (const char *name)
 {
 	FStat *stat = FindStat (name);
 	if (stat)
-		ToggleStat (stat);
+		stat->ToggleStat ();
 	else
 		Printf ("Unknown stat: %s\n", name);
 }
 
-void FStat::ToggleStat (FStat *stat)
+void FStat::ToggleStat ()
 {
-	if (m_CurrStat == stat)
-		m_CurrStat = NULL;
-	else
-		m_CurrStat = stat;
-	SB_state = screen->GetPageCount ();
+	m_Active = !m_Active;
+	ST_SetNeedRefresh();
 }
 
 void FStat::PrintStat ()
 {
-	if (m_CurrStat)
-	{
-		char stattext[256];
+	int fontheight = ConFont->GetHeight() + 1;
+	int y = SCREENHEIGHT;
+	int count = 0;
 
-		m_CurrStat->GetStats (stattext);
-		screen->SetFont (ConFont);
-		screen->DrawText (CR_GREEN, 5, SCREENHEIGHT -
-			SmallFont->GetHeight(), stattext, TAG_DONE);
-		screen->SetFont (SmallFont);
-		SB_state = screen->GetPageCount ();
+	for (FStat *stat = FirstStat; stat != NULL; stat = stat->m_Next)
+	{
+		if (stat->m_Active)
+		{
+			FString stattext(stat->GetStats());
+
+			if (stattext.Len() > 0)
+			{
+				y -= fontheight;	// there's at least one line of text
+				for (unsigned i = 0; i < stattext.Len()-1; i++)
+				{
+					// Count number of linefeeds but ignore terminating ones.
+					if (stattext[i] == '\n') y -= fontheight;
+				}
+				screen->DrawText(ConFont, CR_GREEN, 5, y, stattext, TAG_DONE);
+				count++;
+			}
+		}
+	}
+	if (count)
+	{
+		ST_SetNeedRefresh();
 	}
 }
 
 void FStat::DumpRegisteredStats ()
 {
-	FStat *stat = m_FirstStat;
+	FStat *stat = FirstStat;
 
 	Printf ("Available stats:\n");
 	while (stat)
 	{
-		Printf ("  %s\n", stat->m_Name);
+		Printf (" %c%s\n", stat->m_Active ? '*' : ' ', stat->m_Name);
 		stat = stat->m_Next;
 	}
 }

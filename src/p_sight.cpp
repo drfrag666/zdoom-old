@@ -17,6 +17,8 @@
 #include "m_random.h"
 #include "m_bbox.h"
 #include "p_lnspec.h"
+#include "g_level.h"
+#include "po_man.h"
 
 // State.
 #include "r_state.h"
@@ -36,16 +38,47 @@ This uses specialized forms of the maputils routines for optimized performance
 ==============================================================================
 */
 
-static fixed_t sightzstart;				// eye z of looker
-static fixed_t topslope, bottomslope;	// slopes to top and bottom of target
-static int SeePastBlockEverything, SeePastShootableLines;
-
 // Performance meters
 static int sightcounts[6];
 static cycle_t SightCycles;
 static cycle_t MaxSightCycles;
 
-static bool P_SightTraverseIntercepts ();
+static TArray<intercept_t> intercepts (128);
+
+class SightCheck
+{
+	fixed_t sightzstart;				// eye z of looker
+	const AActor * sightthing;
+	const AActor * seeingthing;
+	fixed_t lastztop;				// z at last line
+	fixed_t lastzbottom;				// z at last line
+	sector_t * lastsector;			// last sector being entered by trace
+	fixed_t topslope, bottomslope;	// slopes to top and bottom of target
+	int Flags;
+	divline_t trace;
+	int myseethrough;
+
+	bool PTR_SightTraverse (intercept_t *in);
+	bool P_SightCheckLine (line_t *ld);
+	bool P_SightBlockLinesIterator (int x, int y);
+	bool P_SightTraverseIntercepts ();
+
+public:
+	bool P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2);
+
+	SightCheck(const AActor * t1, const AActor * t2, int flags)
+	{
+		lastztop = lastzbottom = sightzstart = t1->z + t1->height - (t1->height>>2);
+		lastsector = t1->Sector;
+		sightthing=t1;
+		seeingthing=t2;
+		bottomslope = t2->z - sightzstart;
+		topslope = bottomslope + t2->height;
+		Flags = flags;
+
+		myseethrough = FF_SEETHROUGH;
+	}
+};
 
 /*
 ==============
@@ -55,34 +88,138 @@ static bool P_SightTraverseIntercepts ();
 ==============
 */
 
+/*
 static bool PTR_SightTraverse (intercept_t *in)
+*/
+bool SightCheck::PTR_SightTraverse (intercept_t *in)
 {
 	line_t  *li;
 	fixed_t slope;
+	FLineOpening open;
 
 	li = in->d.line;
 
 //
 // crosses a two sided line
 //
-	P_LineOpening (li, trace.x + FixedMul (trace.dx, in->frac),
-		trace.y + FixedMul (trace.dy, in->frac));
 
-	if (openrange <= 0)		// quick test for totally closed doors
+	// ignore self referencing sectors if COMPAT_TRACE is on
+	if ((i_compatflags & COMPATF_TRACE) && li->frontsector == li->backsector) 
+		return true;
+
+	fixed_t trX=trace.x + FixedMul (trace.dx, in->frac);
+	fixed_t trY=trace.y + FixedMul (trace.dy, in->frac);
+	P_LineOpening (open, NULL, li, trX, trY);
+
+	if (open.range <= 0)		// quick test for totally closed doors
 		return false;		// stop
 
 	// check bottom
-	slope = FixedDiv (openbottom - sightzstart, in->frac);
+	slope = FixedDiv (open.bottom - sightzstart, in->frac);
 	if (slope > bottomslope)
 		bottomslope = slope;
 
 	// check top
-	slope = FixedDiv (opentop - sightzstart, in->frac);
+	slope = FixedDiv (open.top - sightzstart, in->frac);
 	if (slope < topslope)
 		topslope = slope;
 
 	if (topslope <= bottomslope)
 		return false;		// stop
+
+#ifdef _3DFLOORS
+	// now handle 3D-floors
+	if(li->frontsector->e->XFloor.ffloors.Size() || li->backsector->e->XFloor.ffloors.Size())
+	{
+		int  frontflag;
+		
+		frontflag = P_PointOnLineSide(sightthing->x, sightthing->y, li);
+		
+		//Check 3D FLOORS!
+		for(int i=1;i<=2;i++)
+		{
+			sector_t * s=i==1? li->frontsector:li->backsector;
+			fixed_t    highslope, lowslope;
+
+			fixed_t topz= FixedMul (topslope, in->frac) + sightzstart;
+			fixed_t bottomz= FixedMul (bottomslope, in->frac) + sightzstart;
+
+			for(unsigned int j=0;j<s->e->XFloor.ffloors.Size();j++)
+			{
+				F3DFloor*  rover=s->e->XFloor.ffloors[j];
+
+				if((rover->flags & FF_SEETHROUGH) == myseethrough || !(rover->flags & FF_EXISTS)) continue;
+				if ((Flags & SF_IGNOREWATERBOUNDARY) && (rover->flags & FF_SOLID) == 0) continue;
+				
+				fixed_t ff_bottom=rover->bottom.plane->ZatPoint(trX, trY);
+				fixed_t ff_top=rover->top.plane->ZatPoint(trX, trY);
+
+				highslope = FixedDiv (ff_top - sightzstart, in->frac);
+				lowslope = FixedDiv (ff_bottom - sightzstart, in->frac);
+
+				if (highslope>=topslope)
+				{
+					// blocks completely
+					if (lowslope<=bottomslope) return false;	
+					// blocks upper edge of view
+					if (lowslope<topslope) topslope=lowslope;
+				}
+				else if (lowslope<=bottomslope)
+				{
+					// blocks lower edge of view
+					if (highslope>bottomslope)  bottomslope=highslope;
+				}
+				else
+				{
+					// the 3D-floor is inside the viewing cone but neither clips the top nor the bottom so by 
+					// itself it can't be view blocking.
+					// However, if there's a 3D-floor on the other side that obstructs the same vertical range
+					// the 2 together will block sight.
+					sector_t * sb=i==2? li->frontsector:li->backsector;
+
+					for(unsigned int k=0;k<sb->e->XFloor.ffloors.Size();k++)
+					{
+						F3DFloor*  rover2=sb->e->XFloor.ffloors[k];
+
+						if((rover2->flags & FF_SEETHROUGH) == myseethrough || !(rover2->flags & FF_EXISTS)) continue;
+						if ((Flags & SF_IGNOREWATERBOUNDARY) && (rover->flags & FF_SOLID) == 0) continue;
+						
+						fixed_t ffb_bottom=rover2->bottom.plane->ZatPoint(trX, trY);
+						fixed_t ffb_top=rover2->top.plane->ZatPoint(trX, trY);
+
+						if ( (ffb_bottom >= ff_bottom && ffb_bottom<=ff_top) ||
+							(ffb_top <= ff_top && ffb_top >= ff_bottom) ||
+							(ffb_top >= ff_top && ffb_bottom <= ff_bottom) ||
+							(ffb_top <= ff_top && ffb_bottom >= ff_bottom) )
+						{
+							return false;
+						}
+					}
+				}
+				// trace is leaving a sector with a 3d-floor
+				if (s==lastsector && frontflag==i-1)
+				{
+					// upper slope intersects with this 3d-floor
+					if (lastztop<=ff_bottom && topz>ff_top)
+					{
+						topslope=lowslope;
+					}
+					// lower slope intersects with this 3d-floor
+					if (lastzbottom>=ff_top && bottomz<ff_top)
+					{
+						bottomslope=highslope;
+					}
+				}
+				if (topslope <= bottomslope) return false;		// stop
+			}
+		}
+		lastsector = frontflag==0 ? li->backsector : li->frontsector;
+	}
+	else lastsector=NULL;	// don't need it if there are no 3D-floors
+
+	lastztop= FixedMul (topslope, in->frac) + sightzstart;
+	lastzbottom= FixedMul (bottomslope, in->frac) + sightzstart;
+#endif
 
 	return true;			// keep going
 }
@@ -97,7 +234,7 @@ static bool PTR_SightTraverse (intercept_t *in)
 ===================
 */
 
-static bool P_SightCheckLine (line_t *ld)
+bool SightCheck::P_SightCheckLine (line_t *ld)
 {
 	divline_t dl;
 
@@ -118,32 +255,40 @@ static bool P_SightCheckLine (line_t *ld)
 		return true;		// line isn't crossed
 	}
 
-// try to early out the check
-	if (!ld->backsector || !(ld->flags & ML_TWOSIDED))
+	// try to early out the check
+	if (!ld->backsector || !(ld->flags & ML_TWOSIDED) || (ld->flags & ML_BLOCKSIGHT))
 		return false;	// stop checking
 
 	// [RH] don't see past block everything lines
 	if (ld->flags & ML_BLOCKEVERYTHING)
 	{
-		if (!SeePastBlockEverything)
+		if (!(Flags & SF_SEEPASTBLOCKEVERYTHING))
 		{
 			return false;
 		}
-		if (SeePastShootableLines &&
-			(GET_SPAC(ld->flags) != SPAC_IMPACT ||
-			(ld->special != ACS_Execute && ld->special != ACS_ExecuteAlways)) ||
-			(ld->args[1] != 0 && ld->args[1] != level.levelnum))
+		// Pretend the other side is invisible if this is not an impact line
+		// that runs a script on the current map. Used to prevent monsters
+		// from trying to attack through a block everything line unless
+		// there's a chance their attack will make it nonblocking.
+		if (!(Flags & SF_SEEPASTSHOOTABLELINES))
 		{
-			// Pretend the other side is invisible if this is not an impact line
-			// or it does not run a script on the current map. Used to prevent
-			// monsters from trying to attack through a block everything line
-			// unless there's a chance their attack will make it nonblocking.
-			return false;
+			if (!(ld->activation & SPAC_Impact))
+			{
+				return false;
+			}
+			if (ld->special != ACS_Execute && ld->special != ACS_ExecuteAlways)
+			{
+				return false;
+			}
+			if (ld->args[1] != 0 && ld->args[1] != level.levelnum)
+			{
+				return false;
+			}
 		}
 	}
 
 	sightcounts[3]++;
-// store the line for later intersection testing
+	// store the line for later intersection testing
 	intercept_t newintercept;
 	newintercept.isaline = true;
 	newintercept.d.line = ld;
@@ -160,14 +305,13 @@ static bool P_SightCheckLine (line_t *ld)
 ===================
 */
 
-static bool P_SightBlockLinesIterator (int x, int y)
+bool SightCheck::P_SightBlockLinesIterator (int x, int y)
 {
 	int offset;
 	int *list;
 
 	polyblock_t *polyLink;
-	seg_t **segList;
-	int i;
+	unsigned int i;
 	extern polyblock_t **PolyBlockMap;
 
 	offset = y*bmapwidth+x;
@@ -180,10 +324,9 @@ static bool P_SightBlockLinesIterator (int x, int y)
 			if (polyLink->polyobj->validcount != validcount)
 			{
 				polyLink->polyobj->validcount = validcount;
-				segList = polyLink->polyobj->segs;
-				for (i = 0; i < polyLink->polyobj->numsegs; i++, segList++)
+				for (i = 0; i < polyLink->polyobj->Linedefs.Size(); i++)
 				{
-					if (!P_SightCheckLine ((*segList)->linedef))
+					if (!P_SightCheckLine (polyLink->polyobj->Linedefs[i]))
 						return false;
 				}
 			}
@@ -211,12 +354,12 @@ static bool P_SightBlockLinesIterator (int x, int y)
 ====================
 */
 
-static bool P_SightTraverseIntercepts ()
+bool SightCheck::P_SightTraverseIntercepts ()
 {
-	size_t count;
+	unsigned count;
 	fixed_t dist;
 	intercept_t *scan, *in;
-	unsigned int scanpos;
+	unsigned scanpos;
 	divline_t dl;
 
 	count = intercepts.Size ();
@@ -258,6 +401,30 @@ static bool P_SightTraverseIntercepts ()
 		}
 	}
 
+#ifdef _3DFLOORS
+	if (lastsector==seeingthing->Sector && lastsector->e->XFloor.ffloors.Size())
+	{
+		// we must do one last check whether the trace has crossed a 3D floor in the last sector
+
+		fixed_t topz= topslope + sightzstart;
+		fixed_t bottomz= bottomslope + sightzstart;
+		
+		for(unsigned int i=0;i<lastsector->e->XFloor.ffloors.Size();i++)
+		{
+			F3DFloor*  rover = lastsector->e->XFloor.ffloors[i];
+
+			if((rover->flags & FF_SOLID) == myseethrough || !(rover->flags & FF_EXISTS)) continue;
+			if ((Flags & SF_IGNOREWATERBOUNDARY) && (rover->flags & FF_SOLID) == 0) continue;
+			
+			fixed_t ff_bottom=rover->bottom.plane->ZatPoint(seeingthing->x, seeingthing->y);
+			fixed_t ff_top=rover->top.plane->ZatPoint(seeingthing->x, seeingthing->y);
+
+			if (lastztop<=ff_bottom && topz>ff_bottom && lastzbottom<=ff_bottom && bottomz>ff_bottom) return false;
+			if (lastzbottom>=ff_top && bottomz<ff_top && lastztop>=ff_top && topz<ff_top) return false;
+		}
+	
+	}
+#endif
 	return true;			// everything was traversed
 }
 
@@ -273,9 +440,10 @@ static bool P_SightTraverseIntercepts ()
 ==================
 */
 
-static bool P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
+bool SightCheck::P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
 {
 	fixed_t xt1,yt1,xt2,yt2;
+	long long _x1,_y1,_x2,_y2;
 	fixed_t xstep,ystep;
 	fixed_t partialx, partialy;
 	fixed_t xintercept, yintercept;
@@ -284,6 +452,27 @@ static bool P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
 
 	validcount++;
 	intercepts.Clear ();
+
+#ifdef _3DFLOORS
+	// for FF_SEETHROUGH the following rule applies:
+	// If the viewer is in an area without FF_SEETHROUGH he can only see into areas without this flag
+	// If the viewer is in an area with FF_SEETHROUGH he can only see into areas with this flag
+	for(unsigned int i=0;i<lastsector->e->XFloor.ffloors.Size();i++)
+	{
+		F3DFloor*  rover = lastsector->e->XFloor.ffloors[i];
+
+		if(!(rover->flags & FF_EXISTS)) continue;
+		
+		fixed_t ff_bottom=rover->bottom.plane->ZatPoint(sightthing->x, sightthing->y);
+		fixed_t ff_top=rover->top.plane->ZatPoint(sightthing->x, sightthing->y);
+
+		if (sightzstart < ff_top && sightzstart >= ff_bottom) 
+		{
+			myseethrough = rover->flags & FF_SEETHROUGH;
+			break;
+		}
+	}
+#endif
 
 	if ( ((x1-bmaporgx)&(MAPBLOCKSIZE-1)) == 0)
 		x1 += FRACUNIT;							// don't side exactly on a line
@@ -294,15 +483,19 @@ static bool P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
 	trace.dx = x2 - x1;
 	trace.dy = y2 - y1;
 
+	_x1 = (long long)x1 - bmaporgx;
+	_y1 = (long long)y1 - bmaporgy;
 	x1 -= bmaporgx;
 	y1 -= bmaporgy;
-	xt1 = x1>>MAPBLOCKSHIFT;
-	yt1 = y1>>MAPBLOCKSHIFT;
+	xt1 = int(_x1 >> MAPBLOCKSHIFT);
+	yt1 = int(_y1 >> MAPBLOCKSHIFT);
 
+	_x2 = (long long)x2 - bmaporgx;
+	_y2 = (long long)y2 - bmaporgy;
 	x2 -= bmaporgx;
 	y2 -= bmaporgy;
-	xt2 = x2>>MAPBLOCKSHIFT;
-	yt2 = y2>>MAPBLOCKSHIFT;
+	xt2 = int(_x2 >> MAPBLOCKSHIFT);
+	yt2 = int(_y2 >> MAPBLOCKSHIFT);
 
 // points should never be out of bounds, but check once instead of
 // each block
@@ -328,7 +521,7 @@ static bool P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
 		partialx = FRACUNIT;
 		ystep = 256*FRACUNIT;
 	}
-	yintercept = (y1>>MAPBTOFRAC) + FixedMul (partialx, ystep);
+	yintercept = int(_y1>>MAPBTOFRAC) + FixedMul (partialx, ystep);
 
 
 	if (yt2 > yt1)
@@ -349,7 +542,7 @@ static bool P_SightPathTraverse (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
 		partialy = FRACUNIT;
 		xstep = 256*FRACUNIT;
 	}
-	xintercept = (x1>>MAPBTOFRAC) + FixedMul (partialy, xstep);
+	xintercept = int(_x1>>MAPBTOFRAC) + FixedMul (partialy, xstep);
 
 	// [RH] Fix for traces that pass only through blockmap corners. In that case,
 	// xintercept and yintercept can both be set ahead of mapx and mapy, so the
@@ -459,19 +652,16 @@ sightcounts[2]++;
 
 bool P_CheckSight (const AActor *t1, const AActor *t2, int flags)
 {
-	clock (SightCycles);
+	SightCycles.Clock();
 
 	bool res;
 
-#ifdef _DEBUG
 	assert (t1 != NULL);
 	assert (t2 != NULL);
-#else
 	if (t1 == NULL || t2 == NULL)
 	{
 		return false;
 	}
-#endif
 
 	const sector_t *s1 = t1->Sector;
 	const sector_t *s2 = t2->Sector;
@@ -493,10 +683,7 @@ sightcounts[0]++;
 //
 	// [RH] Andy Baker's stealth monsters:
 	// Cannot see an invisible object
-	if ((flags & 1) == 0 &&
-		(t2->RenderStyle == STYLE_None ||
-		 (t2->RenderStyle >= STYLE_Translucent && t2->alpha == 0) ||
-		 (t2->renderflags & RF_INVISIBLE)))
+	if ((flags & SF_IGNOREVISIBILITY) == 0 && ((t2->renderflags & RF_INVISIBLE) || !t2->RenderStyle.IsVisible(t2->alpha)))
 	{ // small chance of an attack being made anyway
 		if ((bglobal.m_Thinking ? pr_botchecksight() : pr_checksight()) > 50)
 		{
@@ -507,60 +694,60 @@ sightcounts[0]++;
 
 	// killough 4/19/98: make fake floors and ceilings block monster view
 
-	if ((s1->heightsec && !(s1->heightsec->MoreFlags & SECF_IGNOREHEIGHTSEC) &&
-		((t1->z + t1->height <= s1->heightsec->floorplane.ZatPoint (t1->x, t1->y) &&
-		  t2->z >= s1->heightsec->floorplane.ZatPoint (t2->x, t2->y)) ||
-		 (t1->z >= s1->heightsec->ceilingplane.ZatPoint (t1->x, t1->y) &&
-		  t2->z + t1->height <= s1->heightsec->ceilingplane.ZatPoint (t2->x, t2->y))))
-		||
-		(s2->heightsec && !(s2->heightsec->MoreFlags & SECF_IGNOREHEIGHTSEC) &&
-		 ((t2->z + t2->height <= s2->heightsec->floorplane.ZatPoint (t2->x, t2->y) &&
-		   t1->z >= s2->heightsec->floorplane.ZatPoint (t1->x, t1->y)) ||
-		  (t2->z >= s2->heightsec->ceilingplane.ZatPoint (t2->x, t2->y) &&
-		   t1->z + t2->height <= s2->heightsec->ceilingplane.ZatPoint (t1->x, t1->y)))))
+	if (!(flags & SF_IGNOREWATERBOUNDARY))
 	{
-		res = false;
-		goto done;
+		if ((s1->GetHeightSec() &&
+			((t1->z + t1->height <= s1->heightsec->floorplane.ZatPoint (t1->x, t1->y) &&
+			  t2->z >= s1->heightsec->floorplane.ZatPoint (t2->x, t2->y)) ||
+			 (t1->z >= s1->heightsec->ceilingplane.ZatPoint (t1->x, t1->y) &&
+			  t2->z + t1->height <= s1->heightsec->ceilingplane.ZatPoint (t2->x, t2->y))))
+			||
+			(s2->GetHeightSec() &&
+			 ((t2->z + t2->height <= s2->heightsec->floorplane.ZatPoint (t2->x, t2->y) &&
+			   t1->z >= s2->heightsec->floorplane.ZatPoint (t1->x, t1->y)) ||
+			  (t2->z >= s2->heightsec->ceilingplane.ZatPoint (t2->x, t2->y) &&
+			   t1->z + t2->height <= s2->heightsec->ceilingplane.ZatPoint (t1->x, t1->y)))))
+		{
+			res = false;
+			goto done;
+		}
 	}
 
 	// An unobstructed LOS is possible.
 	// Now look from eyes of t1 to any part of t2.
 
 	validcount++;
-
-	sightzstart = t1->z + t1->height - (t1->height>>2);
-	bottomslope = t2->z - sightzstart;
-	topslope = bottomslope + t2->height;
-
-	SeePastBlockEverything = flags & 6;
-	SeePastShootableLines = flags & 4;
-	res = P_SightPathTraverse (t1->x, t1->y, t2->x, t2->y);
-	SeePastBlockEverything = 0;
-	SeePastShootableLines = 0;
+	{
+		SightCheck s(t1, t2, flags);
+		res = s.P_SightPathTraverse (t1->x, t1->y, t2->x, t2->y);
+	}
 
 done:
-	unclock (SightCycles);
+	SightCycles.Unclock();
 	return res;
 }
 
-ADD_STAT (sight, out)
+ADD_STAT (sight)
 {
-	sprintf (out, "%04.1f ms (%04.1f max), %5d %2d%4d%4d%4d%4d\n",
-		(double)SightCycles * 1000 * SecondsPerCycle,
-		(double)MaxSightCycles * 1000 * SecondsPerCycle,
+	FString out;
+	out.Format ("%04.1f ms (%04.1f max), %5d %2d%4d%4d%4d%4d\n",
+		SightCycles.TimeMS(), MaxSightCycles.TimeMS(),
 		sightcounts[3], sightcounts[0], sightcounts[1], sightcounts[2], sightcounts[4], sightcounts[5]);
+	return out;
 }
 
 void P_ResetSightCounters (bool full)
 {
 	if (full)
 	{
-		MaxSightCycles = 0;
+		MaxSightCycles.Reset();
 	}
-	if (SightCycles > MaxSightCycles)
+	if (SightCycles.Time() > MaxSightCycles.Time())
 	{
 		MaxSightCycles = SightCycles;
 	}
-	SightCycles = 0;
+	SightCycles.Reset();
 	memset (sightcounts, 0, sizeof(sightcounts));
 }
+
+

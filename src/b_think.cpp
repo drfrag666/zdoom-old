@@ -14,16 +14,17 @@
 #include "b_bot.h"
 #include "g_game.h"
 #include "m_random.h"
-#include "r_main.h"
 #include "stats.h"
 #include "a_pickups.h"
 #include "statnums.h"
+#include "d_net.h"
+#include "d_event.h"
 
 static FRandom pr_botmove ("BotMove");
 
 //This function is called each tic for each bot,
 //so this is what the bot does.
-void DCajunMaster::Think (AActor *actor, ticcmd_t *cmd)
+void FCajunMaster::Think (AActor *actor, ticcmd_t *cmd)
 {
 	memset (cmd, 0, sizeof(*cmd));
 
@@ -71,7 +72,7 @@ void DCajunMaster::Think (AActor *actor, ticcmd_t *cmd)
 
 //how the bot moves.
 //MAIN movement function.
-void DCajunMaster::ThinkForMove (AActor *actor, ticcmd_t *cmd)
+void FCajunMaster::ThinkForMove (AActor *actor, ticcmd_t *cmd)
 {
 	player_t *b;
 	fixed_t dist;
@@ -86,7 +87,7 @@ void DCajunMaster::ThinkForMove (AActor *actor, ticcmd_t *cmd)
 	dist = b->dest ? P_AproxDistance(actor->x-b->dest->x, actor->y-b->dest->y) : 0;
 
 	if (b->missile &&
-		((!b->missile->momx || !b->missile->momy) || !Check_LOS(actor, b->missile, SHOOTFOV*3/2)))
+		((!b->missile->velx || !b->missile->vely) || !Check_LOS(actor, b->missile, SHOOTFOV*3/2)))
 	{
 		b->sleft = !b->sleft;
 		b->missile = NULL; //Probably ended its travel.
@@ -123,7 +124,7 @@ void DCajunMaster::ThinkForMove (AActor *actor, ticcmd_t *cmd)
 		//Check if it's more important to get an item than fight.
 		if (b->dest && (b->dest->flags&MF_SPECIAL)) //Must be an item, that is close enough.
 		{
-#define is(x) b->dest->IsKindOf (TypeInfo::FindType (#x))
+#define is(x) b->dest->IsKindOf (PClass::FindClass (#x))
 			if (
 				(
 				 (actor->health < b->skill.isp &&
@@ -183,7 +184,7 @@ void DCajunMaster::ThinkForMove (AActor *actor, ticcmd_t *cmd)
 		}
 
 		//Strafing.
-		if (b->enemy->flags & MF3_ISMONSTER) //It's just a monster so take it down cool.
+		if (b->enemy->flags3 & MF3_ISMONSTER) //It's just a monster so take it down cool.
 		{
 			cmd->ucmd.sidemove = b->sleft ? -SIDEWALK : SIDEWALK;
 		}
@@ -312,7 +313,7 @@ void DCajunMaster::ThinkForMove (AActor *actor, ticcmd_t *cmd)
 //BOT_WhatToGet
 //
 //Determines if the bot will roam after an item or not.
-void DCajunMaster::WhatToGet (AActor *actor, AActor *item)
+void FCajunMaster::WhatToGet (AActor *actor, AActor *item)
 {
 	player_t *b = actor->player;
 
@@ -321,7 +322,7 @@ void DCajunMaster::WhatToGet (AActor *actor, AActor *item)
 		return;
 	}
 
-#define typeis(x) item->IsKindOf (TypeInfo::FindType (#x))
+#define typeis(x) item->IsKindOf (PClass::FindClass (#x))
 	if ((item->renderflags & RF_INVISIBLE) //Under respawn and away.
 		|| item == b->prev)
 	{
@@ -335,7 +336,6 @@ void DCajunMaster::WhatToGet (AActor *actor, AActor *item)
 	if (item->IsKindOf (RUNTIME_CLASS(AWeapon)))
 	{
 		// FIXME
-		AWeapon *weapon = static_cast<AWeapon *> (item);
 		AWeapon *heldWeapon;
 
 		heldWeapon = static_cast<AWeapon *> (b->mo->FindInventory (item->GetClass()));
@@ -353,7 +353,7 @@ void DCajunMaster::WhatToGet (AActor *actor, AActor *item)
 	else if (item->IsKindOf (RUNTIME_CLASS(AAmmo)))
 	{
 		AAmmo *ammo = static_cast<AAmmo *> (item);
-		const TypeInfo *parent = ammo->GetParentAmmo ();
+		const PClass *parent = ammo->GetParentAmmo ();
 		AInventory *holdingammo = b->mo->FindInventory (parent);
 
 		if (holdingammo != NULL && holdingammo->Amount >= holdingammo->MaxAmount)
@@ -363,7 +363,7 @@ void DCajunMaster::WhatToGet (AActor *actor, AActor *item)
 	}
 	else if ((typeis (Megasphere) || typeis (Soulsphere) || typeis (HealthBonus)) && actor->health >= deh.MaxSoulsphere)
 		return;
-	else if (item->IsKindOf (RUNTIME_CLASS(AHealth)) && actor->health >= MAXHEALTH)
+	else if (item->IsKindOf (RUNTIME_CLASS(AHealth)) && actor->health >= deh.MaxHealth /*MAXHEALTH*/)
 		return;
 
 	if ((b->dest == NULL ||
@@ -377,7 +377,7 @@ void DCajunMaster::WhatToGet (AActor *actor, AActor *item)
 	}
 }
 
-void DCajunMaster::Set_enemy (AActor *actor)
+void FCajunMaster::Set_enemy (AActor *actor)
 {
 	AActor *oldenemy;
 	AActor **enemy = &actor->player->enemy;
@@ -404,6 +404,6 @@ void DCajunMaster::Set_enemy (AActor *actor)
 			*enemy = oldenemy; //Try go for last (it will be NULL if there wasn't anyone)
 	}
 	//Verify that that enemy is really something alive that bot can kill.
-	if (*enemy && ((*enemy)->health < 0 || !((*enemy)->flags&MF_SHOOTABLE)))
+	if (*enemy && (((*enemy)->health < 0 || !((*enemy)->flags&MF_SHOOTABLE)) || actor->IsFriend(*enemy)))
 		*enemy = NULL;
 }

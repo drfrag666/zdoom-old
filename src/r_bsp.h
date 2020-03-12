@@ -26,6 +26,14 @@
 #include "tarray.h"
 #include <stddef.h>
 
+enum
+{
+	FAKED_Center,
+	FAKED_BelowFloor,
+	FAKED_AboveCeiling
+};
+
+
 struct drawseg_t
 {
 	seg_t*		curline;
@@ -35,8 +43,11 @@ struct drawseg_t
 	short		sx1, sx2;		// left, right of parent seg on screen
 	fixed_t		sz1, sz2;		// z for left, right of parent seg on screen
 	fixed_t		siz1, siz2;		// 1/z for left, right of parent seg on screen
+	fixed_t		cx, cy, cdx, cdy;
+	fixed_t		yrepeat;
 	BYTE 		silhouette;		// 0=none, 1=bottom, 2=top, 3=both
 	BYTE		bFogBoundary;
+	BYTE		bFakeBoundary;		// for fake walls
 	int			shade;
 // Pointers to lists for sprite clipping,
 // all three adjusted so [x1] is first value.
@@ -44,6 +55,10 @@ struct drawseg_t
 	ptrdiff_t	sprbottomclip;		// type short
 	ptrdiff_t	maskedtexturecol;	// type short
 	ptrdiff_t	swall;				// type fixed_t
+	int fake;	// ident fake drawseg, don't draw and clip sprites
+// backups
+	ptrdiff_t	bkup;	// sprtopclip backup, for mid and fake textures
+	float WallUoverZorg, WallUoverZstep, WallInvZorg, WallInvZstep, WallDepthScale, WallDepthOrg;
 };
 
 
@@ -58,7 +73,7 @@ extern drawseg_t	*firstdrawseg;
 extern drawseg_t*	ds_p;
 
 extern TArray<size_t>	InterestingDrawsegs;	// drawsegs that have something drawn on them
-extern unsigned int		FirstInterestingDrawseg;
+extern size_t			FirstInterestingDrawseg;
 
 extern int			WindowLeft, WindowRight;
 extern WORD			MirrorFlags;
@@ -76,7 +91,7 @@ void R_ClearDrawSegs ();
 void R_RenderBSPNode (void *node);
 
 // killough 4/13/98: fake floors/ceilings for deep water / fake ceilings:
-sector_t *R_FakeFlat(sector_t *, sector_t *, int *, int *, BOOL);
+sector_t *R_FakeFlat(sector_t *, sector_t *, int *, int *, bool);
 
 
 #endif

@@ -1,12 +1,44 @@
+/*
+** p_converstation.cpp
+** Implements Strife style conversation dialogs
+**
+**---------------------------------------------------------------------------
+** Copyright 2004-2008 Randy Heit
+** All rights reserved.
+**
+** Redistribution and use in source and binary forms, with or without
+** modification, are permitted provided that the following conditions
+** are met:
+**
+** 1. Redistributions of source code must retain the above copyright
+**    notice, this list of conditions and the following disclaimer.
+** 2. Redistributions in binary form must reproduce the above copyright
+**    notice, this list of conditions and the following disclaimer in the
+**    documentation and/or other materials provided with the distribution.
+** 3. The name of the author may not be used to endorse or promote products
+**    derived from this software without specific prior written permission.
+**
+** THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+** IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+** OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+** IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+** INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+** NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+**---------------------------------------------------------------------------
+**
+*/
+
 #include <assert.h>
 
 #include "actor.h"
-#include "r_data.h"
 #include "p_conversation.h"
 #include "w_wad.h"
 #include "cmdlib.h"
 #include "s_sound.h"
-#include "m_menu.h"
 #include "v_text.h"
 #include "v_video.h"
 #include "m_random.h"
@@ -15,6 +47,20 @@
 #include "a_strifeglobal.h"
 #include "a_keys.h"
 #include "p_enemy.h"
+#include "gstrings.h"
+#include "sound/i_music.h"
+#include "p_setup.h"
+#include "d_net.h"
+#include "g_level.h"
+#include "d_event.h"
+#include "d_gui.h"
+#include "doomstat.h"
+#include "c_console.h"
+#include "sbar.h"
+#include "farchive.h"
+#include "p_lnspec.h"
+#include "r_utility.h"
+#include "menu/menu.h"
 
 // The conversations as they exist inside a SCRIPTxx lump.
 struct Response
@@ -55,133 +101,84 @@ struct TeaserSpeech
 
 static FRandom pr_randomspeech("RandomSpeech");
 
-void GiveSpawner (player_t *player, const TypeInfo *type);
+void GiveSpawner (player_t *player, const PClass *type);
 
 TArray<FStrifeDialogueNode *> StrifeDialogues;
 
-// There were 344 types in Strife, and Strife conversations refer
-// to their index in the mobjinfo table. This table indexes all
-// the Strife actor types in the order Strife had them and is
-// initialized as part of the actor's setup in infodefaults.cpp.
-const TypeInfo *StrifeTypes[344];
+typedef TMap<int, const PClass *> FStrifeTypeMap;	// maps conversation IDs to actor classes
+typedef TMap<int, int> FDialogueIDMap;				// maps dialogue IDs to dialogue array index (for ACS)
+typedef TMap<FName, int> FDialogueMap;				// maps actor class names to dialogue array index
 
-static menu_t ConversationMenu;
-static TArray<menuitem_t> ConversationItems;
+static FStrifeTypeMap StrifeTypes;
+static FDialogueIDMap DialogueRoots;
+static FDialogueMap ClassRoots;
+static int ConversationMenuY;
+
 static int ConversationPauseTic;
 static bool ShowGold;
 
-static void LoadScriptFile (const char *name);
-static FStrifeDialogueNode *ReadRetailNode (FWadLump *lump, DWORD &prevSpeakerType);
-static FStrifeDialogueNode *ReadTeaserNode (FWadLump *lump, DWORD &prevSpeakerType);
+static bool LoadScriptFile(int lumpnum, FileReader *lump, int numnodes, bool include, int type);
+static FStrifeDialogueNode *ReadRetailNode (FileReader *lump, DWORD &prevSpeakerType);
+static FStrifeDialogueNode *ReadTeaserNode (FileReader *lump, DWORD &prevSpeakerType);
 static void ParseReplies (FStrifeDialogueReply **replyptr, Response *responses);
-static void DrawConversationMenu ();
-static void PickConversationReply ();
-static void CleanupConversationMenu ();
+static bool DrawConversationMenu ();
+static void PickConversationReply (int replyindex);
+static void TerminalResponse (const char *str);
 
-static FStrifeDialogueNode *CurNode, *PrevNode;
-static brokenlines_t *DialogueLines;
-static AActor *ConversationNPC, *ConversationPC;
-static angle_t ConversationNPCAngle;
+static FStrifeDialogueNode *PrevNode;
 
-#define NUM_RANDOM_TALKERS 5
 #define NUM_RANDOM_LINES 10
 #define NUM_RANDOM_GOODBYES 3
-
-static char *const RandomGoodbyes[NUM_RANDOM_GOODBYES] =
-{
-	"Bye!",
-	"Thanks, bye!",
-	"See you later!"
-};
-
-static const char *const RandomLines[NUM_RANDOM_TALKERS][NUM_RANDOM_LINES+1] =
-{
-	{
-	"PEASANT",
-	"Please don't hurt me.",
-	"If you're looking to hurt me, I'm not really worth the effort.",
-	"I don't know anything.",
-	"Go away or I'll call the guards!",
-	"I wish sometimes that all these rebels would just learn their place and stop this nonsense.",
-	"Just leave me alone, OK?",
-	"I'm not sure, but sometimes I think that I know some of the acolytes.",
-	"The order's got everything around here pretty well locked up tight.",
-	"There's no way that this is just a security force.",
-	"I've heard that the order is really nervous about the front's actions around here."
-	},
-
-	{
-	"REBEL",
-	"There's no way the order will stand against us.",
-	"We're almost ready to strike. Macil's plans are falling in place.",
-	"We're all behind you, don't worry.",
-	"Don't get too close to any of those big robots. They'll melt you down for scrap!",
-	"The day of our glory will soon come, and those who oppose us will be crushed!",
-	"Don't get too comfortable. We've still got our work cut out for us.",
-	"Macil says that you're the new hope. Bear that in mind.",
-	"Once we've taken these charlatans down, we'll be able to rebuild this world as it should be.",
-	"Remember that you aren't fighting just for yourself, but for everyone here and outside.",
-	"As long as one of us still stands, we will win."
-	},
-
-	{
-	"AGUARD",
-	"Move along, peasant.",
-	"Follow the true faith, only then will you begin to understand.",
-	"Only through death can one be truly reborn.",
-	"I'm not interested in your useless drivel.",
-	"If I had wanted to talk to you I would have told you so.",
-	"Go and annoy someone else!",
-	"Keep moving!",
-	"If the alarm goes off, just stay out of our way!",
-	"The order will cleanse the world and usher it into the new era.",
-	"Problem? No, I thought not."
-	},
-
-	{
-	"BEGGAR",
-	"Alms for the poor?",
-	"What are you looking at, surfacer?",
-	"You wouldn't have any extra food, would you?",
-	"You surface people will never understand us.",
-	"Ha, the guards can't find us. Those idiots don't even know we exist.",
-	"One day everyone but those who serve the order will be forced to join us.",
-	"Stare now, but you know that this will be your own face one day.",
-	"There's nothing more annoying than a surfacer with an attitude!",
-	"The order will make short work of your pathetic front.",
-	"Watch yourself, surfacer. We know our enemies!"
-	},
-
-	{
-	"PGUARD",
-	"We are the hands of fate. To earn our wrath is to find oblivion!",
-	"The order will cleanse the world of the weak and corrupt!",
-	"Obey the will of the masters!",
-	"Long life to the brothers of the order!",
-	"Free will is an illusion that binds the weak minded.",
-	"Power is the path to glory. To follow the order is to walk that path!",
-	"Take your place among the righteous, join us!",
-	"The order protects its own.",
-	"Acolytes? They have yet to see the full glory of the order.",
-	"If there is any honor inside that pathetic shell of a body, you'll enter into the arms of the order."
-	}
-};
 
 //============================================================================
 //
 // GetStrifeType
 //
-// Given an item type number, returns the corresponding TypeInfo.
+// Given an item type number, returns the corresponding PClass.
 //
 //============================================================================
 
-static const TypeInfo *GetStrifeType (int typenum)
+void SetStrifeType(int convid, const PClass *Class)
 {
-	if (typenum > 0 && typenum < 344)
+	StrifeTypes[convid] = Class;
+}
+
+void ClearStrifeTypes()
+{
+	StrifeTypes.Clear();
+}
+
+void SetConversation(int convid, const PClass *Class, int dlgindex)
+{
+	if (convid != -1)
 	{
-		return StrifeTypes[typenum];
+		DialogueRoots[convid] = dlgindex;
 	}
-	return NULL;
+	if (Class != NULL)
+	{
+		ClassRoots[Class->TypeName] = dlgindex;
+	}
+}
+
+const PClass *GetStrifeType (int typenum)
+{
+	const PClass **ptype = StrifeTypes.CheckKey(typenum);
+	if (ptype == NULL) return NULL;
+	else return *ptype;
+}
+
+int GetConversation(int conv_id)
+{
+	int *pindex = DialogueRoots.CheckKey(conv_id);
+	if (pindex == NULL) return -1;
+	else return *pindex;
+}
+
+int GetConversation(FName classname)
+{
+	int *pindex = ClassRoots.CheckKey(classname);
+	if (pindex == NULL) return -1;
+	else return *pindex;
 }
 
 //============================================================================
@@ -192,60 +189,31 @@ static const TypeInfo *GetStrifeType (int typenum)
 //
 //============================================================================
 
-void P_LoadStrifeConversations (const char *mapname)
+void P_LoadStrifeConversations (MapData *map, const char *mapname)
 {
-	if (strnicmp (mapname, "MAP", 3) != 0)
+	P_FreeStrifeConversations ();
+	if (map->Size(ML_CONVERSATION) > 0)
 	{
-		return;
+		map->Seek(ML_CONVERSATION);
+		LoadScriptFile (map->lumpnum, map->file, map->Size(ML_CONVERSATION), false, 0);
 	}
-	char scriptname[9] = { 'S','C','R','I','P','T',mapname[3],mapname[4],0 };
-
-	LoadScriptFile ("SCRIPT00");
-	LoadScriptFile (scriptname);
-}
-
-//============================================================================
-//
-// P_FreeStrifeConversations
-//
-//============================================================================
-
-void P_FreeStrifeConversations ()
-{
-	FStrifeDialogueNode *node;
-
-	while (StrifeDialogues.Pop (node))
+	else
 	{
-		delete node;
-	}
-
-	for (int i = 0; i < 344; ++i)
-	{
-		if (StrifeTypes[i] != NULL)
+		if (strnicmp (mapname, "MAP", 3) != 0)
 		{
-			GetDefaultByType (StrifeTypes[i])->Conversation = NULL;
+			return;
+		}
+		char scriptname_b[9] = { 'S','C','R','I','P','T',mapname[3],mapname[4],0 };
+		char scriptname_t[9] = { 'D','I','A','L','O','G',mapname[3],mapname[4],0 };
+
+		if (!LoadScriptFile(scriptname_t, false, 2))
+		{
+			if (!LoadScriptFile (scriptname_b, false, 1))
+			{
+				LoadScriptFile ("SCRIPT00", false, 1);
+			}
 		}
 	}
-
-	CurNode = NULL;
-	PrevNode = NULL;
-}
-
-//============================================================================
-//
-// ncopystring
-//
-// If the string has no content, returns NULL. Otherwise, returns a copy.
-//
-//============================================================================
-
-static char *ncopystring (const char *string)
-{
-	if (string == NULL || string[0] == 0)
-	{
-		return NULL;
-	}
-	return copystring (string);
 }
 
 //============================================================================
@@ -256,56 +224,89 @@ static char *ncopystring (const char *string)
 //
 //============================================================================
 
-static void LoadScriptFile (const char *name)
+bool LoadScriptFile (const char *name, bool include, int type)
 {
 	int lumpnum = Wads.CheckNumForName (name);
-	int numnodes, i;
-	DWORD prevSpeakerType;
-	FStrifeDialogueNode *node;
-	FWadLump *lump;
+	FileReader *lump;
 
 	if (lumpnum < 0)
 	{
-		return;
+		return false;
 	}
-
-	numnodes = Wads.LumpLength (lumpnum);
-	if (!(gameinfo.flags & GI_SHAREWARE))
-	{
-		// Strife scripts are always a multiple of 1516 bytes because each entry
-		// is exactly 1516 bytes long.
-		if (numnodes % 1516 != 0)
-		{
-			return;
-		}
-		numnodes /= 1516;
-	}
-	else
-	{
-		// And the teaser version has 1488-byte entries.
-		if (numnodes % 1488 != 0)
-		{
-			return;
-		}
-		numnodes /= 1488;
-	}
-
 	lump = Wads.ReopenLumpNum (lumpnum);
-	prevSpeakerType = 0;
 
-	for (i = 0; i < numnodes; ++i)
+	bool res = LoadScriptFile(lumpnum, lump, Wads.LumpLength(lumpnum), include, type);
+	delete lump;
+	return res;
+}
+
+static bool LoadScriptFile(int lumpnum, FileReader *lump, int numnodes, bool include, int type)
+{
+	int i;
+	DWORD prevSpeakerType;
+	FStrifeDialogueNode *node;
+	char buffer[4];
+
+	lump->Read(buffer, 4);
+	lump->Seek(-4, SEEK_CUR);
+
+	// The binary format is so primitive that this check is enough to detect it.
+	bool isbinary = (buffer[0] == 0 || buffer[1] == 0 || buffer[2] == 0 || buffer[3] == 0);
+
+	if ((type == 1 && !isbinary) || (type == 2 && isbinary))
 	{
+		DPrintf("Incorrect data format for %s.", Wads.GetLumpFullName(lumpnum));
+		return false;
+	}
+
+	if (!isbinary)
+	{
+		P_ParseUSDF(lumpnum, lump, numnodes);
+	}
+	else 
+	{
+		if (!include)
+		{
+			LoadScriptFile("SCRIPT00", true, 1);
+		}
 		if (!(gameinfo.flags & GI_SHAREWARE))
 		{
-			node = ReadRetailNode (lump, prevSpeakerType);
+			// Strife scripts are always a multiple of 1516 bytes because each entry
+			// is exactly 1516 bytes long.
+			if (numnodes % 1516 != 0)
+			{
+				DPrintf("Incorrect data format for %s.", Wads.GetLumpFullName(lumpnum));
+				return false;
+			}
+			numnodes /= 1516;
 		}
 		else
 		{
-			node = ReadTeaserNode (lump, prevSpeakerType);
+			// And the teaser version has 1488-byte entries.
+			if (numnodes % 1488 != 0)
+			{
+				DPrintf("Incorrect data format for %s.", Wads.GetLumpFullName(lumpnum));
+				return false;
+			}
+			numnodes /= 1488;
 		}
-		StrifeDialogues.Push (node);
+
+		prevSpeakerType = 0;
+
+		for (i = 0; i < numnodes; ++i)
+		{
+			if (!(gameinfo.flags & GI_SHAREWARE))
+			{
+				node = ReadRetailNode (lump, prevSpeakerType);
+			}
+			else
+			{
+				node = ReadTeaserNode (lump, prevSpeakerType);
+			}
+			node->ThisNodeNum = StrifeDialogues.Push(node);
+		}
 	}
-	delete lump;
+	return true;
 }
 
 //============================================================================
@@ -316,12 +317,12 @@ static void LoadScriptFile (const char *name)
 //
 //============================================================================
 
-static FStrifeDialogueNode *ReadRetailNode (FWadLump *lump, DWORD &prevSpeakerType)
+static FStrifeDialogueNode *ReadRetailNode (FileReader *lump, DWORD &prevSpeakerType)
 {
 	FStrifeDialogueNode *node;
 	Speech speech;
 	char fullsound[16];
-	const TypeInfo *type;
+	const PClass *type;
 	int j;
 
 	node = new FStrifeDialogueNode;
@@ -337,12 +338,14 @@ static FStrifeDialogueNode *ReadRetailNode (FWadLump *lump, DWORD &prevSpeakerTy
 	// actor, so newly spawned actors will use this conversation by default.
 	type = GetStrifeType (speech.SpeakerType);
 	node->SpeakerType = type;
-	if (prevSpeakerType != speech.SpeakerType)
+
+	if ((signed)(speech.SpeakerType) >= 0 && prevSpeakerType != speech.SpeakerType)
 	{
 		if (type != NULL)
 		{
-			GetDefaultByType (type)->Conversation = node;
+			ClassRoots[type->TypeName] = StrifeDialogues.Size();
 		}
+		DialogueRoots[speech.SpeakerType] = StrifeDialogues.Size();
 		prevSpeakerType = speech.SpeakerType;
 	}
 
@@ -350,25 +353,27 @@ static FStrifeDialogueNode *ReadRetailNode (FWadLump *lump, DWORD &prevSpeakerTy
 	node->Dialogue = ncopystring (speech.Dialogue);
 
 	// The speaker's portrait, if any.
-	speech.Backdrop[8] = 0;
-	node->Backdrop = TexMan.AddPatch (speech.Backdrop);
+	speech.Dialogue[0] = 0; 	//speech.Backdrop[8] = 0;
+	node->Backdrop = TexMan.CheckForTexture (speech.Backdrop, FTexture::TEX_MiscPatch);
 
 	// The speaker's voice for this node, if any.
-	speech.Sound[8] = 0;
-	sprintf (fullsound, "svox/%s", speech.Sound);
-	node->SpeakerVoice = S_FindSound (fullsound);
+	speech.Backdrop[0] = 0; 	//speech.Sound[8] = 0;
+	mysnprintf (fullsound, countof(fullsound), "svox/%s", speech.Sound);
+	node->SpeakerVoice = fullsound;
 
 	// The speaker's name, if any.
-	speech.Name[16] = 0;
+	speech.Sound[0] = 0; 		//speech.Name[16] = 0;
 	node->SpeakerName = ncopystring (speech.Name);
 
 	// The item the speaker should drop when killed.
 	node->DropType = GetStrifeType (speech.DropType);
 
 	// Items you need to have to make the speaker use a different node.
+	node->ItemCheck.Resize(3);
 	for (j = 0; j < 3; ++j)
 	{
-		node->ItemCheck[j] = GetStrifeType (speech.ItemCheck[j]);
+		node->ItemCheck[j].Item = GetStrifeType (speech.ItemCheck[j]);
+		node->ItemCheck[j].Amount = -1;
 	}
 	node->ItemCheckNode = speech.Link;
 	node->Children = NULL;
@@ -386,12 +391,12 @@ static FStrifeDialogueNode *ReadRetailNode (FWadLump *lump, DWORD &prevSpeakerTy
 //
 //============================================================================
 
-static FStrifeDialogueNode *ReadTeaserNode (FWadLump *lump, DWORD &prevSpeakerType)
+static FStrifeDialogueNode *ReadTeaserNode (FileReader *lump, DWORD &prevSpeakerType)
 {
 	FStrifeDialogueNode *node;
 	TeaserSpeech speech;
 	char fullsound[16];
-	const TypeInfo *type;
+	const PClass *type;
 	int j;
 
 	node = new FStrifeDialogueNode;
@@ -406,12 +411,14 @@ static FStrifeDialogueNode *ReadTeaserNode (FWadLump *lump, DWORD &prevSpeakerTy
 	// actor, so newly spawned actors will use this conversation by default.
 	type = GetStrifeType (speech.SpeakerType);
 	node->SpeakerType = type;
-	if (prevSpeakerType != speech.SpeakerType)
+
+	if ((signed)speech.SpeakerType >= 0 && prevSpeakerType != speech.SpeakerType)
 	{
 		if (type != NULL)
 		{
-			GetDefaultByType (type)->Conversation = node;
+			ClassRoots[type->TypeName] = StrifeDialogues.Size();
 		}
+		DialogueRoots[speech.SpeakerType] = StrifeDialogues.Size();
 		prevSpeakerType = speech.SpeakerType;
 	}
 
@@ -419,13 +426,13 @@ static FStrifeDialogueNode *ReadTeaserNode (FWadLump *lump, DWORD &prevSpeakerTy
 	node->Dialogue = ncopystring (speech.Dialogue);
 
 	// The Teaser version doesn't have portraits.
-	node->Backdrop = -1;
+	node->Backdrop.SetInvalid();
 
 	// The speaker's voice for this node, if any.
 	if (speech.VoiceNumber != 0)
 	{
-		sprintf (fullsound, "svox/voc%lu", speech.VoiceNumber);
-		node->SpeakerVoice = S_FindSound (fullsound);
+		mysnprintf (fullsound, countof(fullsound), "svox/voc%u", speech.VoiceNumber);
+		node->SpeakerVoice = fullsound;
 	}
 	else
 	{
@@ -433,16 +440,18 @@ static FStrifeDialogueNode *ReadTeaserNode (FWadLump *lump, DWORD &prevSpeakerTy
 	}
 
 	// The speaker's name, if any.
-	speech.Name[16] = 0;
+	speech.Dialogue[0] = 0; 	//speech.Name[16] = 0;
 	node->SpeakerName = ncopystring (speech.Name);
 
 	// The item the speaker should drop when killed.
 	node->DropType = GetStrifeType (speech.DropType);
 
 	// Items you need to have to make the speaker use a different node.
+	node->ItemCheck.Resize(3);
 	for (j = 0; j < 3; ++j)
 	{
-		node->ItemCheck[j] = NULL;
+		node->ItemCheck[j].Item = NULL;
+		node->ItemCheck[j].Amount = -1;
 	}
 	node->ItemCheckNode = 0;
 	node->Children = NULL;
@@ -497,20 +506,19 @@ static void ParseReplies (FStrifeDialogueReply **replyptr, Response *responses)
 
 		// The message to record in the log for this reply.
 		reply->LogNumber = rsp->Log;
+		reply->LogString = NULL;
 
 		// The item to receive when this reply is used.
 		reply->GiveType = GetStrifeType (rsp->GiveType);
+		reply->ActionSpecial = 0;
 
 		// Do you need anything special for this reply to succeed?
+		reply->ItemCheck.Resize(3);
 		for (k = 0; k < 3; ++k)
 		{
-			reply->ItemCheck[k] = GetStrifeType (rsp->Item[k]);
-			reply->ItemCheckAmount[k] = rsp->Count[k];
+			reply->ItemCheck[k].Item = GetStrifeType (rsp->Item[k]);
+			reply->ItemCheck[k].Amount = rsp->Count[k];
 		}
-
-		// ReplyLines is calculated when the menu is shown. It is just Reply
-		// with word wrap turned on.
-		reply->ReplyLines = NULL;
 
 		// If the first item check has a positive amount required, then
 		// add that to the reply string. Otherwise, use the reply as-is.
@@ -518,7 +526,7 @@ static void ParseReplies (FStrifeDialogueReply **replyptr, Response *responses)
 		{
 			char moneystr[128];
 
-			sprintf (moneystr, "%s for %lu", rsp->Reply, rsp->Count[0]);
+			mysnprintf (moneystr, countof(moneystr), "%s for %u", rsp->Reply, rsp->Count[0]);
 			reply->Reply = copystring (moneystr);
 			reply->NeedsGold = true;
 		}
@@ -538,7 +546,7 @@ static void ParseReplies (FStrifeDialogueReply **replyptr, Response *responses)
 		{
 			reply->QuickYes = ncopystring (rsp->Yes);
 		}
-		if (reply->ItemCheck[0] != 0)
+		if (reply->ItemCheck[0].Item != 0)
 		{
 			reply->QuickNo = ncopystring (rsp->No);
 		}
@@ -582,7 +590,6 @@ FStrifeDialogueReply::~FStrifeDialogueReply ()
 	if (Reply != NULL) delete[] Reply;
 	if (QuickYes != NULL) delete[] QuickYes;
 	if (QuickNo != NULL) delete[] QuickNo;
-	if (ReplyLines != NULL) V_FreeBrokenLines (ReplyLines);
 }
 
 //============================================================================
@@ -613,14 +620,14 @@ static int FindNode (const FStrifeDialogueNode *node)
 //
 //============================================================================
 
-static bool CheckStrifeItem (const TypeInfo *itemtype, int amount=-1)
+static bool CheckStrifeItem (player_t *player, const PClass *itemtype, int amount=-1)
 {
 	AInventory *item;
 
 	if (itemtype == NULL || amount == 0)
 		return true;
 
-	item = ConversationPC->FindInventory (itemtype);
+	item = player->ConversationPC->FindInventory (itemtype);
 	if (item == NULL)
 		return false;
 
@@ -636,24 +643,24 @@ static bool CheckStrifeItem (const TypeInfo *itemtype, int amount=-1)
 //
 //============================================================================
 
-static void TakeStrifeItem (const TypeInfo *itemtype, int amount)
+static void TakeStrifeItem (player_t *player, const PClass *itemtype, int amount)
 {
 	if (itemtype == NULL || amount == 0)
 		return;
 
 	// Don't take quest items.
-	if (itemtype->IsDescendantOf (RUNTIME_CLASS(AQuestItem)))
+	if (itemtype->IsDescendantOf (PClass::FindClass(NAME_QuestItem)))
 		return;
 
-	// Don't take keys
+	// Don't take keys.
 	if (itemtype->IsDescendantOf (RUNTIME_CLASS(AKey)))
 		return;
 
-	// Don't take the sigil
+	// Don't take the sigil.
 	if (itemtype == RUNTIME_CLASS(ASigil))
 		return;
 
-	AInventory *item = ConversationPC->FindInventory (itemtype);
+	AInventory *item = player->mo->FindInventory (itemtype);
 	if (item != NULL)
 	{
 		item->Amount -= amount;
@@ -664,55 +671,489 @@ static void TakeStrifeItem (const TypeInfo *itemtype, int amount)
 	}
 }
 
+CUSTOM_CVAR(Float, dlg_musicvolume, 1.0f, CVAR_ARCHIVE)
+{
+	if (self < 0.f) self = 0.f;
+	else if (self > 1.f) self = 1.f;
+}
+
+//============================================================================
+//
+// The conversation menu
+//
+//============================================================================
+
+class DConversationMenu : public DMenu
+{
+	DECLARE_CLASS(DConversationMenu, DMenu)
+
+	FString mSpeaker;
+	FBrokenLines *mDialogueLines;
+	TArray<FString> mResponseLines;
+	TArray<unsigned int> mResponses;
+	bool mShowGold;
+	FStrifeDialogueNode *mCurNode;
+	int mYpos;
+
+public:
+	static int mSelection;
+
+	//=============================================================================
+	//
+	//
+	//
+	//=============================================================================
+
+	DConversationMenu(FStrifeDialogueNode *CurNode) 
+	{
+		mCurNode = CurNode;
+		mDialogueLines = NULL;
+		mShowGold = false;
+
+		// Format the speaker's message.
+		const char * toSay = CurNode->Dialogue;
+		if (strncmp (toSay, "RANDOM_", 7) == 0)
+		{
+			FString dlgtext;
+
+			dlgtext.Format("TXT_%s_%02d", toSay, 1+(pr_randomspeech() % NUM_RANDOM_LINES));
+			toSay = GStrings[dlgtext];
+			if (toSay == NULL)
+			{
+				toSay = GStrings["TXT_GOAWAY"];	// Ok, it's lame - but it doesn't look like an error to the player. ;)
+			}
+		}
+		else
+		{
+			// handle string table replacement
+			if (toSay[0] == '$')
+			{
+				toSay = GStrings(toSay + 1);
+			}
+		}
+		if (toSay == NULL)
+		{
+			toSay = ".";
+		}
+		mDialogueLines = V_BreakLines (SmallFont, screen->GetWidth()/CleanXfac - 24*2, toSay);
+
+		FStrifeDialogueReply *reply;
+		int i,j;
+		for (reply = CurNode->Children, i = 1; reply != NULL; reply = reply->Next)
+		{
+			if (reply->Reply == NULL)
+			{
+				continue;
+			}
+			mShowGold |= reply->NeedsGold;
+
+			const char *ReplyText = reply->Reply;
+			if (ReplyText[0] == '$')
+			{
+				ReplyText = GStrings(ReplyText + 1);
+			}
+			FBrokenLines *ReplyLines = V_BreakLines (SmallFont, 320-50-10, ReplyText);
+
+			mResponses.Push(mResponseLines.Size());
+			for (j = 0; ReplyLines[j].Width >= 0; ++j)
+			{
+				mResponseLines.Push(ReplyLines[j].Text);
+			}
+			++i;
+			V_FreeBrokenLines (ReplyLines);
+		}
+		char goodbye[25];
+		mysnprintf(goodbye, countof(goodbye), "TXT_RANDOMGOODBYE_%d", 1+(pr_randomspeech() % NUM_RANDOM_GOODBYES));
+		const char *goodbyestr = GStrings[goodbye];
+		if (goodbyestr == NULL) goodbyestr = "Bye.";
+		mResponses.Push(mResponseLines.Size());
+		mResponseLines.Push(FString(goodbyestr));
+
+		// Determine where the top of the reply list should be positioned.
+		i = OptionSettings.mLinespacing;
+		mYpos = MIN<int> (140, 192 - mResponseLines.Size() * i);
+		for (i = 0; mDialogueLines[i].Width >= 0; ++i)
+		{ }
+		i = 44 + i * 10;
+		if (mYpos - 100 < i - screen->GetHeight() / CleanYfac / 2)
+		{
+			mYpos = i - screen->GetHeight() / CleanYfac / 2 + 100;
+		}
+		ConversationMenuY = mYpos;
+		//ConversationMenu.indent = 50;
+	}
+
+	//=============================================================================
+	//
+	//
+	//
+	//=============================================================================
+
+	void Destroy()
+	{
+		V_FreeBrokenLines(mDialogueLines);
+		mDialogueLines = NULL;
+		I_SetMusicVolume (1.f);
+	}
+
+	bool DimAllowed()
+	{
+		return false;
+	}
+
+	//=============================================================================
+	//
+	//
+	//
+	//=============================================================================
+
+	bool MenuEvent(int mkey, bool fromcontroller)
+	{
+		if (demoplayback)
+		{ // During demo playback, don't let the user do anything besides close this menu.
+			if (mkey == MKEY_Back)
+			{
+				Close();
+				return true;
+			}
+			return false;
+		}
+		if (mkey == MKEY_Up)
+		{
+			if (--mSelection < 0) mSelection = mResponses.Size() - 1;
+			return true;
+		}
+		else if (mkey == MKEY_Down)
+		{
+			if (++mSelection >= (int)mResponses.Size()) mSelection = 0;
+			return true;
+		}
+		else if (mkey == MKEY_Back)
+		{
+			Net_WriteByte (DEM_CONVNULL);
+			Close();
+			return true;
+		}
+		else if (mkey == MKEY_Enter)
+		{
+			if ((unsigned)mSelection >= mResponses.Size())
+			{
+				Net_WriteByte(DEM_CONVCLOSE);
+			}
+			else
+			{
+				// Send dialogue and reply numbers across the wire.
+				assert((unsigned)mCurNode->ThisNodeNum < StrifeDialogues.Size());
+				assert(StrifeDialogues[mCurNode->ThisNodeNum] == mCurNode);
+				Net_WriteByte(DEM_CONVREPLY);
+				Net_WriteWord(mCurNode->ThisNodeNum);
+				Net_WriteByte(mSelection);
+			}
+			Close();
+			return true;
+		}
+		return false;
+	}
+
+	//=============================================================================
+	//
+	//
+	//
+	//=============================================================================
+
+	bool MouseEvent(int type, int x, int y)
+	{
+		int sel = -1;
+		int fh = SmallFont->GetHeight();
+
+		// convert x/y from screen to virtual coordinates, according to CleanX/Yfac use in DrawTexture
+		x = ((x - (screen->GetWidth() / 2)) / CleanXfac) + 160;
+		y = ((y - (screen->GetHeight() / 2)) / CleanYfac) + 100;
+
+		if (x >= 24 && x <= 320-24 && y >= mYpos && y < mYpos + fh * (int)mResponseLines.Size())
+		{
+			sel = (y - mYpos) / fh;
+			for(unsigned i=0;i<mResponses.Size(); i++)
+			{
+				if ((int)mResponses[i] > sel)
+				{
+					sel = i-1;
+					break;
+				}
+			}
+		}
+		if (sel != -1 && sel != mSelection)
+		{
+			//S_Sound (CHAN_VOICE | CHAN_UI, "menu/cursor", snd_menuvolume, ATTN_NONE);
+		}
+		mSelection = sel;
+		if (type == MOUSE_Release)
+		{
+			return MenuEvent(MKEY_Enter, true);
+		}
+		return true;
+	}
+
+
+	//=============================================================================
+	//
+	//
+	//
+	//=============================================================================
+
+	bool Responder(event_t *ev)
+	{
+		if (demoplayback)
+		{ // No interaction during demo playback
+			return false;
+		}
+		if (ev->type == EV_GUI_Event && ev->subtype == EV_GUI_Char && ev->data1 >= '0' && ev->data1 <= '9')
+		{ // Activate an item of type numberedmore (dialogue only)
+			mSelection = ev->data1 == '0' ? 9 : ev->data1 - '1';
+			return MenuEvent(MKEY_Enter, false);
+		}
+		return Super::Responder(ev);
+	}
+
+	//============================================================================
+	//
+	// DrawConversationMenu
+	//
+	//============================================================================
+
+	void Drawer()
+	{
+		const char *speakerName;
+		int x, y, linesize;
+		int width, fontheight;
+
+		player_t *cp = &players[consoleplayer];
+
+		assert (mDialogueLines != NULL);
+		assert (mCurNode != NULL);
+
+		FStrifeDialogueNode *CurNode = mCurNode;
+
+		if (CurNode == NULL)
+		{
+			Close ();
+			return;
+		}
+
+		// [CW] Freeze the game depending on MAPINFO options.
+		if (ConversationPauseTic < gametic && !multiplayer && !(level.flags2 & LEVEL2_CONV_SINGLE_UNFREEZE))
+		{
+			menuactive = MENU_On;
+		}
+
+		if (CurNode->Backdrop.isValid())
+		{
+			screen->DrawTexture (TexMan(CurNode->Backdrop), 0, 0, DTA_320x200, true, TAG_DONE);
+		}
+		x = 16 * screen->GetWidth() / 320;
+		y = 16 * screen->GetHeight() / 200;
+		linesize = 10 * CleanYfac;
+
+		// Who is talking to you?
+		if (CurNode->SpeakerName != NULL)
+		{
+			speakerName = CurNode->SpeakerName;
+		}
+		else
+		{
+			speakerName = cp->ConversationNPC->GetTag("Person");
+		}
+
+		// Dim the screen behind the dialogue (but only if there is no backdrop).
+		if (!CurNode->Backdrop.isValid())
+		{
+			int i;
+			for (i = 0; mDialogueLines[i].Width >= 0; ++i)
+			{ }
+			screen->Dim (0, 0.45f, 14 * screen->GetWidth() / 320, 13 * screen->GetHeight() / 200,
+				308 * screen->GetWidth() / 320 - 14 * screen->GetWidth () / 320,
+				speakerName == NULL ? linesize * i + 6 * CleanYfac
+				: linesize * i + 6 * CleanYfac + linesize * 3/2);
+		}
+
+		// Dim the screen behind the PC's choices.
+
+		screen->Dim (0, 0.45f, (24-160) * CleanXfac + screen->GetWidth()/2,
+			(mYpos - 2 - 100) * CleanYfac + screen->GetHeight()/2,
+			272 * CleanXfac,
+			MIN<int>(mResponseLines.Size() * OptionSettings.mLinespacing + 4, 200 - mYpos) * CleanYfac);
+
+		if (speakerName != NULL)
+		{
+			screen->DrawText (SmallFont, CR_WHITE, x, y, speakerName,
+				DTA_CleanNoMove, true, TAG_DONE);
+			y += linesize * 3 / 2;
+		}
+		x = 24 * screen->GetWidth() / 320;
+		for (int i = 0; mDialogueLines[i].Width >= 0; ++i)
+		{
+			screen->DrawText (SmallFont, CR_UNTRANSLATED, x, y, mDialogueLines[i].Text,
+				DTA_CleanNoMove, true, TAG_DONE);
+			y += linesize;
+		}
+
+		if (ShowGold)
+		{
+			AInventory *coin = cp->ConversationPC->FindInventory (RUNTIME_CLASS(ACoin));
+			char goldstr[32];
+
+			mysnprintf (goldstr, countof(goldstr), "%d", coin != NULL ? coin->Amount : 0);
+			screen->DrawText (SmallFont, CR_GRAY, 21, 191, goldstr, DTA_320x200, true,
+				DTA_FillColor, 0, DTA_Alpha, HR_SHADOW, TAG_DONE);
+			screen->DrawTexture (TexMan(((AInventory *)GetDefaultByType (RUNTIME_CLASS(ACoin)))->Icon),
+				3, 190, DTA_320x200, true,
+				DTA_FillColor, 0, DTA_Alpha, HR_SHADOW, TAG_DONE);
+			screen->DrawText (SmallFont, CR_GRAY, 20, 190, goldstr, DTA_320x200, true, TAG_DONE);
+			screen->DrawTexture (TexMan(((AInventory *)GetDefaultByType (RUNTIME_CLASS(ACoin)))->Icon),
+				2, 189, DTA_320x200, true, TAG_DONE);
+		}
+
+		y = mYpos;
+		fontheight = OptionSettings.mLinespacing;
+
+		int response = 0;
+		for (unsigned i = 0; i < mResponseLines.Size(); i++, y += fontheight)
+		{
+			width = SmallFont->StringWidth(mResponseLines[i]);
+			x = 64;
+
+			screen->DrawText (SmallFont, CR_GREEN, x, y, mResponseLines[i], DTA_Clean, true, TAG_DONE);
+
+			if (i == mResponses[response])
+			{
+				char tbuf[16];
+
+				response++;
+				mysnprintf (tbuf, countof(tbuf), "%d.", response);
+				x = 50 - SmallFont->StringWidth (tbuf);
+				screen->DrawText (SmallFont, CR_GREY, x, y, tbuf, DTA_Clean, true, TAG_DONE);
+
+				if (response == mSelection+1)
+				{
+					int color = ((DMenu::MenuTime%8) < 4) || DMenu::CurrentMenu != this ? CR_RED:CR_GREY;
+
+					x = (50 + 3 - 160) * CleanXfac + screen->GetWidth() / 2;
+					int yy = (y + fontheight/2 - 5 - 100) * CleanYfac + screen->GetHeight() / 2;
+					screen->DrawText (ConFont, color, x, yy, "\xd",
+						DTA_CellX, 8 * CleanXfac,
+						DTA_CellY, 8 * CleanYfac,
+						TAG_DONE);
+				}
+			}
+		}
+	}
+
+};
+
+IMPLEMENT_ABSTRACT_CLASS(DConversationMenu)
+int DConversationMenu::mSelection;	// needs to be preserved if the same dialogue is restarted
+
+
+//============================================================================
+//
+// P_FreeStrifeConversations
+//
+//============================================================================
+
+void P_FreeStrifeConversations ()
+{
+	FStrifeDialogueNode *node;
+
+	while (StrifeDialogues.Pop (node))
+	{
+		delete node;
+	}
+
+	DialogueRoots.Clear();
+	ClassRoots.Clear();
+
+	PrevNode = NULL;
+	if (DMenu::CurrentMenu != NULL && DMenu::CurrentMenu->IsKindOf(RUNTIME_CLASS(DConversationMenu)))
+	{
+		DMenu::CurrentMenu->Close();
+	}
+}
+
 //============================================================================
 //
 // P_StartConversation
 //
 // Begins a conversation between a PC and NPC.
-// FIXME: Make this work in multiplayer.
 //
 //============================================================================
 
-void P_StartConversation (AActor *npc, AActor *pc)
+void P_StartConversation (AActor *npc, AActor *pc, bool facetalker, bool saveangle)
 {
-	FStrifeDialogueReply *reply;
-	menuitem_t item;
-	const char *toSay;
-	int i, j;
+	AActor *oldtarget;
+	int i;
 
-	pc->momx = pc->momy = 0;	// Stop moving
-	pc->player->momx = pc->player->momy = 0;
+	// Make sure this is actually a player.
+	if (pc->player == NULL) return;
 
-	if (pc->player - players != consoleplayer)
-		return;
+	// [CW] If an NPC is talking to a PC already, then don't let
+	// anyone else talk to the NPC.
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		if (!playeringame[i] || pc->player == &players[i])
+			continue;
 
-	ConversationPC = pc;
-	ConversationNPC = npc;
+		if (npc == players[i].ConversationNPC)
+			return;
+	}
 
-	CurNode = npc->Conversation;
+	pc->velx = pc->vely = 0;	// Stop moving
+	pc->player->velx = pc->player->vely = 0;
+	static_cast<APlayerPawn*>(pc)->PlayIdle ();
+
+	pc->player->ConversationPC = pc;
+	pc->player->ConversationNPC = npc;
+	npc->flags5 |= MF5_INCONVERSATION;
+
+	FStrifeDialogueNode *CurNode = npc->Conversation;
 
 	if (pc->player == &players[consoleplayer])
 	{
-		S_Sound (CHAN_VOICE, "misc/chat", 1, ATTN_NONE);
+		S_Sound (CHAN_VOICE | CHAN_UI, gameinfo.chatSound, 1, ATTN_NONE);
 	}
 
 	npc->reactiontime = 2;
-	if (!(npc->flags & MF_FRIENDLY) && !(npc->flags4 & MF4_NOHATEPLAYERS))
+	pc->player->ConversationFaceTalker = facetalker;
+	if (saveangle)
 	{
-		npc->target = pc;
+		pc->player->ConversationNPCAngle = npc->angle;
 	}
-	ConversationNPCAngle = npc->angle;
-	A_FaceTarget (npc);
-	pc->angle = R_PointToAngle2 (pc->x, pc->y, npc->x, npc->y);
+	oldtarget = npc->target;
+	npc->target = pc;
+	if (facetalker)
+	{
+		A_FaceTarget (npc);
+		pc->angle = R_PointToAngle2 (pc->x, pc->y, npc->x, npc->y);
+	}
+	if ((npc->flags & MF_FRIENDLY) || (npc->flags4 & MF4_NOHATEPLAYERS))
+	{
+		npc->target = oldtarget;
+	}
 
 	// Check if we should jump to another node
-	while (CurNode->ItemCheck[0] != NULL)
+	while (CurNode->ItemCheck.Size() > 0 && CurNode->ItemCheck[0].Item != NULL)
 	{
-		if (CheckStrifeItem (CurNode->ItemCheck[0]) &&
-			CheckStrifeItem (CurNode->ItemCheck[1]) &&
-			CheckStrifeItem (CurNode->ItemCheck[2]))
+		bool jump = true;
+		for (i = 0; i < (int)CurNode->ItemCheck.Size(); ++i)
 		{
-			int root = FindNode (ConversationNPC->GetDefault()->Conversation);
+			if(!CheckStrifeItem (pc->player, CurNode->ItemCheck[i].Item, CurNode->ItemCheck[i].Amount))
+			{
+				jump = false;
+				break;
+			}
+		}
+		if (jump)
+		{
+			int root = pc->player->ConversationNPC->ConversationRoot;
 			CurNode = StrifeDialogues[root + CurNode->ItemCheckNode - 1];
 		}
 		else
@@ -721,84 +1162,30 @@ void P_StartConversation (AActor *npc, AActor *pc)
 		}
 	}
 
-	if (CurNode->SpeakerVoice != 0)
+	// The rest is only done when the conversation is actually displayed.
+	if (pc->player == &players[consoleplayer])
 	{
-		S_SoundID (npc, CHAN_VOICE, CurNode->SpeakerVoice, 1, ATTN_NORM);
-	}
-
-	// Set up the menu
-	ConversationMenu.PreDraw = DrawConversationMenu;
-	ConversationMenu.EscapeHandler = CleanupConversationMenu;
-
-	// Format the speaker's message.
-	toSay = CurNode->Dialogue;
-	if (strncmp (toSay, "RANDOM_", 7) == 0)
-	{
-		for (i = 0; i < NUM_RANDOM_TALKERS; ++i)
+		if (CurNode->SpeakerVoice != 0)
 		{
-			if (strcmp (RandomLines[i][0], toSay + 7) == 0)
-			{
-				toSay = RandomLines[i][1 + (pr_randomspeech() % NUM_RANDOM_LINES)];
-				break;
-			}
+			I_SetMusicVolume (dlg_musicvolume);
+			S_Sound (npc, CHAN_VOICE|CHAN_NOPAUSE, CurNode->SpeakerVoice, 1, ATTN_NORM);
 		}
-	}
-	DialogueLines = V_BreakLines (screen->GetWidth()/CleanXfac-24*2, toSay);
 
-	// Fill out the possible choices
-	ShowGold = false;
-	item.type = numberedmore;
-	item.e.mfunc = PickConversationReply;
-	for (reply = CurNode->Children, i = 1; reply != NULL; reply = reply->Next)
-	{
-		if (reply->Reply == NULL)
-		{
-			continue;
+		DConversationMenu *cmenu = new DConversationMenu(CurNode);
+
+
+		if (CurNode != PrevNode)
+		{ // Only reset the selection if showing a different menu.
+			DConversationMenu::mSelection = 0;
+			PrevNode = CurNode;
 		}
-		ShowGold |= reply->NeedsGold;
-		reply->ReplyLines = V_BreakLines (320-50-10, reply->Reply);
-		for (j = 0; reply->ReplyLines[j].width != -1; ++j)
-		{
-			item.label = reply->ReplyLines[j].string;
-			item.b.position = j == 0 ? i : 0;
-			item.c.extra = reply;
-			ConversationItems.Push (item);
-		}
-		++i;
-	}
-	item.label = RandomGoodbyes[pr_randomspeech() % NUM_RANDOM_GOODBYES];
-	item.b.position = i;
-	item.c.extra = NULL;
-	ConversationItems.Push (item);
 
-	// Determine where the top of the reply list should be positioned.
-	i = (gameinfo.gametype & GAME_Raven) ? 9 : 8;
-	ConversationMenu.y = MIN<int> (140, 192 - ConversationItems.Size() * i);
-	for (i = 0; DialogueLines[i].width != -1; ++i)
-	{ }
-	i = 44 + i * 10;
-	if (ConversationMenu.y - 100 < i - screen->GetHeight() / CleanYfac / 2)
-	{
-		ConversationMenu.y = i - screen->GetHeight() / CleanYfac / 2 + 100;
+		// And open the menu
+		M_StartControlPanel (false);
+		M_ActivateMenu(cmenu);
+		ConversationPauseTic = gametic + 20;
+		menuactive = MENU_OnNoPause;
 	}
-	ConversationMenu.indent = 50;
-
-	// Finish setting up the menu
-	ConversationMenu.items = &ConversationItems[0];
-	ConversationMenu.numitems = ConversationItems.Size();
-	if (CurNode != PrevNode)
-	{ // Only reset the selection if showing a different menu.
-		ConversationMenu.lastOn = 0;
-		PrevNode = CurNode;
-	}
-	ConversationMenu.DontDim = true;
-
-	// And open the menu
-	M_StartControlPanel (false);
-	OptionsActive = true;
-	menuactive = MENU_OnNoPause;
-	ConversationPauseTic = gametic + 20;
-	M_SwitchMenu (&ConversationMenu);
 }
 
 //============================================================================
@@ -811,249 +1198,307 @@ void P_StartConversation (AActor *npc, AActor *pc)
 
 void P_ResumeConversation ()
 {
-	if (ConversationPC != NULL && ConversationNPC != NULL)
+	for (int i = 0; i < MAXPLAYERS; i++)
 	{
-		P_StartConversation (ConversationNPC, ConversationPC);
-	}
-}
+		if (!playeringame[i])
+			continue;
 
-//============================================================================
-//
-// DrawConversationMenu
-//
-//============================================================================
+		player_t *p = &players[i];
 
-static void DrawConversationMenu ()
-{
-	const char *speakerName;
-	int i, x, y, linesize;
-
-	assert (DialogueLines != NULL);
-	assert (CurNode != NULL);
-
-	if (CurNode == NULL)
-	{
-		M_ClearMenus ();
-		return;
-	}
-
-	if (ConversationPauseTic < gametic)
-	{
-		menuactive = MENU_On;
-	}
-
-	if (CurNode->Backdrop >= 0)
-	{
-		screen->DrawTexture (TexMan(CurNode->Backdrop), 0, 0, DTA_320x200, true, TAG_DONE);
-	}
-	x = 16 * screen->GetWidth() / 320;
-	y = 16 * screen->GetHeight() / 200;
-	linesize = 10 * CleanYfac;
-
-	// Who is talking to you?
-	if (CurNode->SpeakerName != NULL)
-	{
-		speakerName = CurNode->SpeakerName;
-	}
-	else
-	{
-		speakerName = ConversationNPC->GetClass()->Meta.GetMetaString (AMETA_StrifeName);
-		if (speakerName == NULL)
+		if (p->ConversationPC != NULL && p->ConversationNPC != NULL)
 		{
-			speakerName = "Person";
+			P_StartConversation (p->ConversationNPC, p->ConversationPC, p->ConversationFaceTalker, false);
 		}
 	}
-
-	// Dim the screen behind the dialogue (but only if there is no backdrop).
-	if (CurNode->Backdrop <= 0)
-	{
-		for (i = 0; DialogueLines[i].width != -1; ++i)
-		{ }
-		screen->Dim (0, 0.45f, 14 * screen->GetWidth() / 320, 13 * screen->GetHeight() / 200,
-			308 * screen->GetWidth() / 320 - 14 * screen->GetWidth () / 320,
-			speakerName == NULL ? linesize * i + 6 * CleanYfac
-			: linesize * i + 6 * CleanYfac + linesize * 3/2);
-	}
-
-	// Dim the screen behind the PC's choices.
-	screen->Dim (0, 0.45f, (24-160) * CleanXfac + screen->GetWidth()/2,
-		(ConversationMenu.y - 2 - 100) * CleanYfac + screen->GetHeight()/2,
-		272 * CleanXfac,
-		MIN(ConversationMenu.numitems * (gameinfo.gametype & GAME_Raven ? 9 : 8) + 4,
-		200 - ConversationMenu.y) * CleanYfac);
-
-	if (speakerName != NULL)
-	{
-		screen->DrawText (CR_WHITE, x, y, speakerName,
-			DTA_CleanNoMove, true, TAG_DONE);
-		y += linesize * 3 / 2;
-	}
-	x = 24 * screen->GetWidth() / 320;
-	for (i = 0; DialogueLines[i].width >= 0; ++i)
-	{
-		screen->DrawText (CR_UNTRANSLATED, x, y, DialogueLines[i].string,
-			DTA_CleanNoMove, true, TAG_DONE);
-		y += linesize;
-	}
-
-	if (ShowGold)
-	{
-		AInventory *coin = ConversationPC->FindInventory (RUNTIME_CLASS(ACoin));
-		char goldstr[32];
-
-		sprintf (goldstr, "%d", coin != NULL ? coin->Amount : 0);
-		screen->DrawText (CR_GRAY, 21, 191, goldstr, DTA_320x200, true,
-			DTA_FillColor, 0, DTA_Alpha, HR_SHADOW, TAG_DONE);
-		screen->DrawTexture (TexMan(((AInventory *)GetDefaultByType (RUNTIME_CLASS(ACoin)))->Icon),
-			3, 190, DTA_320x200, true,
-			DTA_FillColor, 0, DTA_Alpha, HR_SHADOW, TAG_DONE);
-		screen->DrawText (CR_GRAY, 20, 190, goldstr, DTA_320x200, true, TAG_DONE);
-		screen->DrawTexture (TexMan(((AInventory *)GetDefaultByType (RUNTIME_CLASS(ACoin)))->Icon),
-			2, 189, DTA_320x200, true, TAG_DONE);
-	}
 }
 
 //============================================================================
 //
-// PickConversationReply
+// HandleReply
 //
-// FIXME: Make this work in multiplayer
+// Run by the netcode on all machines.
 //
 //============================================================================
 
-static void PickConversationReply ()
+static void HandleReply(player_t *player, bool isconsole, int nodenum, int replynum)
 {
 	const char *replyText = NULL;
-	FStrifeDialogueReply *reply = (FStrifeDialogueReply *)ConversationItems[ConversationMenu.lastOn].c.extra;
+	FStrifeDialogueReply *reply;
+	FStrifeDialogueNode *node;
+	AActor *npc;
 	bool takestuff;
 	int i;
 
-	M_ClearMenus ();
-	CleanupConversationMenu ();
+	if (player->ConversationNPC == NULL || (unsigned)nodenum >= StrifeDialogues.Size())
+	{
+		return;
+	}
+
+	// Find the reply.
+	node = StrifeDialogues[nodenum];
+	for (i = 0, reply = node->Children; reply != NULL && i != replynum; ++i, reply = reply->Next)
+	{ }
+	npc = player->ConversationNPC;
 	if (reply == NULL)
 	{
+		// The default reply was selected
+		npc->angle = player->ConversationNPCAngle;
+		npc->flags5 &= ~MF5_INCONVERSATION;
 		return;
 	}
 
 	// Check if you have the requisite items for this choice
-	for (i = 0; i < 3; ++i)
+	for (i = 0; i < (int)reply->ItemCheck.Size(); ++i)
 	{
-		if (!CheckStrifeItem (reply->ItemCheck[i], reply->ItemCheckAmount[i]))
+		if (!CheckStrifeItem(player, reply->ItemCheck[i].Item, reply->ItemCheck[i].Amount))
 		{
 			// No, you don't. Say so and let the NPC animate negatively.
-			if (reply->QuickNo)
+			if (reply->QuickNo && isconsole)
 			{
-				Printf ("%s\n", reply->QuickNo);
+				TerminalResponse(reply->QuickNo);
 			}
-			ConversationNPC->ConversationAnimation (2);
+			npc->ConversationAnimation(2);
+			npc->angle = player->ConversationNPCAngle;
+			npc->flags5 &= ~MF5_INCONVERSATION;
 			return;
 		}
 	}
 
 	// Yay, you do! Let the NPC animate affirmatively.
-	ConversationNPC->ConversationAnimation (1);
+	npc->ConversationAnimation(1);
 
 	// If this reply gives you something, then try to receive it.
 	takestuff = true;
 	if (reply->GiveType != NULL)
 	{
-		AInventory *item = static_cast<AInventory *> (Spawn (reply->GiveType, 0, 0, 0));
-		// Items given here should not count as items!
-		if (item->flags & MF_COUNTITEM)
+		if (reply->GiveType->IsDescendantOf(RUNTIME_CLASS(AInventory)))
 		{
-			level.total_items--;
-			item->flags &= ~MF_COUNTITEM;
+			if (reply->GiveType->IsDescendantOf(RUNTIME_CLASS(AWeapon)))
+			{
+				if (player->mo->FindInventory(reply->GiveType) != NULL)
+				{
+					takestuff = false;
+				}
+			}
+	
+			if (takestuff)
+			{
+				AInventory *item = static_cast<AInventory *>(Spawn(reply->GiveType, 0, 0, 0, NO_REPLACE));
+				// Items given here should not count as items!
+				item->ClearCounters();
+				if (item->GetClass()->TypeName == NAME_FlameThrower)
+				{
+					// The flame thrower gives less ammo when given in a dialog
+					static_cast<AWeapon*>(item)->AmmoGive1 = 40;
+				}
+				item->flags |= MF_DROPPED;
+				if (!item->CallTryPickup(player->mo))
+				{
+					item->Destroy();
+					takestuff = false;
+				}
+			}
+		
+			if (reply->GiveType->IsDescendantOf(RUNTIME_CLASS(ASlideshowStarter)))
+				gameaction = ga_slideshow;
 		}
-		item->flags |= MF_DROPPED;
-		if (!item->TryPickup (players[consoleplayer].mo))
+		else
 		{
-			item->Destroy ();
+			// Trying to give a non-inventory item.
 			takestuff = false;
+			if (isconsole)
+			{
+				Printf("Attempting to give non-inventory item %s\n", reply->GiveType->TypeName.GetChars());
+			}
 		}
+	}
+
+	if (reply->ActionSpecial != 0)
+	{
+		takestuff |= !!P_ExecuteSpecial(reply->ActionSpecial, NULL, player->mo, false,
+			reply->Args[0], reply->Args[1], reply->Args[2], reply->Args[3], reply->Args[4]);
 	}
 
 	// Take away required items if the give was successful or none was needed.
 	if (takestuff)
 	{
-		for (i = 0; i < 3; ++i)
+		for (i = 0; i < (int)reply->ItemCheck.Size(); ++i)
 		{
-			TakeStrifeItem (reply->ItemCheck[i], reply->ItemCheckAmount[i]);
+			TakeStrifeItem (player, reply->ItemCheck[i].Item, reply->ItemCheck[i].Amount);
 		}
 		replyText = reply->QuickYes;
 	}
 	else
 	{
-		replyText = "You seem to have enough!";
+		replyText = "$txt_haveenough";
 	}
 
 	// Update the quest log, if needed.
-	if (reply->LogNumber != 0)
+	if (reply->LogString != NULL)
 	{
-		players[consoleplayer].SetLogNumber (reply->LogNumber);
+		const char *log = reply->LogString;
+		if (log[0] == '$')
+		{
+			log = GStrings(log + 1);
+		}
+
+		player->SetLogText(log);
+	}
+	else if (reply->LogNumber != 0) 
+	{
+		player->SetLogNumber(reply->LogNumber);
 	}
 
-	if (replyText != NULL)
+	if (replyText != NULL && isconsole)
 	{
-		Printf ("%s\n", replyText);
+		TerminalResponse(replyText);
 	}
 
 	// Does this reply alter the speaker's conversation node? If NextNode is positive,
-	// the next time they talk, the will show the new node. If it is negative, then they
+	// the next time they talk, they will show the new node. If it is negative, then they
 	// will show the new node right away without terminating the dialogue.
 	if (reply->NextNode != 0)
 	{
-		int rootnode = FindNode (ConversationNPC->GetDefault()->Conversation);
+		int rootnode = npc->ConversationRoot;
 		if (reply->NextNode < 0)
 		{
-			ConversationNPC->Conversation = StrifeDialogues[rootnode - reply->NextNode - 1];
+			npc->Conversation = StrifeDialogues[rootnode - reply->NextNode - 1];
 			if (gameaction != ga_slideshow)
 			{
-				P_StartConversation (ConversationNPC, players[consoleplayer].mo);
+				P_StartConversation (npc, player->mo, player->ConversationFaceTalker, false);
 				return;
 			}
 			else
 			{
-				S_StopSound (ConversationNPC, CHAN_VOICE);
+				S_StopSound (npc, CHAN_VOICE);
 			}
 		}
 		else
 		{
-			ConversationNPC->Conversation = StrifeDialogues[rootnode + reply->NextNode - 1];
+			npc->Conversation = StrifeDialogues[rootnode + reply->NextNode - 1];
 		}
 	}
 
-	ConversationNPC->angle = ConversationNPCAngle;
+	npc->angle = player->ConversationNPCAngle;
+
+	// [CW] Set these to NULL because we're not using to them
+	// anymore. However, this can interfere with slideshows
+	// so we don't set them to NULL in that case.
+	if (gameaction != ga_slideshow)
+	{
+		npc->flags5 &= ~MF5_INCONVERSATION;
+		player->ConversationFaceTalker = false;
+		player->ConversationNPC = NULL;
+		player->ConversationPC = NULL;
+		player->ConversationNPCAngle = 0;
+	}
+
+	if (isconsole)
+	{
+		I_SetMusicVolume (1.f);
+	}
 }
 
 //============================================================================
 //
-// CleanupConversationMenu
+// P_ConversationCommand
 //
-// Release the resources used to create the most recent conversation menu.
+// Complete a conversation command.
 //
 //============================================================================
 
-void CleanupConversationMenu ()
+void P_ConversationCommand (int netcode, int pnum, BYTE **stream)
 {
-	FStrifeDialogueReply *reply;
+	player_t *player = &players[pnum];
 
-	if (CurNode != NULL)
+	// The conversation menus are normally closed by the menu code, but that
+	// doesn't happen during demo playback, so we need to do it here.
+	if (demoplayback && DMenu::CurrentMenu != NULL &&
+		DMenu::CurrentMenu->IsKindOf(RUNTIME_CLASS(DConversationMenu)))
 	{
-		for (reply = CurNode->Children; reply != NULL; reply = reply->Next)
+		DMenu::CurrentMenu->Close();
+	}
+	if (netcode == DEM_CONVREPLY)
+	{
+		int nodenum = ReadWord(stream);
+		int replynum = ReadByte(stream);
+		HandleReply(player, pnum == consoleplayer, nodenum, replynum);
+	}
+	else
+	{
+		assert(netcode == DEM_CONVNULL || netcode == DEM_CONVCLOSE);
+		if (player->ConversationNPC != NULL)
 		{
-			if (reply->ReplyLines != NULL)
-			{
-				V_FreeBrokenLines (reply->ReplyLines);
-				reply->ReplyLines = NULL;
-			}
+			player->ConversationNPC->angle = player->ConversationNPCAngle;
+			player->ConversationNPC->flags5 &= ~MF5_INCONVERSATION;
 		}
-		CurNode = NULL;
+		if (netcode == DEM_CONVNULL)
+		{
+			player->ConversationFaceTalker = false;
+			player->ConversationNPC = NULL;
+			player->ConversationPC = NULL;
+			player->ConversationNPCAngle = 0;
+		}
 	}
-	if (DialogueLines != NULL)
-	{
-		V_FreeBrokenLines (DialogueLines);
-		DialogueLines = NULL;
-	}
-	ConversationItems.Clear ();
 }
 
+//============================================================================
+//
+// TerminalResponse
+//
+// Similar to C_MidPrint, but lower and colored and sized to match the
+// rest of the dialogue text.
+//
+//============================================================================
+
+static void TerminalResponse (const char *str)
+{
+	if (str != NULL)
+	{
+		// handle string table replacement
+		if (str[0] == '$')
+		{
+			str = GStrings(str + 1);
+		}
+
+		if (StatusBar != NULL)
+		{
+			AddToConsole(-1, str);
+			AddToConsole(-1, "\n");
+			// The message is positioned a bit above the menu choices, because
+			// merchants can tell you something like this but continue to show
+			// their dialogue screen. I think most other conversations use this
+			// only as a response for terminating the dialogue.
+			StatusBar->AttachMessage(new DHUDMessageFadeOut(SmallFont, str,
+				float(CleanWidth/2) + 0.4f, float(ConversationMenuY - 110 + CleanHeight/2), CleanWidth, -CleanHeight,
+				CR_UNTRANSLATED, 3, 1), MAKE_ID('T','A','L','K'));
+		}
+		else
+		{
+			Printf("%s\n", str);
+		}
+	}
+}
+
+
+template<> FArchive &operator<< (FArchive &arc, FStrifeDialogueNode *&node)
+{
+	DWORD convnum;
+	if (arc.IsStoring())
+	{
+		arc.WriteCount (node == NULL? ~0u : node->ThisNodeNum);
+	}
+	else 
+	{
+		convnum = arc.ReadCount();
+		if (convnum >= StrifeDialogues.Size())
+		{
+			node = NULL;
+		}
+		else
+		{
+			node = StrifeDialogues[convnum];
+		}
+	}
+	return arc;
+}

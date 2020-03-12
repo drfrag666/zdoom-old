@@ -27,8 +27,9 @@
 #include "c_dispatch.h"
 #include "d_event.h"
 #include "gi.h"
-
-#define COUNT_CHEATS(l)		(sizeof(l)/sizeof(l[0]))
+#include "d_net.h"
+#include "doomstat.h"
+#include "g_level.h"
 
 EXTERN_CVAR (Bool, ticker);
 EXTERN_CVAR (Bool, noisedebug);
@@ -41,21 +42,22 @@ struct cheatseq_t
 	BYTE DontCheck;
 	BYTE CurrentArg;
 	BYTE Args[2];
-	BOOL (*Handler)(cheatseq_t *);
+	bool (*Handler)(cheatseq_t *);
 };
 
-static bool CheatAddKey (cheatseq_t *cheat, byte key, BOOL *eat);
-static BOOL Cht_Generic (cheatseq_t *);
-static BOOL Cht_Music (cheatseq_t *);
-static BOOL Cht_BeholdMenu (cheatseq_t *);
-static BOOL Cht_PumpupMenu (cheatseq_t *);
-static BOOL Cht_AutoMap (cheatseq_t *);
-static BOOL Cht_ChangeLevel (cheatseq_t *);
-static BOOL Cht_ChangeStartSpot (cheatseq_t *);
-static BOOL Cht_WarpTransLevel (cheatseq_t *);
-static BOOL Cht_MyPos (cheatseq_t *);
-static BOOL Cht_Sound (cheatseq_t *);
-static BOOL Cht_Ticker (cheatseq_t *);
+static bool CheatCheckList (event_t *ev, cheatseq_t *cheats, int numcheats);
+static bool CheatAddKey (cheatseq_t *cheat, BYTE key, bool *eat);
+static bool Cht_Generic (cheatseq_t *);
+static bool Cht_Music (cheatseq_t *);
+static bool Cht_BeholdMenu (cheatseq_t *);
+static bool Cht_PumpupMenu (cheatseq_t *);
+static bool Cht_AutoMap (cheatseq_t *);
+static bool Cht_ChangeLevel (cheatseq_t *);
+static bool Cht_ChangeStartSpot (cheatseq_t *);
+static bool Cht_WarpTransLevel (cheatseq_t *);
+static bool Cht_MyPos (cheatseq_t *);
+static bool Cht_Sound (cheatseq_t *);
+static bool Cht_Ticker (cheatseq_t *);
 
 BYTE CheatPowerup[7][10] =
 {
@@ -65,7 +67,21 @@ BYTE CheatPowerup[7][10] =
 	{ 'i','d','b','e','h','o','l','d','r', 255 },
 	{ 'i','d','b','e','h','o','l','d','a', 255 },
 	{ 'i','d','b','e','h','o','l','d','l', 255 },
-	{ 'i','d','b','e','h','o','l','d', 255 }
+	{ 'i','d','b','e','h','o','l','d', 255 },
+};
+BYTE CheatPowerup1[11][7] =
+{
+	{ 'g','i','m','m','e','a',255 },
+	{ 'g','i','m','m','e','b',255 },
+	{ 'g','i','m','m','e','c',255 },
+	{ 'g','i','m','m','e','d',255 },
+	{ 'g','i','m','m','e','e',255 },
+	{ 'g','i','m','m','e','f',255 },
+	{ 'g','i','m','m','e','g',255 },
+	{ 'g','i','m','m','e','h',255 },
+	{ 'g','i','m','m','e','i',255 },
+	{ 'g','i','m','m','e','j',255 },
+	{ 'g','i','m','m','e','z',255 },
 };
 BYTE CheatPowerup2[8][10] =
 {
@@ -138,8 +154,26 @@ static BYTE CheatOmnipotent[] =	{ 'o','m','n','i','p','o','t','e','n','t',255 };
 static BYTE CheatJimmy[] =		{ 'j','i','m','m','y',255 };
 static BYTE CheatBoomstix[] =	{ 'b','o','o','m','s','t','i','x',255 };
 static BYTE CheatStoneCold[] =	{ 's','t','o','n','e','c','o','l','d',255 };
-static BYTE CheatElvis[] =		{ 'e','l','v','i','s' };
+static BYTE CheatElvis[] =		{ 'e','l','v','i','s',255 };
 static BYTE CheatTopo[] =		{ 't','o','p','o',255 };
+
+//[BL] Graf will probably get rid of this
+static BYTE CheatJoelKoenigs[] =	{ 'j','o','e','l','k','o','e','n','i','g','s',255 };
+static BYTE CheatDavidBrus[] =		{ 'd','a','v','i','d','b','r','u','s',255 };
+static BYTE CheatScottHolman[] =	{ 's','c','o','t','t','h','o','l','m','a','n',255 };
+static BYTE CheatMikeKoenigs[] =	{ 'm','i','k','e','k','o','e','n','i','g','s',255 };
+static BYTE CheatCharlesJacobi[] =	{ 'c','h','a','r','l','e','s','j','a','c','o','b','i',255 };
+static BYTE CheatAndrewBenson[] =	{ 'a','n','d','r','e','w','b','e','n','s','o','n',255 };
+static BYTE CheatDeanHyers[] =		{ 'd','e','a','n','h','y','e','r','s',255 };
+static BYTE CheatMaryBregi[] =		{ 'm','a','r','y','b','r','e','g','i',255 };
+static BYTE CheatAllen[] =			{ 'a','l','l','e','n',255 };
+static BYTE CheatDigitalCafe[] =	{ 'd','i','g','i','t','a','l','c','a','f','e',255 };
+static BYTE CheatJoshuaStorms[] =	{ 'j','o','s','h','u','a','s','t','o','r','m','s',255 };
+static BYTE CheatLeeSnyder[] =		{ 'l','e','e','s','n','y','d','e','r',0,0,255 };
+static BYTE CheatKimHyers[] =		{ 'k','i','m','h','y','e','r','s',255 };
+static BYTE CheatShrrill[] =		{ 's','h','e','r','r','i','l','l',255 };
+
+static BYTE CheatTNTem[] =		{ 't','n','t','e','m',255 };
 
 static cheatseq_t DoomCheats[] =
 {
@@ -159,7 +193,7 @@ static cheatseq_t DoomCheats[] =
 	{ CheatPowerup[4],		0, 0, 0, {CHT_BEHOLDA,0},	Cht_Generic },
 	{ CheatPowerup[5],		0, 0, 0, {CHT_BEHOLDL,0},	Cht_Generic },
 	{ CheatChoppers,		0, 0, 0, {CHT_CHAINSAW,0},	Cht_Generic },
-	{ CheatClev,			0, 0, 0, {0,0},				Cht_ChangeLevel }
+	{ CheatClev,			0, 1, 0, {0,0},				Cht_ChangeLevel }
 };
 
 static cheatseq_t HereticCheats[] =
@@ -177,7 +211,18 @@ static cheatseq_t HereticCheats[] =
 	{ CheatAmmo,			0, 0, 0, {CHT_TAKEWEAPS,0},	Cht_Generic },
 	{ CheatGod,				0, 0, 0, {CHT_NOWUDIE,0},	Cht_Generic },
 	{ CheatMassacre,		0, 0, 0, {CHT_MASSACRE,0},	Cht_Generic },
-	{ CheatEngage,			0, 0, 0, {0,0},				Cht_ChangeLevel }
+	{ CheatEngage,			0, 1, 0, {0,0},				Cht_ChangeLevel },
+	{ CheatPowerup1[0],		0, 0, 0, {CHT_GIMMIEA,0},	Cht_Generic },
+	{ CheatPowerup1[1],		0, 0, 0, {CHT_GIMMIEB,0},	Cht_Generic },
+	{ CheatPowerup1[2],		0, 0, 0, {CHT_GIMMIEC,0},	Cht_Generic },
+	{ CheatPowerup1[3],		0, 0, 0, {CHT_GIMMIED,0},	Cht_Generic },
+	{ CheatPowerup1[4],		0, 0, 0, {CHT_GIMMIEE,0},	Cht_Generic },
+	{ CheatPowerup1[5],		0, 0, 0, {CHT_GIMMIEF,0},	Cht_Generic },
+	{ CheatPowerup1[6],		0, 0, 0, {CHT_GIMMIEG,0},	Cht_Generic },
+	{ CheatPowerup1[7],		0, 0, 0, {CHT_GIMMIEH,0},	Cht_Generic },
+	{ CheatPowerup1[8],		0, 0, 0, {CHT_GIMMIEI,0},	Cht_Generic },
+	{ CheatPowerup1[9],		0, 0, 0, {CHT_GIMMIEJ,0},	Cht_Generic },
+	{ CheatPowerup1[10],	0, 0, 0, {CHT_GIMMIEZ,0},	Cht_Generic },
 };
 
 static cheatseq_t HexenCheats[] =
@@ -204,7 +249,7 @@ static cheatseq_t StrifeCheats[] =
 	{ CheatTopo,			0, 0, 0, {0,0},				Cht_AutoMap },
 	{ CheatDots,			0, 1, 0, {0,0},				Cht_Ticker },
 	{ CheatOmnipotent,		0, 0, 0, {CHT_IDDQD,0},		Cht_Generic },
-	{ CheatGripper,			0, 0, 0, {CHT_NOMOMENTUM,0},Cht_Generic },
+	{ CheatGripper,			0, 0, 0, {CHT_NOVELOCITY,0},Cht_Generic },
 	{ CheatJimmy,			0, 0, 0, {CHT_KEYS,0},		Cht_Generic },
 	{ CheatBoomstix,		0, 0, 0, {CHT_IDFA,0},		Cht_Generic },
 	{ CheatElvis,			0, 0, 0, {CHT_NOCLIP,0},	Cht_Generic },
@@ -217,55 +262,108 @@ static cheatseq_t StrifeCheats[] =
 	{ CheatPowerup2[4],		0, 0, 0, {CHT_PUMPUPP,0},	Cht_Generic },
 	{ CheatPowerup2[5],		0, 0, 0, {CHT_PUMPUPS,0},	Cht_Generic },
 	{ CheatPowerup2[6],		0, 0, 0, {CHT_PUMPUPT,0},	Cht_Generic },
-	{ CheatRift,			0, 0, 0, {0,0},				Cht_ChangeLevel },
+	{ CheatRift,			0, 1, 0, {0,0},				Cht_ChangeLevel },
 	{ CheatDonnyTrump,		0, 0, 0, {CHT_DONNYTRUMP,0},Cht_Generic },
 	{ CheatScoot,			0, 0, 0, {0,0},				Cht_ChangeStartSpot },
 	{ CheatLego,			0, 0, 0, {CHT_LEGO,0},		Cht_Generic },
 };
 
-extern BOOL CheckCheatmode ();
+static cheatseq_t ChexCheats[] =
+{
+	{ CheatMus,				0, 1, 0, {0,0},				Cht_Music },
+	{ CheatKimHyers,		0, 1, 0, {0,0},				Cht_MyPos },
+	{ CheatShrrill,			0, 0, 0, {0,0},				Cht_AutoMap },
+	{ CheatDavidBrus,		0, 0, 0, {CHT_IDDQD,0},		Cht_Generic },
+	{ CheatScottHolman,		0, 0, 0, {CHT_IDKFA,0},		Cht_Generic },
+	{ CheatMikeKoenigs,		0, 0, 0, {CHT_IDFA,0},		Cht_Generic },
+	{ CheatCharlesJacobi,	0, 0, 0, {CHT_NOCLIP,0},	Cht_Generic },
+	{ CheatAndrewBenson,	0, 0, 0, {CHT_BEHOLDV,0},	Cht_Generic },
+	{ CheatDeanHyers,		0, 0, 0, {CHT_BEHOLDS,0},	Cht_Generic },
+	{ CheatMaryBregi,		0, 0, 0, {CHT_BEHOLDI,0},	Cht_Generic },
+	{ CheatAllen,			0, 0, 0, {CHT_BEHOLDR,0},	Cht_Generic },
+	{ CheatDigitalCafe,		0, 0, 0, {CHT_BEHOLDA,0},	Cht_Generic },
+	{ CheatJoshuaStorms,	0, 0, 0, {CHT_BEHOLDL,0},	Cht_Generic },
+	{ CheatJoelKoenigs,		0, 0, 0, {CHT_CHAINSAW,0},	Cht_Generic },
+	{ CheatLeeSnyder,		0, 1, 0, {0,0},				Cht_ChangeLevel }
+};
+
+static cheatseq_t SpecialCheats[] =
+{
+	{ CheatTNTem,		0, 0, 0, {CHT_MASSACRE,0},	Cht_Generic }
+};
+
+
+
+CVAR(Bool, allcheats, false, CVAR_ARCHIVE)
 
 // Respond to keyboard input events, intercept cheats.
 // [RH] Cheats eat the last keypress used to trigger them
-BOOL ST_Responder (event_t *ev)
+bool ST_Responder (event_t *ev)
 {
-	BOOL eat = false;
+	bool eat = false;
 
-	if (ev->type == EV_KeyDown)
+	if (!allcheats)
 	{
 		cheatseq_t *cheats;
 		int numcheats;
-		int i;
 
 		switch (gameinfo.gametype)
 		{
 		case GAME_Doom:
 			cheats = DoomCheats;
-			numcheats = COUNT_CHEATS(DoomCheats);
+			numcheats = countof(DoomCheats);
 			break;
 
 		case GAME_Heretic:
 			cheats = HereticCheats;
-			numcheats = COUNT_CHEATS(HereticCheats);
+			numcheats = countof(HereticCheats);
 			break;
 
 		case GAME_Hexen:
 			cheats = HexenCheats;
-			numcheats = COUNT_CHEATS(HexenCheats);
+			numcheats = countof(HexenCheats);
 			break;
 
 		case GAME_Strife:
 			cheats = StrifeCheats;
-			numcheats = COUNT_CHEATS(StrifeCheats);
+			numcheats = countof(StrifeCheats);
+			break;
+
+		case GAME_Chex:
+			cheats = ChexCheats;
+			numcheats = countof(ChexCheats);
 			break;
 
 		default:
 			return false;
 		}
+		return CheatCheckList(ev, cheats, numcheats);
+	}
+	else
+	{
+		static cheatseq_t *cheatlists[] = { DoomCheats, HereticCheats, HexenCheats, StrifeCheats, ChexCheats, SpecialCheats };
+		static int counts[] = { countof(DoomCheats), countof(HereticCheats), countof(HexenCheats), 
+								countof(StrifeCheats), countof(ChexCheats), countof(SpecialCheats) };
+
+		for (size_t i=0; i<countof(cheatlists); i++)
+		{
+			if (CheatCheckList(ev, cheatlists[i], counts[i])) return true;
+		}
+	}
+	return false;
+}
+
+static bool CheatCheckList (event_t *ev, cheatseq_t *cheats, int numcheats)
+{
+	bool eat = false;
+
+	if (ev->type == EV_KeyDown)
+	{
+		int i;
 
 		for (i = 0; i < numcheats; i++, cheats++)
 		{
-			if (CheatAddKey (cheats, (byte)ev->data2, &eat))
+			if (CheatAddKey (cheats, (BYTE)ev->data2, &eat))
 			{
 				if (cheats->DontCheck || !CheckCheatmode ())
 				{
@@ -291,7 +389,7 @@ BOOL ST_Responder (event_t *ev)
 //
 //--------------------------------------------------------------------------
 
-static bool CheatAddKey (cheatseq_t *cheat, byte key, BOOL *eat)
+static bool CheatAddKey (cheatseq_t *cheat, BYTE key, bool *eat)
 {
 	if (cheat->Pos == NULL)
 	{
@@ -328,14 +426,14 @@ static bool CheatAddKey (cheatseq_t *cheat, byte key, BOOL *eat)
 //
 //--------------------------------------------------------------------------
 
-static BOOL Cht_Generic (cheatseq_t *cheat)
+static bool Cht_Generic (cheatseq_t *cheat)
 {
 	Net_WriteByte (DEM_GENERICCHEAT);
 	Net_WriteByte (cheat->Args[0]);
 	return true;
 }
 
-static BOOL Cht_Music (cheatseq_t *cheat)
+static bool Cht_Music (cheatseq_t *cheat)
 {
 	char buf[9] = "idmus xx";
 
@@ -345,13 +443,13 @@ static BOOL Cht_Music (cheatseq_t *cheat)
 	return true;
 }
 
-static BOOL Cht_BeholdMenu (cheatseq_t *cheat)
+static bool Cht_BeholdMenu (cheatseq_t *cheat)
 {
 	Printf ("%s\n", GStrings("STSTR_BEHOLD"));
 	return false;
 }
 
-static BOOL Cht_PumpupMenu (cheatseq_t *cheat)
+static bool Cht_PumpupMenu (cheatseq_t *cheat)
 {
 	// How many people knew about the PUMPUPT cheat, since
 	// it isn't printed in the list?
@@ -359,7 +457,7 @@ static BOOL Cht_PumpupMenu (cheatseq_t *cheat)
 	return false;
 }
 
-static BOOL Cht_AutoMap (cheatseq_t *cheat)
+static bool Cht_AutoMap (cheatseq_t *cheat)
 {
 	if (automapactive)
 	{
@@ -372,7 +470,7 @@ static BOOL Cht_AutoMap (cheatseq_t *cheat)
 	}
 }
 
-static BOOL Cht_ChangeLevel (cheatseq_t *cheat)
+static bool Cht_ChangeLevel (cheatseq_t *cheat)
 {
 	char cmd[10] = "idclev xx";
 
@@ -382,16 +480,16 @@ static BOOL Cht_ChangeLevel (cheatseq_t *cheat)
 	return true;
 }
 
-static BOOL Cht_ChangeStartSpot (cheatseq_t *cheat)
+static bool Cht_ChangeStartSpot (cheatseq_t *cheat)
 {
 	char cmd[64];
-	
-	sprintf (cmd, "changemap %s %c", level.mapname, cheat->Args[0]);
+
+	mysnprintf (cmd, countof(cmd), "changemap %s %c", level.mapname, cheat->Args[0]);
 	C_DoCommand (cmd);
 	return true;
 }
 
-static BOOL Cht_WarpTransLevel (cheatseq_t *cheat)
+static bool Cht_WarpTransLevel (cheatseq_t *cheat)
 {
 	char cmd[11] = "hxvisit xx";
 	cmd[8] = cheat->Args[0];
@@ -400,20 +498,20 @@ static BOOL Cht_WarpTransLevel (cheatseq_t *cheat)
 	return true;
 }
 
-static BOOL Cht_MyPos (cheatseq_t *cheat)
+static bool Cht_MyPos (cheatseq_t *cheat)
 {
 	C_DoCommand ("toggle idmypos");
 	return true;
 }
 
-static BOOL Cht_Ticker (cheatseq_t *cheat)
+static bool Cht_Ticker (cheatseq_t *cheat)
 {
 	ticker = !ticker;
 	Printf ("%s\n", GStrings(ticker ? "TXT_CHEATTICKERON" : "TXT_CHEATTICKEROFF"));
 	return true;
 }
 
-static BOOL Cht_Sound (cheatseq_t *cheat)
+static bool Cht_Sound (cheatseq_t *cheat)
 {
 	noisedebug = !noisedebug;
 	Printf ("%s\n", GStrings(noisedebug ? "TXT_CHEATSOUNDON" : "TXT_CHEATSOUNDOFF"));

@@ -3,7 +3,7 @@
 ** Manages transport of user and "server" cvars across a network
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -43,26 +43,32 @@
 #include "d_netinf.h"
 #include "d_net.h"
 #include "d_protocol.h"
+#include "d_player.h"
 #include "c_dispatch.h"
 #include "v_palette.h"
 #include "v_video.h"
 #include "i_system.h"
-#include "r_draw.h"
 #include "r_state.h"
 #include "sbar.h"
 #include "gi.h"
 #include "m_random.h"
+#include "teaminfo.h"
+#include "r_data/r_translate.h"
+#include "templates.h"
+#include "cmdlib.h"
+#include "farchive.h"
 
 static FRandom pr_pickteam ("PickRandomTeam");
 
-extern BOOL st_firsttime;
+extern bool st_firsttime;
 EXTERN_CVAR (Bool, teamplay)
 
 CVAR (Float,	autoaim,				5000.f,		CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (String,	name,					"Player",	CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Color,	color,					0x40cf00,	CVAR_USERINFO | CVAR_ARCHIVE);
+CVAR (Int,		colorset,				0,			CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (String,	skin,					"base",		CVAR_USERINFO | CVAR_ARCHIVE);
-CVAR (Int,		team,					255,		CVAR_USERINFO | CVAR_ARCHIVE);
+CVAR (Int,		team,					TEAM_NONE,	CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (String,	gender,					"male",		CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Bool,		neverswitchonpickup,	false,		CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Float,	movebob,				0.25f,		CVAR_USERINFO | CVAR_ARCHIVE);
@@ -81,39 +87,59 @@ enum
 	INFO_MoveBob,
 	INFO_StillBob,
 	INFO_PlayerClass,
-};
-
-const char *PlayerClassNames[4] =
-{
-	"Random", "Fighter", "Cleric", "Mage"
-};
-
-const char *TeamNames[NUM_TEAMS] =
-{
-	"Red", "Blue", "Green", "Gold"
-};
-
-float TeamHues[NUM_TEAMS] =
-{
-	0.f, 240.f, 120.f, 60.f
+	INFO_ColorSet,
 };
 
 const char *GenderNames[3] = { "male", "female", "other" };
 
-static const char *UserInfoStrings[] =
+// Replace \ with %/ and % with %%
+FString D_EscapeUserInfo (const char *str)
 {
-	"name",
-	"autoaim",
-	"color",
-	"skin",
-	"team",
-	"gender",
-	"neverswitchonpickup",
-	"movebob",
-	"stillbob",
-	"playerclass",
-	NULL
-};
+	FString ret;
+
+	for (; *str != '\0'; ++str)
+	{
+		if (*str == '\\')
+		{
+			ret << '%' << '/';
+		}
+		else if (*str == '%')
+		{
+			ret << '%' << '%';
+		}
+		else
+		{
+			ret << *str;
+		}
+	}
+	return ret;
+}
+
+// Replace %/ with \ and %% with %
+FString D_UnescapeUserInfo (const char *str, size_t len)
+{
+	const char *end = str + len;
+	FString ret;
+
+	while (*str != '\0' && str < end)
+	{
+		if (*str == '%')
+		{
+			if (*(str + 1) == '/')
+			{
+				ret << '\\';
+				str += 2;
+				continue;
+			}
+			else if (*(str + 1) == '%')
+			{
+				str++;
+			}
+		}
+		ret << *str++;
+	}
+	return ret;
+}
 
 int D_GenderToInt (const char *gender)
 {
@@ -125,42 +151,70 @@ int D_GenderToInt (const char *gender)
 		return GENDER_MALE;
 }
 
-static int D_PlayerClassToInt (const char *classname)
+int D_PlayerClassToInt (const char *classname)
 {
-	for (int i = 1; i <= 3; ++i)
+	if (PlayerClasses.Size () > 1)
 	{
-		if (stricmp (PlayerClassNames[i], classname) == 0)
+		for (unsigned int i = 0; i < PlayerClasses.Size (); ++i)
 		{
-			return i-1;
+			const PClass *type = PlayerClasses[i].Type;
+
+			if (stricmp (type->Meta.GetMetaString (APMETA_DisplayName), classname) == 0)
+			{
+				return i;
+			}
 		}
+		return -1;
 	}
-	return -1;
+	else
+	{
+		return 0;
+	}
 }
 
-void D_GetPlayerColor (int player, float *h, float *s, float *v)
+void D_GetPlayerColor (int player, float *h, float *s, float *v, FPlayerColorSet **set)
 {
-	int color = players[player].userinfo.color;
+	userinfo_t *info = &players[player].userinfo;
+	FPlayerColorSet *colorset = NULL;
+	uint32 color;
+	int team;
+
+	if (players[player].mo != NULL)
+	{
+		colorset = P_GetPlayerColorSet(players[player].mo->GetClass()->TypeName, info->GetColorSet());
+	}
+	if (colorset != NULL)
+	{
+		color = GPalette.BaseColors[GPalette.Remap[colorset->RepresentativeColor]];
+	}
+	else
+	{
+		color = info->GetColor();
+	}
 
 	RGBtoHSV (RPART(color)/255.f, GPART(color)/255.f, BPART(color)/255.f,
 		h, s, v);
 
-	if (teamplay && players[player].userinfo.team < NUM_TEAMS)
+	if (teamplay && TeamLibrary.IsValidTeam((team = info->GetTeam())) && !Teams[team].GetAllowCustomPlayerColor())
 	{
 		// In team play, force the player to use the team's hue
 		// and adjust the saturation and value so that the team
 		// hue is visible in the final color.
-		*h = TeamHues[players[player].userinfo.team];
-		if (gameinfo.gametype == GAME_Doom)
-		{
-			*s = *s*0.15f+0.8f;
-			*v = *v*0.5f+0.4f;
-		}
-		else
-		{
-			// I'm not really happy with the red team color in Heretic...
-			*s = team == 0 ? 0.6f : 0.8f;
-			*v = *v*0.4f+0.3f;
-		}
+		float ts, tv;
+		int tcolor = Teams[team].GetPlayerColor ();
+
+		RGBtoHSV (RPART(tcolor)/255.f, GPART(tcolor)/255.f, BPART(tcolor)/255.f,
+			h, &ts, &tv);
+
+		*s = clamp(ts + *s * 0.15f - 0.075f, 0.f, 1.f);
+		*v = clamp(tv + *v * 0.5f - 0.25f, 0.f, 1.f);
+
+		// Make sure not to pass back any colorset in teamplay.
+		colorset = NULL;
+	}
+	if (set != NULL)
+	{
+		*set = colorset;
 	}
 }
 
@@ -175,14 +229,19 @@ void D_PickRandomTeam (int player)
 {
 	static char teamline[8] = "\\team\\X";
 
-	byte *foo = (byte *)teamline;
-	teamline[6] = D_PickRandomTeam() + '0';
+	BYTE *foo = (BYTE *)teamline;
+	teamline[6] = (char)D_PickRandomTeam() + '0';
 	D_ReadUserInfoStrings (player, &foo, teamplay);
 }
 
 int D_PickRandomTeam ()
 {
-	int teamPresent[NUM_TEAMS] = { 0 };
+	for (unsigned int i = 0; i < Teams.Size (); i++)
+	{
+		Teams[i].m_iPresent = 0;
+		Teams[i].m_iTies = 0;
+	}
+
 	int numTeams = 0;
 	int team;
 
@@ -190,9 +249,10 @@ int D_PickRandomTeam ()
 	{
 		if (playeringame[i])
 		{
-			if (players[i].userinfo.team < NUM_TEAMS)
+			team = players[i].userinfo.GetTeam();
+			if (TeamLibrary.IsValidTeam(team))
 			{
-				if (teamPresent[players[i].userinfo.team]++ == 0)
+				if (Teams[team].m_iPresent++ == 0)
 				{
 					numTeams++;
 				}
@@ -204,37 +264,37 @@ int D_PickRandomTeam ()
 	{
 		do
 		{
-			team = pr_pickteam() % NUM_TEAMS;
-		} while (teamPresent[team] != 0);
+			team = pr_pickteam() % Teams.Size();
+		} while (Teams[team].m_iPresent != 0);
 	}
 	else
 	{
-		int lowest = INT_MAX, lowestTie = 0, i;
-		int ties[NUM_TEAMS];
+		int lowest = INT_MAX, lowestTie = 0;
+		unsigned int i;
 
-		for (i = 0; i < NUM_TEAMS; ++i)
+		for (i = 0; i < Teams.Size (); ++i)
 		{
-			if (teamPresent[i] > 0)
+			if (Teams[i].m_iPresent > 0)
 			{
-				if (teamPresent[i] < lowest)
+				if (Teams[i].m_iPresent < lowest)
 				{
-					lowest = teamPresent[i];
+					lowest = Teams[i].m_iPresent;
 					lowestTie = 0;
-					ties[0] = i;
+					Teams[0].m_iTies = i;
 				}
-				else if (teamPresent[i] == lowest)
+				else if (Teams[i].m_iPresent == lowest)
 				{
-					ties[++lowestTie] = i;
+					Teams[++lowestTie].m_iTies = i;
 				}
 			}
 		}
 		if (lowestTie == 0)
 		{
-			team = ties[0];
+			team = Teams[0].m_iTies;
 		}
 		else
 		{
-			team = ties[pr_pickteam() % (lowestTie+1)];
+			team = Teams[pr_pickteam() % (lowestTie+1)].m_iTies;
 		}
 	}
 
@@ -244,21 +304,28 @@ int D_PickRandomTeam ()
 static void UpdateTeam (int pnum, int team, bool update)
 {
 	userinfo_t *info = &players[pnum].userinfo;
+
+	if ((dmflags2 & DF2_NO_TEAM_SWITCH) && (alwaysapplydmflags || deathmatch) && TeamLibrary.IsValidTeam (info->GetTeam()))
+	{
+		Printf ("Team changing has been disabled!\n");
+		return;
+	}
+
 	int oldteam;
 
-	oldteam = info->team;
-	info->team = team;
-
-	if (teamplay && info->team >= NUM_TEAMS)
-	{ // Force players onto teams in teamplay mode
-		info->team = D_PickRandomTeam ();
-	}
-	if (update && oldteam != info->team)
+	if (!TeamLibrary.IsValidTeam (team))
 	{
-		if (info->team < NUM_TEAMS)
-			Printf ("%s joined the %s team\n", info->netname, TeamNames[info->team]);
+		team = TEAM_NONE;
+	}
+	oldteam = info->GetTeam();
+	team = info->TeamChanged(team);
+
+	if (update && oldteam != team)
+	{
+		if (TeamLibrary.IsValidTeam (team))
+			Printf ("%s joined the %s team\n", info->GetName(), Teams[team].GetName ());
 		else
-			Printf ("%s is now a loner\n", info->netname);
+			Printf ("%s is now a loner\n", info->GetName());
 	}
 	// Let the player take on the team's color
 	R_BuildPlayerTranslation (pnum);
@@ -266,25 +333,28 @@ static void UpdateTeam (int pnum, int team, bool update)
 	{
 		StatusBar->AttachToPlayer (&players[pnum]);
 	}
-	if ((unsigned)info->team >= NUM_TEAMS)
-		info->team = TEAM_None;
+	// Double-check
+	if (!TeamLibrary.IsValidTeam (team))
+	{
+		*static_cast<FIntCVar *>((*info)[NAME_Team]) = TEAM_NONE;
+	}
 }
 
 int D_GetFragCount (player_t *player)
 {
-	if (!teamplay || player->userinfo.team >= NUM_TEAMS)
+	const int team = player->userinfo.GetTeam();
+	if (!teamplay || !TeamLibrary.IsValidTeam(team))
 	{
 		return player->fragcount;
 	}
 	else
 	{
 		// Count total frags for this player's team
-		const int team = player->userinfo.team;
 		int count = 0;
 
 		for (int i = 0; i < MAXPLAYERS; ++i)
 		{
-			if (playeringame[i] && players[i].userinfo.team == team)
+			if (playeringame[i] && players[i].userinfo.GetTeam() == team)
 			{
 				count += players[i].fragcount;
 			}
@@ -296,41 +366,152 @@ int D_GetFragCount (player_t *player)
 void D_SetupUserInfo ()
 {
 	int i;
-	userinfo_t *coninfo = &players[consoleplayer].userinfo;
+	userinfo_t *coninfo;
 
+	// Reset everybody's userinfo to a default state.
 	for (i = 0; i < MAXPLAYERS; i++)
-		memset (&players[i].userinfo, 0, sizeof(userinfo_t));
+	{
+		players[i].userinfo.Reset();
+	}
+	// Initialize the console player's user info
+	coninfo = &players[consoleplayer].userinfo;
 
-	strncpy (coninfo->netname, name, MAXPLAYERNAME);
-	if (teamplay && team >= NUM_TEAMS)
+	for (FBaseCVar *cvar = CVars; cvar != NULL; cvar = cvar->GetNext())
 	{
-		coninfo->team = D_PickRandomTeam ();
+		if ((cvar->GetFlags() & (CVAR_USERINFO|CVAR_IGNORE)) == CVAR_USERINFO)
+		{
+			FBaseCVar **newcvar;
+			FName cvarname(cvar->GetName());
+
+			switch (cvarname.GetIndex())
+			{
+			// Some cvars don't copy their original value directly.
+			case NAME_Team:			coninfo->TeamChanged(team); break;
+			case NAME_Skin:			coninfo->SkinChanged(skin); break;
+			case NAME_Gender:		coninfo->GenderChanged(gender); break;
+			case NAME_PlayerClass:	coninfo->PlayerClassChanged(playerclass); break;
+			// The rest do.
+			default:
+				newcvar = coninfo->CheckKey(cvarname);
+				(*newcvar)->SetGenericRep(cvar->GetGenericRep(CVAR_String), CVAR_String);
+				break;
+			}
+		}
 	}
-	else
+	R_BuildPlayerTranslation(consoleplayer);
+}
+
+void userinfo_t::Reset()
+{
+	// Clear this player's userinfo.
+	TMapIterator<FName, FBaseCVar *> it(*this);
+	TMap<FName, FBaseCVar *>::Pair *pair;
+
+	while (it.NextPair(pair))
 	{
-		coninfo->team = team;
+		delete pair->Value;
 	}
-	if (autoaim > 35.f || autoaim < 0.f)
+	Clear();
+
+	// Create userinfo vars for this player, initialized to their defaults.
+	for (FBaseCVar *cvar = CVars; cvar != NULL; cvar = cvar->GetNext())
 	{
-		coninfo->aimdist = ANGLE_1*35;
+		if ((cvar->GetFlags() & (CVAR_USERINFO|CVAR_IGNORE)) == CVAR_USERINFO)
+		{
+			ECVarType type;
+			FName cvarname(cvar->GetName());
+			FBaseCVar *newcvar;
+
+			// Some cvars have different types for their shadow copies.
+			switch (cvarname.GetIndex())
+			{
+			case NAME_Skin:			type = CVAR_Int; break;
+			case NAME_Gender:		type = CVAR_Int; break;
+			case NAME_PlayerClass:	type = CVAR_Int; break;
+			default:				type = cvar->GetRealType(); break;
+			}
+			newcvar = C_CreateCVar(NULL, type, cvar->GetFlags() & CVAR_MOD);
+			newcvar->SetGenericRepDefault(cvar->GetGenericRepDefault(CVAR_String), CVAR_String);
+			Insert(cvarname, newcvar);
+		}
 	}
-	else
-	{
-		coninfo->aimdist = abs ((int)(autoaim * (float)ANGLE_1));
+}
+
+int userinfo_t::TeamChanged(int team)
+{
+	if (teamplay && !TeamLibrary.IsValidTeam(team))
+	{ // Force players onto teams in teamplay mode
+		team = D_PickRandomTeam();
 	}
-	coninfo->color = color;
-	coninfo->skin = R_FindSkin (skin);
-	coninfo->gender = D_GenderToInt (gender);
-	coninfo->neverswitch = neverswitchonpickup;
-	coninfo->MoveBob = (fixed_t)(65536.f * movebob);
-	coninfo->StillBob = (fixed_t)(65536.f * stillbob);
-	coninfo->PlayerClass = D_PlayerClassToInt (playerclass);
-	R_BuildPlayerTranslation (consoleplayer);
+	*static_cast<FIntCVar *>((*this)[NAME_Team]) = team;
+	return team;
+}
+
+int userinfo_t::SkinChanged(const char *skinname)
+{
+	int skinnum = R_FindSkin(skinname, 0);
+	*static_cast<FIntCVar *>((*this)[NAME_Skin]) = skinnum;
+	return skinnum;
+}
+
+int userinfo_t::SkinNumChanged(int skinnum)
+{
+	*static_cast<FIntCVar *>((*this)[NAME_Skin]) = skinnum;
+	return skinnum;
+}
+
+int userinfo_t::GenderChanged(const char *gendername)
+{
+	int gendernum = D_GenderToInt(gendername);
+	*static_cast<FIntCVar *>((*this)[NAME_Gender]) = gendernum;
+	return gendernum;
+}
+
+int userinfo_t::PlayerClassChanged(const char *classname)
+{
+	int classnum = D_PlayerClassToInt(classname);
+	*static_cast<FIntCVar *>((*this)[NAME_PlayerClass]) = classnum;
+	return classnum;
+}
+
+int userinfo_t::PlayerClassNumChanged(int classnum)
+{
+	*static_cast<FIntCVar *>((*this)[NAME_PlayerClass]) = classnum;
+	return classnum;
+}
+
+int userinfo_t::ColorSetChanged(int setnum)
+{
+	*static_cast<FIntCVar *>((*this)[NAME_ColorSet]) = setnum;
+	return setnum;
+}
+
+uint32 userinfo_t::ColorChanged(const char *colorname)
+{
+	FColorCVar *color = static_cast<FColorCVar *>((*this)[NAME_Color]);
+	assert(color != NULL);
+	UCVarValue val;
+	val.String = const_cast<char *>(colorname);
+	color->SetGenericRep(val, CVAR_String);
+	*static_cast<FIntCVar *>((*this)[NAME_ColorSet]) = -1;
+	return *color;
+}
+
+uint32 userinfo_t::ColorChanged(uint32 colorval)
+{
+	FColorCVar *color = static_cast<FColorCVar *>((*this)[NAME_Color]);
+	assert(color != NULL);
+	UCVarValue val;
+	val.Int = colorval;
+	color->SetGenericRep(val, CVAR_Int);
+	// This version is called by the menu code. Do not implicitly set colorset.
+	return colorval;
 }
 
 void D_UserInfoChanged (FBaseCVar *cvar)
 {
 	UCVarValue val;
+	FString escaped_val;
 	char foo[256];
 
 	if (cvar == &autoaim)
@@ -348,16 +529,17 @@ void D_UserInfoChanged (FBaseCVar *cvar)
 	}
 
 	val = cvar->GetGenericRep (CVAR_String);
-	if (4 + strlen (cvar->GetName ()) + strlen (val.String) > 256)
+	escaped_val = D_EscapeUserInfo(val.String);
+	if (4 + strlen(cvar->GetName()) + escaped_val.Len() > 256)
 		I_Error ("User info descriptor too big");
 
-	sprintf (foo, "\\%s\\%s", cvar->GetName (), val.String);
+	mysnprintf (foo, countof(foo), "\\%s\\%s", cvar->GetName(), escaped_val.GetChars());
 
 	Net_WriteByte (DEM_UINFCHANGED);
 	Net_WriteString (foo);
 }
 
-static const char *SetServerVar (char *name, ECVarType type, byte **stream, bool singlebit)
+static const char *SetServerVar (char *name, ECVarType type, BYTE **stream, bool singlebit)
 {
 	FBaseCVar *var = FindCVar (name, NULL);
 	UCVarValue value;
@@ -415,7 +597,7 @@ static const char *SetServerVar (char *name, ECVarType type, byte **stream, bool
 		{
 			if (playeringame[i])
 			{
-				UpdateTeam (i, players[i].userinfo.team, true);
+				UpdateTeam (i, players[i].userinfo.GetTeam(), true);
 			}
 		}
 	}
@@ -457,12 +639,12 @@ void D_SendServerFlagChange (const FBaseCVar *cvar, int bitnum, bool set)
 	namelen = (int)strlen (cvar->GetName ());
 
 	Net_WriteByte (DEM_SINFCHANGEDXOR);
-	Net_WriteByte (namelen);
+	Net_WriteByte ((BYTE)namelen);
 	Net_WriteBytes ((BYTE *)cvar->GetName (), namelen);
-	Net_WriteByte (bitnum | (set << 5));
+	Net_WriteByte (BYTE(bitnum | (set << 5)));
 }
 
-void D_DoServerInfoChange (byte **stream, bool singlebit)
+void D_DoServerInfoChange (BYTE **stream, bool singlebit)
 {
 	const char *value;
 	char name[64];
@@ -484,260 +666,327 @@ void D_DoServerInfoChange (byte **stream, bool singlebit)
 	}
 }
 
-void D_WriteUserInfoStrings (int i, byte **stream, bool compact)
+static int STACK_ARGS userinfosortfunc(const void *a, const void *b)
 {
-	if (i >= MAXPLAYERS)
-	{
-		WriteByte (0, stream);
-	}
-	else
-	{
-		userinfo_t *info = &players[i].userinfo;
-
-		if (!compact)
-		{
-			sprintf (*((char **)stream),
-					 "\\name\\%s"
-					 "\\autoaim\\%g"
-					 "\\color\\%x %x %x"
-					 "\\skin\\%s"
-					 "\\team\\%d"
-					 "\\gender\\%s"
-					 "\\neverswitchonpickup\\%d"
-					 "\\movebob\\%g"
-					 "\\stillbob\\%g"
-					 "\\playerclass\\%s"
-					 ,
-					 info->netname,
-					 (double)info->aimdist / (float)ANGLE_1,
-					 RPART(info->color), GPART(info->color), BPART(info->color),
-					 skins[info->skin].name, info->team,
-					 info->gender == GENDER_FEMALE ? "female" :
-						info->gender == GENDER_NEUTER ? "other" : "male",
-					 info->neverswitch,
-					 (float)(info->MoveBob) / 65536.f,
-					 (float)(info->StillBob) / 65536.f,
-					 PlayerClassNames[info->PlayerClass+1]
-					);
-		}
-		else
-		{
-			sprintf (*((char **)stream),
-				"\\"
-				"\\%s"			// name
-				"\\%g"			// autoaim
-				"\\%x %x %x"	// color
-				"\\%s"			// skin
-				"\\%d"			// team
-				"\\%s"			// gender
-				"\\%d"			// neverswitchonpickup
-				"\\%g"			// movebob
-				"\\%g"			// stillbob
-				"\\%s"			// playerclass
-				,
-				info->netname,
-				(double)info->aimdist / (float)ANGLE_1,
-				RPART(info->color), GPART(info->color), BPART(info->color),
-				skins[info->skin].name,
-				info->team,
-				info->gender == GENDER_FEMALE ? "female" :
-					info->gender == GENDER_NEUTER ? "other" : "male",
-				info->neverswitch,
-				(float)(info->MoveBob) / 65536.f,
-				(float)(info->StillBob) / 65536.f,
-				PlayerClassNames[info->PlayerClass+1]
-			);
-		}
-	}
-
-	*stream += strlen (*((char **)stream)) + 1;
+	TMap<FName, FBaseCVar *>::ConstPair *pair1 = *(TMap<FName, FBaseCVar *>::ConstPair **)a;
+	TMap<FName, FBaseCVar *>::ConstPair *pair2 = *(TMap<FName, FBaseCVar *>::ConstPair **)b;
+	return stricmp(pair1->Key.GetChars(), pair2->Key.GetChars());
 }
 
-void D_ReadUserInfoStrings (int i, byte **stream, bool update)
+static int STACK_ARGS namesortfunc(const void *a, const void *b)
 {
-	userinfo_t *info = &players[i].userinfo;
-	char *ptr = *((char **)stream);
-	char *breakpt;
-	char *value;
+	FName *name1 = (FName *)a;
+	FName *name2 = (FName *)b;
+	return stricmp(name1->GetChars(), name2->GetChars());
+}
+
+void D_WriteUserInfoStrings (int pnum, BYTE **stream, bool compact)
+{
+	if (pnum >= MAXPLAYERS)
+	{
+		WriteByte (0, stream);
+		return;
+	}
+
+	userinfo_t *info = &players[pnum].userinfo;
+	TArray<TMap<FName, FBaseCVar *>::Pair *> userinfo_pairs(info->CountUsed());
+	TMap<FName, FBaseCVar *>::Iterator it(*info);
+	TMap<FName, FBaseCVar *>::Pair *pair;
+	UCVarValue cval;
+
+	// Create a simple array of all userinfo cvars
+	while (it.NextPair(pair))
+	{
+		userinfo_pairs.Push(pair);
+	}
+	// For compact mode, these need to be sorted. Verbose mode doesn't matter.
+	if (compact)
+	{
+		qsort(&userinfo_pairs[0], userinfo_pairs.Size(), sizeof(pair), userinfosortfunc);
+		// Compact mode is signified by starting the string with two backslash characters.
+		// We output one now. The second will be output as part of the first value.
+		*(*stream)++ = '\\';
+	}
+	for (unsigned int i = 0; i < userinfo_pairs.Size(); ++i)
+	{
+		pair = userinfo_pairs[i];
+
+		if (!compact)
+		{ // In verbose mode, prepend the cvar's name
+			*stream += sprintf(*((char **)stream), "\\%s\\", pair->Key.GetChars());
+		}
+		// A few of these need special handling for compatibility reasons.
+		switch (pair->Key.GetIndex())
+		{
+		case NAME_Gender:
+			*stream += sprintf(*((char **)stream), "\\%s",
+				*static_cast<FIntCVar *>(pair->Value) == GENDER_FEMALE ? "female" :
+				*static_cast<FIntCVar *>(pair->Value) == GENDER_NEUTER ? "other" : "male");
+			break;
+
+		case NAME_PlayerClass:
+			*stream += sprintf(*((char **)stream), "\\%s", info->GetPlayerClassNum() == -1 ? "Random" :
+				D_EscapeUserInfo(info->GetPlayerClassType()->Meta.GetMetaString(APMETA_DisplayName)).GetChars());
+			break;
+
+		case NAME_Skin:
+			*stream += sprintf(*((char **)stream), "\\%s", D_EscapeUserInfo(skins[info->GetSkin()].name).GetChars());
+			break;
+
+		default:
+			cval = pair->Value->GetGenericRep(CVAR_String);
+			*stream += sprintf(*((char **)stream), "\\%s", cval.String);
+			break;
+		}
+	}
+	*(*stream)++ = '\0';
+}
+
+void D_ReadUserInfoStrings (int pnum, BYTE **stream, bool update)
+{
+	userinfo_t *info = &players[pnum].userinfo;
+	TArray<FName> compact_names(info->CountUsed());
+	FBaseCVar **cvar_ptr;
+	const char *ptr = *((const char **)stream);
+	const char *breakpt;
+	FString value;
 	bool compact;
-	int infotype = -1;
+	FName keyname;
+	unsigned int infotype = 0;
 
 	if (*ptr++ != '\\')
 		return;
 
 	compact = (*ptr == '\\') ? ptr++, true : false;
 
-	if (i < MAXPLAYERS)
+	// We need the cvar names in sorted order for compact mode
+	if (compact)
 	{
-		for (;;)
-		{
-			breakpt = strchr (ptr, '\\');
+		TMap<FName, FBaseCVar *>::Iterator it(*info);
+		TMap<FName, FBaseCVar *>::Pair *pair;
 
-			if (breakpt != NULL)
-				*breakpt = 0;
+		while (it.NextPair(pair))
+		{
+			compact_names.Push(pair->Key);
+		}
+		qsort(&compact_names[0], compact_names.Size(), sizeof(FName), namesortfunc);
+	}
+
+	if (pnum < MAXPLAYERS)
+	{
+		for (breakpt = ptr; breakpt != NULL; ptr = breakpt + 1)
+		{
+			breakpt = strchr(ptr, '\\');
 
 			if (compact)
 			{
-				value = ptr;
-				infotype++;
+				// Compact has just the value.
+				if (infotype >= compact_names.Size())
+				{ // Too many entries! OMG!
+					break;
+				}
+				keyname = compact_names[infotype++];
+				value = D_UnescapeUserInfo(ptr, breakpt != NULL ? breakpt - ptr : strlen(ptr));
 			}
 			else
 			{
-				value = breakpt + 1;
-				if ( (breakpt = strchr (value, '\\')) )
-					*breakpt = 0;
-
-				int j = 0;
-				while (UserInfoStrings[j] && stricmp (UserInfoStrings[j], ptr) != 0)
-					j++;
-				if (UserInfoStrings[j] == NULL)
+				// Verbose has both the key name and its value.
+				assert(breakpt != NULL);
+				// A malicious remote machine could invalidate the above assert.
+				if (breakpt == NULL)
 				{
-					infotype = -1;
+					break;
+				}
+				const char *valstart = breakpt + 1;
+				if ( (breakpt = strchr (valstart, '\\')) != NULL )
+				{
+					value = D_UnescapeUserInfo(valstart, breakpt - valstart);
 				}
 				else
 				{
-					infotype = j;
+					value = D_UnescapeUserInfo(valstart, strlen(valstart));
 				}
+				keyname = FName(ptr, valstart - ptr - 1, true);
 			}
-
-			switch (infotype)
+			
+			// A few of these need special handling.
+			switch (keyname)
 			{
-			case INFO_Autoaim: {
-				double angles;
-
-				angles = atof (value);
-				if (angles > 35.f || angles < 0.f)
-				{
-					info->aimdist = ANGLE_1*35;
-				}
-				else
-				{
-					info->aimdist = abs ((int)(angles * (float)ANGLE_1));
-				}
-								}
+			case NAME_Gender:
+				info->GenderChanged(value);
 				break;
 
-			case INFO_Name:
+			case NAME_PlayerClass:
+				info->PlayerClassChanged(value);
+				break;
+
+			case NAME_Skin:
+				info->SkinChanged(value);
+				if (players[pnum].mo != NULL)
 				{
-					char oldname[MAXPLAYERNAME+1];
-
-					strncpy (oldname, info->netname, MAXPLAYERNAME);
-					oldname[MAXPLAYERNAME] = 0;
-					strncpy (info->netname, value, MAXPLAYERNAME);
-					info->netname[MAXPLAYERNAME] = 0;
-
-					if (update && strcmp (oldname, info->netname) != 0)
-					{
-						Printf ("%s is now known as %s\n", oldname, info->netname);
+					if (players[pnum].cls != NULL &&
+						!(players[pnum].mo->flags4 & MF4_NOSKIN) &&
+						players[pnum].mo->state->sprite ==
+						GetDefaultByType (players[pnum].cls)->SpawnState->sprite)
+					{ // Only change the sprite if the player is using a standard one
+						players[pnum].mo->sprite = skins[info->GetSkin()].sprite;
 					}
 				}
+				// Rebuild translation in case the new skin uses a different range
+				// than the old one.
+				R_BuildPlayerTranslation(pnum);
 				break;
 
-			case INFO_Team:
-				UpdateTeam (i, atoi(value), update);
+			case NAME_Team:
+				UpdateTeam(pnum, atoi(value), update);
 				break;
 
-			case INFO_Color:
-				info->color = V_GetColorFromString (NULL, value);
-				R_BuildPlayerTranslation (i);
-				if (StatusBar != NULL && i == StatusBar->GetPlayer())
-				{
-					StatusBar->AttachToPlayer (&players[i]);
-				}
-				break;
-
-			case INFO_Skin:
-				info->skin = R_FindSkin (value);
-				if (gameinfo.gametype != GAME_Hexen)
-				{
-					if (players[i].mo != NULL && gameinfo.gametype != GAME_Hexen)
-					{
-						if (players[i].cls != NULL &&
-							players[i].mo->state->sprite.index ==
-							GetDefaultByType (players[i].cls)->SpawnState->sprite.index)
-						{ // Only change the sprite if the player is using a standard one
-							players[i].mo->sprite = skins[info->skin].sprite;
-							players[i].mo->xscale = players[i].mo->yscale = skins[info->skin].scale;
-						}
-					}
-					players[i].skin = &skins[info->skin];
-					// Rebuild translation in case the new skin uses a different range
-					// than the old one.
-					R_BuildPlayerTranslation (i);
-				}
-				if (StatusBar != NULL && i == StatusBar->GetPlayer())
-				{
-					StatusBar->SetFace (&skins[info->skin]);
-				}
-				break;
-
-			case INFO_Gender:
-				info->gender = D_GenderToInt (value);
-				break;
-
-			case INFO_NeverSwitchOnPickup:
-				if (*value >= '0' && *value <= '9')
-				{
-					info->neverswitch = atoi (value) ? true : false;
-				}
-				else if (stricmp (value, "true") == 0)
-				{
-					info->neverswitch = 1;
-				}
-				else
-				{
-					info->neverswitch = 0;
-				}
-				break;
-
-			case INFO_MoveBob:
-				info->MoveBob = (fixed_t)(atof (value) * 65536.f);
-				break;
-
-			case INFO_StillBob:
-				info->StillBob = (fixed_t)(atof (value) * 65536.f);
-				break;
-
-			case INFO_PlayerClass:
-				info->PlayerClass = D_PlayerClassToInt (value);
+			case NAME_Color:
+				info->ColorChanged(value);
 				break;
 
 			default:
+				cvar_ptr = info->CheckKey(keyname);
+				if (cvar_ptr != NULL)
+				{
+					assert(*cvar_ptr != NULL);
+					UCVarValue val;
+					FString oldname;
+
+					if (keyname == NAME_Name)
+					{
+						val = (*cvar_ptr)->GetGenericRep(CVAR_String);
+						oldname = val.String;
+					}
+					val.String = CleanseString(value.LockBuffer());
+					(*cvar_ptr)->SetGenericRep(val, CVAR_String);
+					value.UnlockBuffer();
+					if (keyname == NAME_Name && update && oldname != value)
+					{
+						Printf("%s is now known as %s\n", oldname.GetChars(), value.GetChars());
+					}
+				}
 				break;
 			}
+			if (keyname == NAME_Color || keyname == NAME_ColorSet)
+			{
+				R_BuildPlayerTranslation(pnum);
+				if (StatusBar != NULL && pnum == StatusBar->GetPlayer())
+				{
+					StatusBar->AttachToPlayer(&players[pnum]);
+				}
+			}
+		}
+	}
+	*stream += strlen (*((char **)stream)) + 1;
+}
 
-			if (!compact)
+void ReadCompatibleUserInfo(FArchive &arc, userinfo_t &info)
+{
+	char netname[MAXPLAYERNAME + 1];
+	BYTE team;
+	int aimdist, color, colorset, skin, gender;
+	bool neverswitch;
+	//fixed_t movebob, stillbob;	These were never serialized!
+	//int playerclass;				"
+
+	info.Reset();
+
+	arc.Read(&netname, sizeof(netname));
+	arc << team << aimdist << color << skin << gender << neverswitch << colorset;
+
+	*static_cast<FStringCVar *>(info[NAME_Name]) = netname;
+	*static_cast<FIntCVar *>(info[NAME_Team]) = team;
+	*static_cast<FFloatCVar *>(info[NAME_Autoaim]) = (float)aimdist / ANGLE_1;
+	*static_cast<FIntCVar *>(info[NAME_Skin]) = skin;
+	*static_cast<FIntCVar *>(info[NAME_Gender]) = gender;
+	*static_cast<FBoolCVar *>(info[NAME_NeverSwitchOnPickup]) = neverswitch;
+	*static_cast<FIntCVar *>(info[NAME_ColorSet]) = colorset;
+
+	UCVarValue val;
+	val.Int = color;
+	static_cast<FColorCVar *>(info[NAME_Color])->SetGenericRep(val, CVAR_Int);
+}
+
+void WriteUserInfo(FArchive &arc, userinfo_t &info)
+{
+	TMapIterator<FName, FBaseCVar *> it(info);
+	TMap<FName, FBaseCVar *>::Pair *pair;
+	FName name;
+	UCVarValue val;
+	int i;
+
+	while (it.NextPair(pair))
+	{
+		name = pair->Key;
+		arc << name;
+		switch (name.GetIndex())
+		{
+		case NAME_Skin:
+			arc.WriteString(skins[info.GetSkin()].name);
+			break;
+
+		case NAME_PlayerClass:
+			i = info.GetPlayerClassNum();
+			arc.WriteString(i == -1 ? "Random" : PlayerClasses[i].Type->Meta.GetMetaString(APMETA_DisplayName));
+			break;
+
+		default:
+			val = pair->Value->GetGenericRep(CVAR_String);
+			arc.WriteString(val.String);
+			break;
+		}
+	}
+	name = NAME_None;
+	arc << name;
+}
+
+void ReadUserInfo(FArchive &arc, userinfo_t &info)
+{
+	FName name;
+	FBaseCVar **cvar;
+	char *str = NULL;
+	UCVarValue val;
+
+	info.Reset();
+	for (arc << name; name != NAME_None; arc << name)
+	{
+		cvar = info.CheckKey(name);
+		arc << str;
+		if (cvar != NULL && *cvar != NULL)
+		{
+			switch (name)
 			{
-				*(value - 1) = '\\';
-			}
-			if (breakpt)
-			{
-				*breakpt = '\\';
-				ptr = breakpt + 1;
-			}
-			else
-			{
+			case NAME_Team:			info.TeamChanged(atoi(str)); break;
+			case NAME_Skin:			info.SkinChanged(str); break;
+			case NAME_PlayerClass:	info.PlayerClassChanged(str); break;
+			default:
+				val.String = str;
+				(*cvar)->SetGenericRep(val, CVAR_String);
 				break;
 			}
 		}
 	}
-
-	*stream += strlen (*((char **)stream)) + 1;
+	if (str != NULL)
+	{
+		delete[] str;
+	}
 }
 
 FArchive &operator<< (FArchive &arc, userinfo_t &info)
 {
-	if (arc.IsStoring ())
+	if (SaveVersion < 4253)
 	{
-		arc.Write (&info.netname, sizeof(info.netname));
-		arc.Write (&info.team, sizeof(info.team));
+		ReadCompatibleUserInfo(arc, info);
+	}
+	else if (arc.IsStoring())
+	{
+		WriteUserInfo(arc, info);
 	}
 	else
 	{
-		arc.Read (&info.netname, sizeof(info.netname));
-		arc.Read (&info.team, sizeof(info.team));
+		ReadUserInfo(arc, info);
 	}
-	arc << info.aimdist << info.color << info.skin << info.gender << info.neverswitch;
 	return arc;
 }
 
@@ -751,22 +1000,51 @@ CCMD (playerinfo)
 		{
 			if (playeringame[i])
 			{
-				Printf ("%d. %s\n", i, players[i].userinfo.netname);
+				Printf("%d. %s\n", i, players[i].userinfo.GetName());
 			}
 		}
 	}
 	else
 	{
-		int i = atoi (argv[1]);
-		Printf ("Name:        %s\n", players[i].userinfo.netname);
-		Printf ("Team:        %d\n", players[i].userinfo.team);
-		Printf ("Aimdist:     %d\n", players[i].userinfo.aimdist);
-		Printf ("Color:       %06x\n", players[i].userinfo.color);
-		Printf ("Skin:        %d\n", players[i].userinfo.skin);
-		Printf ("Gender:      %d\n", players[i].userinfo.gender);
-		Printf ("NeverSwitch: %d\n", players[i].userinfo.neverswitch);
-		Printf ("MoveBob:     %g\n", players[i].userinfo.MoveBob/65536.f);
-		Printf ("StillBob:    %g\n", players[i].userinfo.StillBob/65536.f);
-		Printf ("PlayerClass: %d\n", players[i].userinfo.PlayerClass);
+		int i = atoi(argv[1]);
+
+		if (i < 0 || i >= MAXPLAYERS)
+		{
+			Printf("Bad player number\n");
+			return;
+		}
+		userinfo_t *ui = &players[i].userinfo;
+
+		if (!playeringame[i])
+		{
+			Printf(TEXTCOLOR_ORANGE "Player %d is not in the game\n", i);
+		}
+
+		// Print special info
+		Printf("%20s: %s\n",      "Name", ui->GetName());
+		Printf("%20s: %s (%d)\n", "Team", ui->GetTeam() == TEAM_NONE ? "None" : Teams[ui->GetTeam()].GetName(), ui->GetTeam());
+		Printf("%20s: %s (%d)\n", "Skin", skins[ui->GetSkin()].name, ui->GetSkin());
+		Printf("%20s: %s (%d)\n", "Gender", GenderNames[ui->GetGender()], ui->GetGender());
+		Printf("%20s: %s (%d)\n", "PlayerClass",
+			ui->GetPlayerClassNum() == -1 ? "Random" : ui->GetPlayerClassType()->Meta.GetMetaString (APMETA_DisplayName),
+			ui->GetPlayerClassNum());
+
+		// Print generic info
+		TMapIterator<FName, FBaseCVar *> it(*ui);
+		TMap<FName, FBaseCVar *>::Pair *pair;
+
+		while (it.NextPair(pair))
+		{
+			if (pair->Key != NAME_Name && pair->Key != NAME_Team && pair->Key != NAME_Skin &&
+				pair->Key != NAME_Gender && pair->Key != NAME_PlayerClass)
+			{
+				UCVarValue val = pair->Value->GetGenericRep(CVAR_String);
+				Printf("%20s: %s\n", pair->Key.GetChars(), val.String);
+			}
+		}
+		if (argv.argc() > 2)
+		{
+			PrintMiscActorInfo(players[i].mo);
+		}
 	}
 }

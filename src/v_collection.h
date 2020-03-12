@@ -2,7 +2,7 @@
 ** v_collection.h
 **
 **---------------------------------------------------------------------------
-** Copyright 1998-2005 Randy Heit
+** Copyright 1998-2006 Randy Heit
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -42,16 +42,15 @@ class FImageCollection
 public:
 	FImageCollection ();
 	FImageCollection (const char **patchNames, int numPatches);
-	~FImageCollection ();
 
 	void Init (const char **patchnames, int numPatches, int namespc=0);
+	void Add (const char **patchnames, int numPatches, int namespc=0);	
 	void Uninit ();
 
 	FTexture *operator[] (int index) const;
 
 protected:
-	int NumImages;
-	int *ImageMap;
+	TArray<FTextureID> ImageMap;
 };
 
 #endif //__V_COLLECTION_H__
