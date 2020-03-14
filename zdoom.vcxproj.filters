@@ -1033,6 +1033,12 @@
     <ClCompile Include="src\sdl\sdlvideo.cpp">
       <Filter>SDL Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\win32\fb_d3d9.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\fb_ddraw.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\sc_man_scanner.h">

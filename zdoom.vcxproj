@@ -1760,6 +1760,8 @@
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">"  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ClCompile Include="src\win32\eaxedit.cpp" />
+    <ClCompile Include="src\win32\fb_d3d9.cpp" />
+    <ClCompile Include="src\win32\fb_ddraw.cpp" />
     <ClCompile Include="src\win32\hardware.cpp">
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">"  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  %(AdditionalOptions)</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">"  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  %(AdditionalOptions)</AdditionalOptions>
