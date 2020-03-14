@@ -62,7 +62,7 @@
 #include "muslib.h"
 
 
-char MLversion[] = "MUS Lib V"MLVERSIONSTR;
+char MLversion[] = "MUS Lib V" MLVERSIONSTR;
 char MLcopyright[] = "Copyright (c) 1994-1996 QA-Software";
 
 /* Program */

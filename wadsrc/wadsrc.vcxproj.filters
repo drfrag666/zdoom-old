@@ -1,0 +1,339 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Lumps">
+      <UniqueIdentifier>{58a6b035-40ce-4e39-b626-d50c7d88cd1d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Map Translators">
+      <UniqueIdentifier>{e7596a46-b477-4ba6-8e1d-c76e5f8216dd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Map Translators\Includes">
+      <UniqueIdentifier>{420a1b66-83b1-410b-91fb-e40adb3e3060}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decals">
+      <UniqueIdentifier>{31b0b4b7-f568-4968-b4e2-1a3f0067f2ae}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\MapInfos">
+      <UniqueIdentifier>{299147ca-0e65-4f64-84c2-0b862d1ced79}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Languages">
+      <UniqueIdentifier>{1a8c5d22-72c0-4f80-baee-42079e98f124}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate">
+      <UniqueIdentifier>{6478dfa1-465d-4c64-9f4a-8c1d15ec3c43}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate\Doom">
+      <UniqueIdentifier>{5ebd725c-ac22-4d13-9a81-6380f1148592}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate\Heretic">
+      <UniqueIdentifier>{40d0e3ff-39b7-461a-a5fd-74b683a548a5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate\Hexen">
+      <UniqueIdentifier>{fe47e16e-cbff-4f6d-8a85-13cc54503fd0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate\Strife">
+      <UniqueIdentifier>{44c3f431-24bf-4aa6-a842-94074604cb3f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate\Raven">
+      <UniqueIdentifier>{f971bf78-93f4-4eca-9edb-1b97cd4c8067}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Lumps\Decorate\Shared">
+      <UniqueIdentifier>{44dcade4-65db-4018-af76-5ea5941d784f}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="animdefs.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="In_epi1.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="In_epi2.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="In_epi3.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="In_htc1.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="In_htc2.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="In_htc3.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="Lockdefs.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="sndeax.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="sndinfo.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="sndseq.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="terrain.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="textcolors.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="x11r6rgb.txt">
+      <Filter>Lumps</Filter>
+    </Text>
+    <Text Include="xlat\doomxlat.txt">
+      <Filter>Lumps\Map Translators</Filter>
+    </Text>
+    <Text Include="xlat\hereticxlat.txt">
+      <Filter>Lumps\Map Translators</Filter>
+    </Text>
+    <Text Include="xlat\strifexlat.txt">
+      <Filter>Lumps\Map Translators</Filter>
+    </Text>
+    <Text Include="decals\decaldef.txt">
+      <Filter>Lumps\Decals</Filter>
+    </Text>
+    <Text Include="mapinfo\doom1.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="mapinfo\doom2.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="mapinfo\heretic.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="mapinfo\hexen.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="mapinfo\plutonia.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="mapinfo\strife.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="mapinfo\tnt.txt">
+      <Filter>Lumps\MapInfos</Filter>
+    </Text>
+    <Text Include="languages\english-us.txt">
+      <Filter>Lumps\Languages</Filter>
+    </Text>
+    <Text Include="languages\french.txt">
+      <Filter>Lumps\Languages</Filter>
+    </Text>
+    <Text Include="languages\italian.txt">
+      <Filter>Lumps\Languages</Filter>
+    </Text>
+    <Text Include="decorate\decorate.txt">
+      <Filter>Lumps\Decorate</Filter>
+    </Text>
+    <Text Include="decorate\doom\deadthings.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\doomammo.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\doomarmor.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\doomartifacts.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\doomdecorations.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\doomhealth.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\doomkeys.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\doom\stealthmonsters.txt">
+      <Filter>Lumps\Decorate\Doom</Filter>
+    </Text>
+    <Text Include="decorate\heretic\hereticammo.txt">
+      <Filter>Lumps\Decorate\Heretic</Filter>
+    </Text>
+    <Text Include="decorate\heretic\hereticarmor.txt">
+      <Filter>Lumps\Decorate\Heretic</Filter>
+    </Text>
+    <Text Include="decorate\heretic\hereticartifacts.txt">
+      <Filter>Lumps\Decorate\Heretic</Filter>
+    </Text>
+    <Text Include="decorate\heretic\hereticdecorations.txt">
+      <Filter>Lumps\Decorate\Heretic</Filter>
+    </Text>
+    <Text Include="decorate\heretic\heretickeys.txt">
+      <Filter>Lumps\Decorate\Heretic</Filter>
+    </Text>
+    <Text Include="decorate\hexen\flame.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\hexenarmor.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\hexendecorations.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\hexenkeys.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\hexenspecialdecs.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\mana.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\puzzleitems.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\scriptprojectiles.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\hexen\speedboots.txt">
+      <Filter>Lumps\Decorate\Hexen</Filter>
+    </Text>
+    <Text Include="decorate\strife\beggars.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\merchants.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\peasants.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\questitems.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\ratbuddy.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\strifeammo.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\strifearmor.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\strifeitems.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\strifekeys.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\strifestuff.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\strife\zombie.txt">
+      <Filter>Lumps\Decorate\Strife</Filter>
+    </Text>
+    <Text Include="decorate\raven\ravenartifacts.txt">
+      <Filter>Lumps\Decorate\Raven</Filter>
+    </Text>
+    <Text Include="decorate\raven\ravenhealth.txt">
+      <Filter>Lumps\Decorate\Raven</Filter>
+    </Text>
+    <Text Include="shared\debris.txt">
+      <Filter>Lumps\Decorate\Shared</Filter>
+    </Text>
+    <Text Include="decorate\shared\splashes.txt">
+      <Filter>Lumps\Decorate\Shared</Filter>
+    </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="xlat\defines.i">
+      <Filter>Lumps\Map Translators\Includes</Filter>
+    </None>
+    <None Include="xlat\specials.i">
+      <Filter>Lumps\Map Translators\Includes</Filter>
+    </None>
+    <None Include="Makefile" />
+    <None Include="Makefile.mgw" />
+    <None Include="Makefile2" />
+    <None Include="zdoom.lst" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="decals\bal7scr1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bal7scr2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bfglite1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bfglite2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bfgscrc1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bfgscrc2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\blast1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsmear1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsmear2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat3.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat4.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat5.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat6.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\bsplat7.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\cbalscr1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\cbalscr2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\cbowmark.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\chip1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\chip2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\chip3.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\chip4.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\chip5.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\plasma1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\plasma2.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+    <Image Include="decals\scorch1.png">
+      <Filter>Lumps\Decals</Filter>
+    </Image>
+  </ItemGroup>
+</Project>

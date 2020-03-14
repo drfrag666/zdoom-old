@@ -1,0 +1,130 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{c2613b6a-11a2-4217-9909-030349ec6734}</UniqueIdentifier>
+      <Extensions>cpp;c;cxx;def;odl;idl;hpj;bat;asm</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{83d2e7ed-87f1-484f-a570-bd767bb334b3}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx;hm;inl;inc</Extensions>
+    </Filter>
+    <Filter Include="Header Files\Protected">
+      <UniqueIdentifier>{f1775d83-e288-4fe9-a257-393cdfb63ea9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Private">
+      <UniqueIdentifier>{75e1bafd-c04a-499f-ac05-118473eb698a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\FLAC">
+      <UniqueIdentifier>{23e63d6d-b673-4632-bdf3-2dde8b8b3755}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\FLAC++">
+      <UniqueIdentifier>{d2d2fe60-b386-4637-ae81-bd03f136dac3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="IA32 Files">
+      <UniqueIdentifier>{835373d8-f272-4b91-b6a2-b946396d3d42}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="bitbuffer.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="bitmath.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cpu.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="crc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fixed.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="format.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lpc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="memory.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="stream_decoder.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="stream_decoder_pp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="protected\stream_decoder.h">
+      <Filter>Header Files\Protected</Filter>
+    </ClInclude>
+    <ClInclude Include="private\bitbuffer.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\bitmath.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\cpu.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\crc.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\fixed.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\float.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\format.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\lpc.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="private\memory.h">
+      <Filter>Header Files\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC\assert.h">
+      <Filter>Header Files\FLAC</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC\export.h">
+      <Filter>Header Files\FLAC</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC\format.h">
+      <Filter>Header Files\FLAC</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC\ordinals.h">
+      <Filter>Header Files\FLAC</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC\stream_decoder.h">
+      <Filter>Header Files\FLAC</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC++\decoder.h">
+      <Filter>Header Files\FLAC++</Filter>
+    </ClInclude>
+    <ClInclude Include="FLAC++\export.h">
+      <Filter>Header Files\FLAC++</Filter>
+    </ClInclude>
+    <ClInclude Include="ia32\nasm.h">
+      <Filter>IA32 Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="ia32\cpu_asm.nasm">
+      <Filter>IA32 Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="ia32\fixed_asm.nasm">
+      <Filter>IA32 Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="ia32\lpc_asm.nasm">
+      <Filter>IA32 Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{1D179D4B-F008-431B-8C72-111F8372584F}</ProjectGuid>
+    <RootNamespace>wadsrc</RootNamespace>
+    <Keyword>MakeFileProj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC71.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC71.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC71.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC71.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>15.0.28127.55</_ProjectFileVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <OutDir>Debug\</OutDir>
+    <IntDir>Debug\</IntDir>
+    <NMakeBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp NOLOGO=/nologo andcopy</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad NOLOGO=/nologo XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp nrebuild</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>del wadmake zdoom.pk3</NMakeCleanCommandLine>
+    <NMakeOutput>zdoom.pk3</NMakeOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <NMakeBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp NOLOGO=/nologo andcopy</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad NOLOGO=/nologo XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp nrebuild</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>del wadmake zdoom.pk3</NMakeCleanCommandLine>
+    <NMakeOutput>zdoom.pk3</NMakeOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <OutDir>Release\</OutDir>
+    <IntDir>Release\</IntDir>
+    <NMakeBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp NOLOGO=/nologo</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad NOLOGO=/nologo XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp nrebuild</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>del wadmake zdoom.pk3</NMakeCleanCommandLine>
+    <NMakeOutput>zdoom.pk3</NMakeOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <NMakeBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp NOLOGO=/nologo</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake /nologo MAKEWAD=..\tools\makewad\makewad NOLOGO=/nologo XLATCC=..\tools\xlatcc\xlatcc DEHSUPP=..\tools\dehsupp\dehsupp nrebuild</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>del wadmake zdoom.pk3</NMakeCleanCommandLine>
+    <NMakeOutput>zdoom.pk3</NMakeOutput>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <Text Include="animdefs.txt" />
+    <Text Include="decals\decaldef.txt" />
+    <Text Include="decorate\decorate.txt" />
+    <Text Include="decorate\doom\deadthings.txt" />
+    <Text Include="decorate\doom\doomammo.txt" />
+    <Text Include="decorate\doom\doomarmor.txt" />
+    <Text Include="decorate\doom\doomartifacts.txt" />
+    <Text Include="decorate\doom\doomdecorations.txt" />
+    <Text Include="decorate\doom\doomhealth.txt" />
+    <Text Include="decorate\doom\doomkeys.txt" />
+    <Text Include="decorate\doom\stealthmonsters.txt" />
+    <Text Include="decorate\heretic\hereticammo.txt" />
+    <Text Include="decorate\heretic\hereticarmor.txt" />
+    <Text Include="decorate\heretic\hereticartifacts.txt" />
+    <Text Include="decorate\heretic\hereticdecorations.txt" />
+    <Text Include="decorate\heretic\heretickeys.txt" />
+    <Text Include="decorate\hexen\flame.txt" />
+    <Text Include="decorate\hexen\hexenarmor.txt" />
+    <Text Include="decorate\hexen\hexendecorations.txt" />
+    <Text Include="decorate\hexen\hexenkeys.txt" />
+    <Text Include="decorate\hexen\hexenspecialdecs.txt" />
+    <Text Include="decorate\hexen\mana.txt" />
+    <Text Include="decorate\hexen\puzzleitems.txt" />
+    <Text Include="decorate\hexen\scriptprojectiles.txt" />
+    <Text Include="decorate\hexen\speedboots.txt" />
+    <Text Include="decorate\raven\ravenartifacts.txt" />
+    <Text Include="decorate\raven\ravenhealth.txt" />
+    <Text Include="decorate\shared\splashes.txt" />
+    <Text Include="decorate\strife\beggars.txt" />
+    <Text Include="decorate\strife\merchants.txt" />
+    <Text Include="decorate\strife\peasants.txt" />
+    <Text Include="decorate\strife\questitems.txt" />
+    <Text Include="decorate\strife\ratbuddy.txt" />
+    <Text Include="decorate\strife\strifeammo.txt" />
+    <Text Include="decorate\strife\strifearmor.txt" />
+    <Text Include="decorate\strife\strifeitems.txt" />
+    <Text Include="decorate\strife\strifekeys.txt" />
+    <Text Include="decorate\strife\strifestuff.txt" />
+    <Text Include="decorate\strife\zombie.txt" />
+    <Text Include="In_epi1.txt" />
+    <Text Include="In_epi2.txt" />
+    <Text Include="In_epi3.txt" />
+    <Text Include="In_htc1.txt" />
+    <Text Include="In_htc2.txt" />
+    <Text Include="In_htc3.txt" />
+    <Text Include="languages\english-us.txt" />
+    <Text Include="languages\french.txt" />
+    <Text Include="languages\italian.txt" />
+    <Text Include="Lockdefs.txt" />
+    <Text Include="mapinfo\doom1.txt" />
+    <Text Include="mapinfo\doom2.txt" />
+    <Text Include="mapinfo\heretic.txt" />
+    <Text Include="mapinfo\hexen.txt" />
+    <Text Include="mapinfo\plutonia.txt" />
+    <Text Include="mapinfo\strife.txt" />
+    <Text Include="mapinfo\tnt.txt" />
+    <Text Include="shared\debris.txt" />
+    <Text Include="sndeax.txt" />
+    <Text Include="sndinfo.txt" />
+    <Text Include="sndseq.txt" />
+    <Text Include="terrain.txt" />
+    <Text Include="textcolors.txt" />
+    <Text Include="x11r6rgb.txt" />
+    <Text Include="xlat\doomxlat.txt" />
+    <Text Include="xlat\hereticxlat.txt" />
+    <Text Include="xlat\strifexlat.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Makefile" />
+    <None Include="Makefile.mgw" />
+    <None Include="Makefile2" />
+    <None Include="xlat\defines.i" />
+    <None Include="xlat\specials.i" />
+    <None Include="zdoom.lst" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="decals\bal7scr1.png" />
+    <Image Include="decals\bal7scr2.png" />
+    <Image Include="decals\bfglite1.png" />
+    <Image Include="decals\bfglite2.png" />
+    <Image Include="decals\bfgscrc1.png" />
+    <Image Include="decals\bfgscrc2.png" />
+    <Image Include="decals\blast1.png" />
+    <Image Include="decals\bsmear1.png" />
+    <Image Include="decals\bsmear2.png" />
+    <Image Include="decals\bsplat1.png" />
+    <Image Include="decals\bsplat2.png" />
+    <Image Include="decals\bsplat3.png" />
+    <Image Include="decals\bsplat4.png" />
+    <Image Include="decals\bsplat5.png" />
+    <Image Include="decals\bsplat6.png" />
+    <Image Include="decals\bsplat7.png" />
+    <Image Include="decals\cbalscr1.png" />
+    <Image Include="decals\cbalscr2.png" />
+    <Image Include="decals\cbowmark.png" />
+    <Image Include="decals\chip1.png" />
+    <Image Include="decals\chip2.png" />
+    <Image Include="decals\chip3.png" />
+    <Image Include="decals\chip4.png" />
+    <Image Include="decals\chip5.png" />
+    <Image Include="decals\plasma1.png" />
+    <Image Include="decals\plasma2.png" />
+    <Image Include="decals\scorch1.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\tools\dehsupp\dehsupp.vcxproj">
+      <Project>{ac64ee8f-f019-4a3e-bcaf-bd1fd072b9c8}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\tools\makewad\makewad.vcxproj">
+      <Project>{24a19c02-f041-4ab0-a1a1-02e1e88edbd3}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\tools\xlatcc\xlatcc.vcxproj">
+      <Project>{3ffa68b3-9449-4b03-adee-194c3638623b}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

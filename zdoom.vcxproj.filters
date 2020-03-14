@@ -1,0 +1,1613 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="A Source Files">
+      <UniqueIdentifier>{fb77b1eb-a289-4cfd-ba8c-bb7a5ffb5cfc}</UniqueIdentifier>
+      <Extensions>c;cpp</Extensions>
+    </Filter>
+    <Filter Include="A Source Files\Decorate++">
+      <UniqueIdentifier>{ad82272c-272c-4f72-a28a-9b8d1df51a04}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="A Header Files">
+      <UniqueIdentifier>{49c07104-680b-446d-b62a-6e3bd2cfc4b1}</UniqueIdentifier>
+      <Extensions>h</Extensions>
+    </Filter>
+    <Filter Include="Assembly Files">
+      <UniqueIdentifier>{d524d0fe-2fc9-4343-8181-d70b52c39f39}</UniqueIdentifier>
+      <Extensions>nas; asm</Extensions>
+    </Filter>
+    <Filter Include="Win32 Files">
+      <UniqueIdentifier>{9f432ed2-7338-442e-a801-2eb2d1c750b3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shared Game">
+      <UniqueIdentifier>{83a2c250-a5d2-49fc-aacb-53db1440b9b4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Doom Game">
+      <UniqueIdentifier>{6db7ff62-a9ee-4f1a-8fc2-5121979ab872}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Raven Shared">
+      <UniqueIdentifier>{a63efdf6-9470-4152-b9b9-c64d18c61575}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Heretic Game">
+      <UniqueIdentifier>{5267bbcd-7056-4c69-8fdb-11e0948fa9ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Hexen Game">
+      <UniqueIdentifier>{c6af66fb-29eb-447e-a0eb-7ea1843fb0ea}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Strife Game">
+      <UniqueIdentifier>{f2ddee95-5b0f-4e27-b892-7f30da70d153}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Render Core">
+      <UniqueIdentifier>{7c6f9715-5985-4502-b77e-5e622d5479e8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Render Core\Render Sources">
+      <UniqueIdentifier>{ec9aaea8-888f-4e04-ac60-4fc21c1223ea}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Render Core\Render Headers">
+      <UniqueIdentifier>{8a5a5524-b0de-4e7b-8ca6-0c3974cbda6d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Render Core\Textures">
+      <UniqueIdentifier>{ef913ee7-3caf-4f00-89f4-a665a9e55fff}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Text Files">
+      <UniqueIdentifier>{815a9ea0-7db9-48f4-96a3-3807f89d8f15}</UniqueIdentifier>
+      <Extensions>txt</Extensions>
+    </Filter>
+    <Filter Include="Text Files\Licenses">
+      <UniqueIdentifier>{cf2fc1e1-adaf-4c55-8d67-4451b2bc3e42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Versioning">
+      <UniqueIdentifier>{37e17df2-0065-4094-9bd5-8d6058eb4de9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Audio Files">
+      <UniqueIdentifier>{8eecce5c-4f71-43a4-8a6f-e264097d54c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Audio Files\OPL Synth">
+      <UniqueIdentifier>{20476873-208a-4fa6-addc-e518763bce54}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="SDL Files">
+      <UniqueIdentifier>{79576b0f-45aa-4269-aa9f-26f4a845be52}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\am_map.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\autostart.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\autozend.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\b_bot.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\B_func.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\B_game.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\b_move.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\B_think.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\bbannouncer.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\c_bind.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\c_cmds.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\c_console.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\c_cvars.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\c_dispatch.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\c_expr.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\cmdlib.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\colormatcher.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\configfile.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ct_chat.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\d_dehacked.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\D_main.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\d_net.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\d_netinfo.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\d_protocol.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\decallib.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\dobject.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\dobjtype.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\doomdef.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\doomstat.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\dsectoreffect.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\dthinker.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\f_finale.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\f_wipe.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\farchive.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\files.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_game.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hub.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_level.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gameconfigfile.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gi.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hu_scores.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\i_net.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\info.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\infodefaults.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\lumpconfigfile.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_alloc.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_argv.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_bbox.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_cheat.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_menu.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_misc.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_options.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_png.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\m_random.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mus2midi.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\name.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild_classify_nosse2.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild_classify_sse2.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild_events.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild_extract.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild_gl.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\nodebuild_utility.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_acs.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_buildmap.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_ceiling.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_conversation.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_doors.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_effect.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_enemy.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_floor.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_interaction.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_lights.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_lnspec.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_map.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_maputl.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_mobj.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_pillar.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_plats.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_pspr.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_saveg.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_sectors.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_setup.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_sight.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_spec.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_switch.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_teleport.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_terrain.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_things.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_tick.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_trace.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_user.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_writemap.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\p_xlat.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\po_man.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\s_advsound.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\s_environment.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\s_playlist.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\s_sndseq.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\s_sound.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sc_man.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\skins.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\st_stuff.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\stats.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\stringtable.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tables.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tempfiles.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_collection.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_draw.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_font.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_palette.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_pfx.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_text.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\v_video.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\vectors.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\w_wad.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\wi_stuff.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zstrformat.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zstring.cpp">
+      <Filter>A Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\decorations.cpp">
+      <Filter>A Source Files\Decorate++</Filter>
+    </ClCompile>
+    <ClCompile Include="src\thingdef.cpp">
+      <Filter>A Source Files\Decorate++</Filter>
+    </ClCompile>
+    <ClCompile Include="src\thingdef_codeptr.cpp">
+      <Filter>A Source Files\Decorate++</Filter>
+    </ClCompile>
+    <ClCompile Include="src\thingdef_exp.cpp">
+      <Filter>A Source Files\Decorate++</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\eaxedit.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\hardware.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\helperthread.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\i_cd.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\i_crash.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\i_input.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\i_main.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\i_movie.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\I_system.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win32\win32video.cpp">
+      <Filter>Win32 Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_action.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_artifacts.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_bridge.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_camera.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_debris.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_decals.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_flashfader.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_fountain.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_hatetarget.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_keys.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_lightning.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_mapmarker.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_morph.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_movingcamera.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_pickups.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_quake.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_secrettrigger.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_sectoraction.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_sharedmisc.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_skies.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_soundenvironment.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_soundsequence.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_spark.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_waterzone.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_weaponpiece.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\a_weapons.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\hudmessages.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_shared\shared_sbar.cpp">
+      <Filter>Shared Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_arachnotron.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_archvile.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_bossbrain.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_bruiser.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_cacodemon.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_cyberdemon.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_demon.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_doomartifacts.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_doomimp.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_doommisc.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_doomplayer.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_doomweaps.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_fatso.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_keen.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_lostsoul.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_painelemental.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_possessed.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_revenant.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_scriptedmarine.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\a_spidermaster.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_doom\doom_sbar.cpp">
+      <Filter>Doom Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_raven\a_artitele.cpp">
+      <Filter>Raven Shared</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_raven\a_minotaur.cpp">
+      <Filter>Raven Shared</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_raven\a_ravenambient.cpp">
+      <Filter>Raven Shared</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_beast.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_chicken.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_clink.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_dsparil.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_hereticartifacts.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_hereticimp.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_heretickeys.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_hereticmisc.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_hereticplayer.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_hereticweaps.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_ironlich.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_knight.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_mummy.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_snake.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\a_wizard.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_heretic\heretic_sbar.cpp">
+      <Filter>Heretic Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_bats.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_bishop.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_blastradius.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_boostarmor.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_centaur.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_clericboss.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_clericflame.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_clericholy.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_clericmace.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_clericplayer.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_clericstaff.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_demons.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_dragon.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_ettin.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_fighteraxe.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_fighterboss.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_fighterhammer.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_fighterplayer.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_fighterquietus.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_firedemon.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_flechette.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_fog.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_healingradius.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_heresiarch.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_hexenspecialdecs.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_iceguy.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_korax.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_mageboss.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_magecone.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_magelightning.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_mageplayer.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_magestaff.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_magewand.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_pig.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_puzzleitems.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_serpent.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_spike.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_summon.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_teleportother.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_weaponpieces.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\a_wraith.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_hexen\hexen_sbar.cpp">
+      <Filter>Hexen Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_acolyte.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_alienspectres.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_coin.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_crusader.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_entityboss.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_inquisitor.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_loremaster.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_macil.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_oracle.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_programmer.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_reaver.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_rebels.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_sentinel.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_spectral.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_stalker.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_strifebishop.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_strifeitems.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_strifeplayer.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_strifestuff.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_strifeweapons.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_templar.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\a_thingstoblowup.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\g_strife\strife_sbar.cpp">
+      <Filter>Strife Game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_anim.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_bsp.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_data.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_draw.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_drawt.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_main.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_plane.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_polymost.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_segs.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_sky.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\r_things.cpp">
+      <Filter>Render Core\Render Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\automaptexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\buildtexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\canvastexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\ddstexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\flattexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\imgztexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\jpegtexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\multipatchtexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\patchtexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\pcxtexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\pngtexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\rawpagetexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\texture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\tgatexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\textures\warptexture.cpp">
+      <Filter>Render Core\Textures</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\altsound.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\altsoundmixer.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\fmodsound.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\i_music.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\i_sound.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_cd.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_flac.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_midi_midiout.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_midi_stream.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_midi_timidity.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_mod.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_mus_midiout.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_mus_opl.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_spc.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\music_stream.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sound\sample_flac.cpp">
+      <Filter>Audio Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\oplsynth\fmopl.cpp">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClCompile>
+    <ClCompile Include="src\oplsynth\mlkernel.cpp">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClCompile>
+    <ClCompile Include="src\oplsynth\mlopl.cpp">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClCompile>
+    <ClCompile Include="src\oplsynth\mlopl_io.cpp">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClCompile>
+    <ClCompile Include="src\oplsynth\opl_mus_player.cpp">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\crashcatcher.c">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\hardware.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\i_cd.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\i_input.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\i_main.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\i_movie.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\i_system.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\sdl\sdlvideo.cpp">
+      <Filter>SDL Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\sc_man_scanner.h">
+      <Filter>A Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\thingdef.h">
+      <Filter>A Source Files\Decorate++</Filter>
+    </ClInclude>
+    <ClInclude Include="src\actor.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\am_map.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\announcer.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\autosegs.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\b_bot.H">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\basicinlines.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\c_bind.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\c_console.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\c_cvars.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\c_dispatch.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\cmdlib.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\colormatcher.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\configfile.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_dehacked.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_dehackedactions.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_event.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_gui.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_main.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_net.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_netinf.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_player.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_protocol.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\d_ticcmd.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\decallib.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\dobject.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\dobjtype.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\doomdata.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\doomdef.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\doomerrors.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\doomstat.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\doomtype.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\dsectoreffect.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\dthinker.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\f_finale.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\f_wipe.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\farchive.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\files.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_game.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_hub.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_level.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gameconfigfile.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gccinlines.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gi.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gstrings.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\hu_stuff.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\i_cd.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\i_movie.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\i_net.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\i_video.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Info.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\infomacros.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\lists.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\lumpconfigfile.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_alloc.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_argv.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_bbox.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_cheat.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_crc32.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_fixed.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_menu.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_misc.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_png.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_random.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\m_swap.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mscinlines.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mus2midi.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\name.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\namedef.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\nodebuild.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_acs.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_conversation.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_effect.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_enemy.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_lnspec.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_local.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_pspr.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_saveg.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_setup.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_spec.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_terrain.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_tick.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\p_trace.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\s_playlist.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\s_sndseq.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\s_sound.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sc_man.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\skins.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\st_stuff.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\statnums.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\stats.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\stringtable.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Tables.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\tarray.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\tempfiles.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\templates.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\v_collection.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\v_font.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\v_palette.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\v_pfx.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\v_text.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\v_video.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\vectors.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\w_wad.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\w_zip.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\weightedlist.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\wi_stuff.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zstring.h">
+      <Filter>A Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win32\hardware.h">
+      <Filter>Win32 Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win32\helperthread.h">
+      <Filter>Win32 Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win32\i_input.h">
+      <Filter>Win32 Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win32\I_system.h">
+      <Filter>Win32 Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win32\resource.h">
+      <Filter>Win32 Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win32\win32iface.h">
+      <Filter>Win32 Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_action.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_artifacts.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_keys.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_lightning.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_pickups.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_sharedglobal.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\a_weaponpiece.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_shared\sbar.h">
+      <Filter>Shared Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_doom\a_doomglobal.h">
+      <Filter>Doom Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_raven\ravenshared.h">
+      <Filter>Raven Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_heretic\a_hereticglobal.h">
+      <Filter>Heretic Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_hexen\a_hexenglobal.h">
+      <Filter>Hexen Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\g_strife\a_strifeglobal.h">
+      <Filter>Strife Game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_bsp.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_data.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_defs.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_draw.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_jpeg.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_local.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_main.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_plane.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_polymost.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_segs.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_sky.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_state.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\r_things.h">
+      <Filter>Render Core\Render Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\version.h">
+      <Filter>Versioning</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sound\altsound.h">
+      <Filter>Audio Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sound\fmodsound.h">
+      <Filter>Audio Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sound\i_music.h">
+      <Filter>Audio Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sound\i_musicinterns.h">
+      <Filter>Audio Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sound\i_sound.h">
+      <Filter>Audio Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sound\sample_flac.h">
+      <Filter>Audio Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\oplsynth\DEFTYPES.H">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClInclude>
+    <ClInclude Include="src\oplsynth\fmopl.h">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClInclude>
+    <ClInclude Include="src\oplsynth\muslib.h">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClInclude>
+    <ClInclude Include="src\oplsynth\opl_mus_player.h">
+      <Filter>Audio Files\OPL Synth</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\win32\cursor1.cur">
+      <Filter>Win32 Files</Filter>
+    </None>
+    <None Include="docs\console.html">
+      <Filter>Text Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="src\win32\boing1.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing2.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing3.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing4.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing5.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing6.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing7.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\boing8.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\deadguy.bmp">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\icon1.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+    <Image Include="src\win32\icon2.ico">
+      <Filter>Win32 Files</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="docs\classes.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\colors.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\commands.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\history.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\notes.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\rh-log.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\zdoom.txt">
+      <Filter>Text Files</Filter>
+    </Text>
+    <Text Include="docs\BUILDLIC.TXT">
+      <Filter>Text Files\Licenses</Filter>
+    </Text>
+    <Text Include="docs\doomlic.txt">
+      <Filter>Text Files\Licenses</Filter>
+    </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\win32\zdoom.rc">
+      <Filter>Versioning</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="src\sc_man_scanner.re">
+      <Filter>A Source Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\a.nas">
+      <Filter>Assembly Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\misc.nas">
+      <Filter>Assembly Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\tmap.nas">
+      <Filter>Assembly Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\tmap2.nas">
+      <Filter>Assembly Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\tmap3.nas">
+      <Filter>Assembly Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\win32\wrappers.nas">
+      <Filter>Win32 Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\sdl\dikeys.h">
+      <Filter>SDL Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\sdl\hardware.h">
+      <Filter>SDL Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\sdl\i_input.h">
+      <Filter>SDL Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\sdl\i_system.h">
+      <Filter>SDL Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\sdl\i_video.h">
+      <Filter>SDL Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="src\sdl\sdlvideo.h">
+      <Filter>SDL Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
+</Project>
