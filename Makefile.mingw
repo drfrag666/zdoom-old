@@ -2,7 +2,7 @@
 # And then tweaked by hand
 
 # Where did you install the FMOD API to? Change this line so that the build process can find it.
-FMODDIR = "c:/program files/fmodapi375win"
+FMODDIR = "c:/DEV/fmodapi375win"
 
 ifeq (msys,$(OSTYPE))
   WINCMD=0
@@ -90,7 +90,7 @@ $(OBJDIR)/%.o : %.cpp
 	$(CCDV) $(CXX) $(CXXFLAGS) -o $@ -c $<
 
 $(OBJDIR)/%.o : %.nas
-	$(CCDV) nasmw -o $@ -f win32 $<
+	$(CCDV) nasm -o $@ -f win32 $<
 
 $(OBJDIR)/%.o : %.rc
 	$(CCDV) windres --include-dir=src/win32 -o $@ -i $<
