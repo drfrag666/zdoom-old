@@ -213,7 +213,7 @@
       <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Creating parse.c from parse.y</Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\lemon\lemon.exe -s "%(Filename)%(Extension)"
 </Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(RootDir)%(Directory)parse.c;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(RootDir)%(Directory)parse.c;%(RootDir)%(Directory)parse.h;%(Outputs)</Outputs>
       <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Creating parse.c from parse.y</Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\lemon\lemon.exe -s "%(Filename)%(Extension)"
 </Command>
@@ -221,7 +221,7 @@
       <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Creating parse.c from parse.y</Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\lemon\lemon.exe -s "%(Filename)%(Extension)"
 </Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(RootDir)%(Directory)parse.c;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(RootDir)%(Directory)parse.c;%(RootDir)%(Directory)parse.h;%(Outputs)</Outputs>
       <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Creating parse.c from parse.y</Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\lemon\lemon.exe -s "%(Filename)%(Extension)"
 </Command>

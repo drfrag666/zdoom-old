@@ -198,21 +198,25 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="gen.c" />
-    <ClCompile Include="xlat-parse.tab.c">
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">__STDC__=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">__STDC__=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">__STDC__=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">__STDC__=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    <ClCompile Include="xlat-parse.c">
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="xlat-parse.h" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="xlat.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="xlat-parse.y">
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">win_bison xlat-parse.y
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Generating xlat-parse.c from xlat-parse.y...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\lemon\lemon.exe -s "%(Filename)%(Extension)"
 </Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">xlat-parse.tab.c;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">xlat-parse.c;xlat-parse.h;%(Outputs)</Outputs>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Generating xlat-parse.c from xlat-parse.y...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\lemon\lemon.exe -s "%(Filename)%(Extension)"
+</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">xlat-parse.c;xlat-parse.h;%(Outputs)</Outputs>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">bison xlat-parse.y
 </Command>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">xlat-parse.tab.c;%(Outputs)</Outputs>
