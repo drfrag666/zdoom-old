@@ -36,11 +36,15 @@
 
 // The svnrevision.h is automatically updated to grab the revision of
 // of the current source tree so that it can be included with version numbers.
-#include "svnrevision.h"
+//#include "svnrevision.h"
 
 /** Lots of different version numbers **/
 
-#define DOTVERSIONSTR_NOREV "2.1.7"
+#define DOTVERSIONSTR_NOREV "2.1.8"
+
+// Hack, we no longer use SVN.
+#define SVN_REVISION_STRING "666"
+#define SVN_REVISION_NUMBER 0
 
 // The version string the user actually sees.
 #define DOTVERSIONSTR DOTVERSIONSTR_NOREV " (r" SVN_REVISION_STRING ")"
