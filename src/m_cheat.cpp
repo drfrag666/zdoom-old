@@ -271,7 +271,15 @@ void cht_DoCheat (player_t *player, int cheat)
 				player->health = player->mo->health = player->mo->GetDefault()->health;
 				player->viewheight = ((APlayerPawn *)player->mo->GetDefault())->ViewHeight;
 				player->mo->flags = player->mo->GetDefault()->flags;
+				player->mo->flags2 = player->mo->GetDefault()->flags2;
+				player->mo->flags3 = player->mo->GetDefault()->flags3;
+				player->mo->flags4 = player->mo->GetDefault()->flags4;
+				player->mo->flags5 = player->mo->GetDefault()->flags5;
+				player->mo->renderflags &= ~RF_INVISIBLE;
 				player->mo->height = player->mo->GetDefault()->height;
+				player->mo->radius = player->mo->GetDefault()->radius;
+ 				player->mo->special1 = 0;	// required for the Hexen fighter's fist attack. 
+ 											// This gets set by AActor::Die as flag for the wimpy death and must be reset here.
 				player->mo->SetState (player->mo->SpawnState);
 				player->mo->Translation = TRANSLATION(TRANSLATION_Players, BYTE(player-players));
 				player->mo->DamageType = MOD_UNKNOWN;
