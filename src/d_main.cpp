@@ -86,7 +86,6 @@
 #include "r_polymost.h"
 #include "version.h"
 #include "v_text.h"
-#include "templates.h"
 
 // MACROS ------------------------------------------------------------------
 
@@ -502,7 +501,6 @@ void D_Display (bool screenshot)
 		switch (gamestate)
 		{
 		case GS_FULLCONSOLE:
-			screen->SetBlendingRect(0,0,0,0);
 			C_DrawConsole ();
 			M_Drawer ();
 			if (!screenshot)
@@ -514,18 +512,6 @@ void D_Display (bool screenshot)
 			if (!gametic)
 				break;
 
-			if (!menuactive)
-			{
-				screen->SetBlendingRect(viewwindowx, MAX(ConBottom,viewwindowy),
-					viewwindowx + realviewwidth, MAX(ConBottom,viewwindowy + realviewheight));
-			}
-			else
-			{
-				// Don't chop the blending effect off at the status bar when the menu is
-				// active. Mostly, this is just to make Strife's dialogs with portrait
-				// images look okay when a blend is active.
-				screen->SetBlendingRect(0,0,0,0);
-			}
 			R_RefreshViewBorder ();
 			P_CheckPlayerSprites();
 			R_RenderActorView (players[consoleplayer].mo);
@@ -550,19 +536,16 @@ void D_Display (bool screenshot)
 			break;
 
 		case GS_INTERMISSION:
-			screen->SetBlendingRect(0,0,0,0);
 			WI_Drawer ();
 			CT_Drawer ();
 			break;
 
 		case GS_FINALE:
-			screen->SetBlendingRect(0,0,0,0);
 			F_Drawer ();
 			CT_Drawer ();
 			break;
 
 		case GS_DEMOSCREEN:
-			screen->SetBlendingRect(0,0,0,0);
 			D_PageDrawer ();
 			CT_Drawer ();
 			break;

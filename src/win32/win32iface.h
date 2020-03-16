@@ -72,19 +72,17 @@ class Win32Video : public IVideo
  private:
 	struct ModeInfo
 	{
-		ModeInfo (int inX, int inY, int inBits, int inRealY, int inDoubling)
+		ModeInfo (int inX, int inY, int inBits, int inRealY)
 			: next (NULL),
 			  width (inX),
 			  height (inY),
 			  bits (inBits),
-			  realheight (inRealY),
-			  doubling (inDoubling)
+			  realheight (inRealY)
 		{}
 
 		ModeInfo *next;
 		int width, height, bits;
 		int realheight;
-		int doubling;
 	} *m_Modes;
 
 	ModeInfo *m_IteratorMode;
@@ -94,12 +92,11 @@ class Win32Video : public IVideo
 
 	bool m_CalledCoInitialize;
 
-	void AddMode (int x, int y, int bits, int baseHeight, int doubling);
+	void AddMode (int x, int y, int bits, int baseHeight);
 	void FreeModes ();
 
 	static HRESULT WINAPI EnumDDModesCB (LPDDSURFACEDESC desc, void *modes);
 	void AddD3DModes (D3DFORMAT format);
-	void AddLowResModes ();
 	void AddLetterboxModes ();
 
 	friend class DDrawFB;
@@ -233,7 +230,6 @@ public:
 	void Blank ();
 	bool PaintToWindow ();
 	void SetVSync (bool vsync);
-	void SetBlendingRect (int x1, int y1, int x2, int y2);
 	HRESULT GetHR ();
 
 private:
@@ -245,7 +241,6 @@ private:
 	void DoOffByOneCheck();
 	void UploadPalette();
 	void FillPresentParameters (D3DPRESENT_PARAMETERS *pp, bool fullscreen, bool vsync);
-	bool UploadVertices();
 	bool Reset();
 
 	BYTE GammaTable[256];
@@ -254,7 +249,6 @@ private:
 	PalEntry FlashColor;
 	int FlashAmount;
 	int TrueHeight;
-	int PixelDoubling;
 	float Gamma;
 	bool UpdatePending;
 	bool NeedPalUpdate;
@@ -264,8 +258,6 @@ private:
 	int FBWidth, FBHeight;
 	int OffByOneAt;
 	bool VSync;
-	RECT BlendingRect;
-	bool UseBlendingRect;
 
 	IDirect3DDevice9 *D3DDevice;
 	IDirect3DVertexBuffer9 *VertexBuffer;
