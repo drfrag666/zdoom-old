@@ -741,7 +741,7 @@ void A_SorcBallOrbit(AActor *ball)
 	case SORC_STOPPING:			// Balls stopping
 		if ((parent->StopBall == RUNTIME_TYPE(actor)) &&
 			 (parent->args[1] > SORCBALL_SPEED_ROTATIONS) &&
-			 (abs(angle - (parent->angle>>ANGLETOFINESHIFT)) < (30<<5)))
+			 (abs((long int)(angle - (parent->angle>>ANGLETOFINESHIFT))) < (30<<5)))
 		{
 			// Can stop now
 			actor->target->args[3] = SORC_FIRESPELL;

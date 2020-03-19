@@ -235,8 +235,8 @@ void A_PotteryCheck (AActor *actor)
 		if (playeringame[i])
 		{
 			AActor *pmo = players[i].mo;
-			if (P_CheckSight (actor, pmo) && (abs (R_PointToAngle2 (pmo->x,
-				pmo->y, actor->x, actor->y) - pmo->angle) <= ANGLE_45))
+			if (P_CheckSight (actor, pmo) && (abs ((long int)(R_PointToAngle2 (pmo->x,
+				pmo->y, actor->x, actor->y) - pmo->angle)) <= ANGLE_45))
 			{ // Previous state (pottery bit waiting state)
 				actor->SetState (actor->state - 1);
 				return;

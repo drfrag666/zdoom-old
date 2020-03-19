@@ -243,8 +243,8 @@ static void DragonSeek (AActor *actor, angle_t thresh, angle_t turnMax)
 	{ // attack the destination mobj if it's attackable
 		AActor *oldTarget;
 	
-		if (abs(actor->angle-R_PointToAngle2(actor->x, actor->y, 
-			target->x, target->y)) < ANGLE_45/2)
+		if (abs((long int)(actor->angle-R_PointToAngle2(actor->x, actor->y, 
+			target->x, target->y))) < ANGLE_45/2)
 		{
 			oldTarget = actor->target;
 			actor->target = target;
@@ -285,9 +285,9 @@ static void DragonSeek (AActor *actor, angle_t thresh, angle_t turnMax)
 				}
 				angleToSpot = R_PointToAngle2(actor->x, actor->y, 
 					mo->x, mo->y);
-				if ((angle_t)abs(angleToSpot-angleToTarget) < bestAngle)
+				if ((angle_t)abs((long int)(angleToSpot-angleToTarget)) < bestAngle)
 				{
-					bestAngle = abs(angleToSpot-angleToTarget);
+					bestAngle = abs((long int)(angleToSpot-angleToTarget));
 					bestActor = mo;
 				}
 			}
@@ -362,14 +362,14 @@ void A_DragonFlight (AActor *actor)
 		}
 		angle = R_PointToAngle2(actor->x, actor->y, actor->target->x,
 			actor->target->y);
-		if (abs(actor->angle-angle) < ANGLE_45/2 && actor->CheckMeleeRange())
+		if (abs((long int)(actor->angle-angle)) < ANGLE_45/2 && actor->CheckMeleeRange())
 		{
 			int damage = pr_dragonflight.HitDice (8);
 			P_DamageMobj (actor->target, actor, actor, damage, MOD_HIT);
 			P_TraceBleed (damage, actor->target, actor);
 			S_SoundID (actor, CHAN_WEAPON, actor->AttackSound, 1, ATTN_NORM);
 		}
-		else if (abs(actor->angle-angle) <= ANGLE_1*20)
+		else if (abs((long int)(actor->angle-angle)) <= ANGLE_1*20)
 		{
 			actor->SetState (actor->MissileState);
 			S_SoundID (actor, CHAN_WEAPON, actor->AttackSound, 1, ATTN_NORM);
