@@ -14,8 +14,7 @@ CC ?= gcc
 CXX ?= g++
 
 CONFIG ?= Release
-OPTLEVEL ?= 2
-ARCH_TYPE ?= pentium
+OPTLEVEL ?= 3
 TUNE_TYPE ?= i686
 RELEASETARGET ?= zdoomgcc.exe
 DEBUGTARGET ?= zdoomgccd.exe
@@ -45,11 +44,11 @@ ifeq ($(CONFIG),Debug)
 endif
 ifeq ($(CONFIG),Release)
   OBJDIR = $(RELEASEOBJDIR)
-  CFLAGS += $(CPPFLAGS) -march=$(ARCH_TYPE) -mtune=$(TUNE_TYPE) -Wall -Wno-unused -O$(OPTLEVEL) -fomit-frame-pointer -pipe
-  CFLAGS += -ffunction-sections -fno-rtti
+  CFLAGS += $(CPPFLAGS) -mtune=$(TUNE_TYPE) -Wall -Wno-unused -O$(OPTLEVEL) -fomit-frame-pointer -pipe
+  CFLAGS += -fno-rtti
   CPPFLAGS += -DNDEBUG
   CXXFLAGS = $(CFLAGS)
-  LDFLAGS += -s -Wl,-Map=zdoomgcc.map -Wl,--gc-sections
+  LDFLAGS += -s -Wl,-Map=zdoomgcc.map
   TARGET = $(RELEASETARGET)
 endif
 
