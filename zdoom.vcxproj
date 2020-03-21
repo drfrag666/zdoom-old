@@ -121,7 +121,7 @@
     </Midl>
     <ClCompile>
       <AdditionalOptions>"  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  "  /I /fmod/api/inc"  %(AdditionalOptions)</AdditionalOptions>
-      <Optimization>Full</Optimization>
+      <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
