@@ -127,9 +127,7 @@ FBaseCVar::~FBaseCVar ()
 			else
 				CVars = m_Next;
 		}
-#ifndef __MINGW32__ // Crashes on exit
 		C_RemoveTabCommand(Name);
-#endif
 		delete[] Name;
 	}
 }

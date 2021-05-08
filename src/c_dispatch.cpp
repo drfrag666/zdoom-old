@@ -835,9 +835,7 @@ FConsoleCommand::~FConsoleCommand ()
 	*m_Prev = m_Next;
 	if (m_Next)
 		m_Next->m_Prev = m_Prev;
-#ifndef __MINGW32__ // Crashes on exit
 	C_RemoveTabCommand (m_Name);
-#endif
 	delete[] m_Name;
 }
 
