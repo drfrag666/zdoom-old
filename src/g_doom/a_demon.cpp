@@ -6,7 +6,7 @@
 #include "gstrings.h"
 #include "a_action.h"
 
-static FRandom pr_sargattack ("SargAttack");
+static FRandom pr_sargattack ("SargAttack", true);
 
 void A_SargAttack (AActor *);
 

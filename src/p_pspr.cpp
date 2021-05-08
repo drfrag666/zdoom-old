@@ -54,7 +54,7 @@ CVAR(Int, sv_fastweapons, false, CVAR_SERVERINFO);
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
 static FRandom pr_wpnreadysnd ("WpnReadySnd");
-static FRandom pr_gunshot ("GunShot");
+static FRandom pr_gunshot ("GunShot", true);
 
 // CODE --------------------------------------------------------------------
 

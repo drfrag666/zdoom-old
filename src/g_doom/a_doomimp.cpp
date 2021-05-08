@@ -7,7 +7,7 @@
 #include "gstrings.h"
 #include "a_action.h"
 
-static FRandom pr_troopattack ("TroopAttack");
+static FRandom pr_troopattack ("TroopAttack", true);
 
 void A_TroopAttack (AActor *);
 

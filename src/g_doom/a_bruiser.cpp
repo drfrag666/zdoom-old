@@ -8,7 +8,7 @@
 #include "gstrings.h"
 #include "a_action.h"
 
-static FRandom pr_bruisattack ("BruisAttack");
+static FRandom pr_bruisattack ("BruisAttack", true);
 
 void A_BruisAttack (AActor *);
 

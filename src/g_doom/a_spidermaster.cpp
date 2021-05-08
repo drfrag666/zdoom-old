@@ -8,7 +8,7 @@
 #include "gstrings.h"
 #include "a_action.h"
 
-static FRandom pr_spidrefire ("SpidRefire");
+static FRandom pr_spidrefire ("SpidRefire", true);
 
 void A_SpidRefire (AActor *);
 void A_Metal (AActor *);

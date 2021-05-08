@@ -7,7 +7,7 @@
 #include "a_action.h"
 #include "s_sound.h"
 
-static FRandom pr_headattack ("HeadAttack");
+static FRandom pr_headattack ("HeadAttack", true);
 
 void A_HeadAttack (AActor *);
 

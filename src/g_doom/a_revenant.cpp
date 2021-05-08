@@ -9,8 +9,8 @@
 #include "a_action.h"
 #include "a_doomglobal.h"
 
-static FRandom pr_tracer ("Tracer");
-static FRandom pr_skelfist ("SkelFist");
+static FRandom pr_tracer ("Tracer", true);
+static FRandom pr_skelfist ("SkelFist", true);
 
 void A_SkelMissile (AActor *);
 void A_Tracer (AActor *);
