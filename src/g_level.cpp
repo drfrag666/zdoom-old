@@ -1521,6 +1521,7 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 			rngseed = rngseed*3/2;
 		}
 		FRandom::StaticClearRandom ();
+		M_ClearRandom();
 		memset (ACS_WorldVars, 0, sizeof(ACS_WorldVars));
 		memset (ACS_GlobalVars, 0, sizeof(ACS_GlobalVars));
 		for (i = 0; i < NUM_WORLDVARS; ++i)

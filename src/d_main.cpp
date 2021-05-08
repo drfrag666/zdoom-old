@@ -398,6 +398,7 @@ CVAR (Flag, compat_dehhealth,	compatflags, COMPATF_DEHHEALTH);
 CVAR (Flag, compat_trace,		compatflags, COMPATF_TRACE);
 CVAR (Flag, compat_dropoff,		compatflags, COMPATF_DROPOFF);
 CVAR (Flag, compat_boomscroll,	compatflags, COMPATF_BOOMSCROLL);
+CVAR (Flag, compat_oldrandom,	compatflags, COMPATF_OLDRANDOMGENERATOR);
 
 //==========================================================================
 //
@@ -1957,6 +1958,7 @@ void D_DoomMain (void)
 
 	rngseed = (DWORD)time (NULL);
 	FRandom::StaticClearRandom ();
+	M_ClearRandom();
 	M_FindResponseFile ();
 	M_LoadDefaults ();			// load before initing other systems
 

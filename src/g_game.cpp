@@ -2363,6 +2363,7 @@ bool G_ProcessIFFDemo (char *mapname)
 			demo_p += 8;
 			rngseed = ReadLong (&demo_p);
 			FRandom::StaticClearRandom ();
+			M_ClearRandom();
 			consoleplayer = *demo_p++;
 			break;
 

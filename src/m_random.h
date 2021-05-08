@@ -59,7 +59,7 @@ class FRandom
 {
 public:
 	FRandom ();
-	FRandom (const char *name);
+	FRandom (const char *name, bool useold = false);
 	~FRandom ();
 
 	int operator() ();			// Returns a random number in the range [0,255]
@@ -92,11 +92,20 @@ private:
 #endif
 
 	static FRandom *RNGList;
+
+	// Use the old PRNG table if/when requested [ED850]
+	bool useOldRNG;
 };
 
 extern DWORD rngseed;			// The starting seed (not part of state)
 
 // M_Random can be used for numbers that do not affect gameplay
 extern FRandom M_Random;
+
+// Returns a number from 0 to 255, from a lookup table.
+unsigned int P_Random (void);
+void M_ClearRandom (void);
+
+extern int prndindex;
 
 #endif
