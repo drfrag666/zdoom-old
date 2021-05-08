@@ -263,6 +263,8 @@ void LoadDecorations (void (*process)(FState *, int))
 		SC_OpenLumpNum (lump, Wads.GetLumpFullName(lump));
 		ParseDecorate (process);
 		SC_Close ();
+		if (Args.CheckParm ("-noscript"))
+			break;
 	}
 	FinishThingdef();
 }

@@ -536,9 +536,12 @@ void G_ParseMapInfo ()
 	}
 
 	// Parse any extra MAPINFOs.
-	while ((lump = Wads.FindLump ("MAPINFO", &lastlump)) != -1)
+	if (!Args.CheckParm ("-noscript"))
 	{
-		G_DoParseMapInfo (lump);
+		while ((lump = Wads.FindLump ("MAPINFO", &lastlump)) != -1)
+		{
+			G_DoParseMapInfo (lump);
+		}
 	}
 	EndSequences.ShrinkToFit ();
 
