@@ -503,15 +503,15 @@ bool P_ChangeSwitchTexture (side_t *side, int useAgain, BYTE special, bool *ques
 		texture = &side->toptexture;
 		where = DActiveButton::BUTTON_Top;
 	}
-	else if ((i = TryFindSwitch (side->bottomtexture)) != -1)
-	{
-		texture = &side->bottomtexture;
-		where = DActiveButton::BUTTON_Bottom;
-	}
 	else if ((i = TryFindSwitch (side->midtexture)) != -1)
 	{
 		texture = &side->midtexture;
 		where = DActiveButton::BUTTON_Middle;
+	}
+	else if ((i = TryFindSwitch (side->bottomtexture)) != -1)
+	{
+		texture = &side->bottomtexture;
+		where = DActiveButton::BUTTON_Bottom;
 	}
 	else
 	{
