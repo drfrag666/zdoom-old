@@ -247,7 +247,7 @@ extern FRandom pr_slam;
 
 DWORD FRandom::StaticSumSeeds ()
 {
-	return pr_spawnmobj.Seed + pr_acs.Seed + pr_chase.Seed + pr_lost.Seed + pr_slam.Seed + prndindex;;
+	return pr_spawnmobj.Seed + pr_acs.Seed + pr_chase.Seed + pr_lost.Seed + pr_slam.Seed + prndindex;
 }
 
 void FRandom::StaticWriteRNGState (FILE *file)
@@ -284,7 +284,6 @@ void FRandom::StaticReadRNGState (PNGHandle *png)
 
 		arc << rngseed;
 		FRandom::StaticClearRandom ();
-		M_ClearRandom();
 
 		for (i = rngcount; i; --i)
 		{

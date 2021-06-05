@@ -82,7 +82,7 @@ EXTERN_CVAR (Bool, r_drawfuzz);
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
 static bool SpawningMapThing;
-static FRandom pr_explodemissile ("ExplodeMissile");
+static FRandom pr_explodemissile ("ExplodeMissile", true);
 static FRandom pr_bounce ("Bounce");
 static FRandom pr_reflect ("Reflect");
 static FRandom pr_nightmarerespawn ("NightmareRespawn");
@@ -94,7 +94,7 @@ static FRandom pr_splatter ("BloodSplatter");
 static FRandom pr_takedamage ("TakeDamage", true);
 static FRandom pr_ripperblood ("RipperBlood");
 static FRandom pr_chunk ("Chunk");
-static FRandom pr_checkmissilespawn ("CheckMissileSpawn");
+static FRandom pr_checkmissilespawn ("CheckMissileSpawn", true);
 static FRandom pr_spawnmissile ("SpawnMissile");
 static FRandom pr_missiledamage ("MissileDamage", true);
  FRandom pr_slam ("SkullSlam");
